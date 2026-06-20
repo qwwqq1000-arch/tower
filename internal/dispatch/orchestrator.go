@@ -31,9 +31,14 @@ type Orchestrator struct {
 
 // attempt sends one request to key with guaranteed settlement. ok reports a clean 2xx.
 func (o *Orchestrator) attempt(ctx context.Context, model, key string, px Proxy) (res ProxyResult, ok bool) {
-	if !o.Store.TryDispatch(key, model, o.Cfg) {
+	dispatched, trial := o.Store.TryDispatchTrial(key, model, o.Cfg)
+	if !dispatched {
 		return ProxyResult{}, false
 	}
+	// sendReturned tracks whether Send returned normally (vs panicked).
+	// On panic we release the slot but skip the ban signal — a proxy crash is
+	// not a ban signal and must not open the breaker.
+	sendReturned := false
 	settled := false
 	settle := func(success bool) {
 		if settled {
@@ -41,7 +46,13 @@ func (o *Orchestrator) attempt(ctx context.Context, model, key string, px Proxy)
 		}
 		settled = true
 		o.Store.Complete(key, o.CooldownMin, o.CooldownMax)
-		if success {
+		if !sendReturned {
+			// proxy panicked — only release slot, no breaker penalty
+			return
+		}
+		if trial {
+			o.Store.OnTrialResult(key, o.Cfg, success)
+		} else if success {
 			o.Store.OnSuccess(key)
 		} else {
 			o.Store.OnBanSignal(key, o.Cfg)
@@ -51,6 +62,7 @@ func (o *Orchestrator) attempt(ctx context.Context, model, key string, px Proxy)
 	defer func() { settle(ok) }()
 
 	r, err := px.Send(ctx, key)
+	sendReturned = true
 	if err != nil {
 		return ProxyResult{}, false
 	}

@@ -50,22 +50,39 @@ func (s *Store) RestoreBreaker(key string, capacity int, openUntil int64, streak
 // TryDispatch atomically checks eligibility and, if dispatchable, acquires a
 // slot (claiming a half-open trial when applicable). Returns whether dispatched.
 func (s *Store) TryDispatch(key, model string, cfg BreakerCfg) bool {
+	ok, _ := s.TryDispatchTrial(key, model, cfg)
+	return ok
+}
+
+// TryDispatchTrial is like TryDispatch but also reports whether the dispatched
+// attempt claimed a half-open recovery trial (so the caller settles via OnTrialResult).
+func (s *Store) TryDispatchTrial(key, model string, cfg BreakerCfg) (ok bool, trial bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	a := s.accts[key]
 	if a == nil {
-		return false
+		return false, false
 	}
 	now := s.now()
-	ok, trial := a.CanDispatch(now, model, cfg)
-	if !ok {
-		return false
+	can, tr := a.CanDispatch(now, model, cfg)
+	if !can {
+		return false, false
 	}
-	if trial {
+	if tr {
 		a.Breaker.TakeTrial(now)
 	}
 	a.Slots.Acquire(now)
-	return true
+	return true, tr
+}
+
+// OnTrialResult settles a half-open trial: success closes the breaker, failure
+// reopens it (always clearing the in-flight trial flag — no wedge possible).
+func (s *Store) OnTrialResult(key string, cfg BreakerCfg, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if a := s.accts[key]; a != nil {
+		a.Breaker.OnTrialResult(cfg, s.now(), ok)
+	}
 }
 
 // Complete releases one slot with a randomized cooldown in [min,max] ms.

@@ -96,3 +96,56 @@ func TestDispatch_TrialAlwaysResolved_NoWedge(t *testing.T) {
 		t.Fatal("after failed trial + cooldown, a new trial must be possible (no wedge)")
 	}
 }
+
+func TestDispatch_TrialNoWedge_PersistStreak3(t *testing.T) {
+	// cfg with PersistStreak=3 so a single ban signal does NOT open the breaker
+	st := state.NewStore(func() int64 { return 0 }, func(min, max int64) int64 { return min })
+	o := &Orchestrator{
+		Store:       st,
+		Cfg:         state.BreakerCfg{PersistStreak: 3, BaseMs: 1000, MaxMs: 9999, Mult: 2},
+		CooldownMin: 0, CooldownMax: 0, MaxAttempts: 5,
+	}
+	o.Store.Ensure("a", 1)
+
+	// drive 3 ban signals to open the breaker
+	o.Store.OnBanSignal("a", o.Cfg)
+	o.Store.OnBanSignal("a", o.Cfg)
+	o.Store.OnBanSignal("a", o.Cfg) // third signal — breaker opens until t=1000
+
+	// advance to half_open
+	swapClock(o.Store, 2000)
+
+	// dispatch a FAILING trial
+	px := &stubProxy{results: map[string]ProxyResult{"a": {Status: 403, Banned: true}}}
+	o.Dispatch(context.Background(), "opus", []string{"a"}, px)
+
+	// advance time again to the next half_open window
+	swapClock(o.Store, 9_999_999)
+
+	// a NEW trial must be possible — no wedge
+	if !o.Store.TryDispatch("a", "opus", o.Cfg) {
+		t.Fatal("after failed trial + cooldown (PersistStreak=3), a new trial must be possible (no wedge)")
+	}
+}
+
+func TestDispatch_PanicProxySettles(t *testing.T) {
+	o := newOrch()
+	o.Store.Ensure("a", 1)
+
+	panicProxy := &panicSendProxy{}
+	func() {
+		defer func() { recover() }()
+		o.Dispatch(context.Background(), "opus", []string{"a"}, panicProxy)
+	}()
+
+	// slot must be released after panic — TryDispatch succeeds again
+	if !o.Store.TryDispatch("a", "opus", o.Cfg) {
+		t.Fatal("slot should be released after proxy panic (defer settle)")
+	}
+}
+
+type panicSendProxy struct{}
+
+func (p *panicSendProxy) Send(_ context.Context, key string) (ProxyResult, error) {
+	panic("proxy boom")
+}
