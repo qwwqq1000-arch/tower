@@ -43,6 +43,39 @@ type DispatchKey struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type DispatchLog struct {
+	ID             int64              `json:"id"`
+	Ts             int64              `json:"ts"`
+	OwnerID        string             `json:"owner_id"`
+	Model          string             `json:"model"`
+	Target         string             `json:"target"`
+	ProfileID      string             `json:"profile_id"`
+	Status         string             `json:"status"`
+	HttpStatus     int32              `json:"http_status"`
+	LatencyMs      int64              `json:"latency_ms"`
+	TokensIn       int64              `json:"tokens_in"`
+	TokensOut      int64              `json:"tokens_out"`
+	FallbackReason string             `json:"fallback_reason"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type FallbackChannel struct {
+	ID             string             `json:"id"`
+	OwnerID        string             `json:"owner_id"`
+	GroupID        string             `json:"group_id"`
+	Name           string             `json:"name"`
+	BaseUrl        string             `json:"base_url"`
+	ApiKey         string             `json:"api_key"`
+	Priority       int32              `json:"priority"`
+	Weight         int32              `json:"weight"`
+	MaxConcurrent  int32              `json:"max_concurrent"`
+	CooldownMs     int64              `json:"cooldown_ms"`
+	PriceThreshold float64            `json:"price_threshold"`
+	ModelAllowlist string             `json:"model_allowlist"`
+	Enabled        bool               `json:"enabled"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
 type GroupMember struct {
 	UserID  string `json:"user_id"`
 	GroupID string `json:"group_id"`
@@ -81,6 +114,13 @@ type NodeGroup struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
 	OwnerID string `json:"owner_id"`
+}
+
+type Policy struct {
+	ScopeType string `json:"scope_type"`
+	ScopeID   string `json:"scope_id"`
+	Params    []byte `json:"params"`
+	UpdatedAt int64  `json:"updated_at"`
 }
 
 type Role struct {
