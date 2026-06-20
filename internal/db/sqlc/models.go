@@ -22,6 +22,16 @@ type Account struct {
 	BannedAt         int64              `json:"banned_at"`
 }
 
+type AccountState struct {
+	NodeID        string `json:"node_id"`
+	ProfileID     string `json:"profile_id"`
+	Status        string `json:"status"`
+	CooldownUntil int64  `json:"cooldown_until"`
+	BanStreak     int32  `json:"ban_streak"`
+	FailCount     int32  `json:"fail_count"`
+	UpdatedAt     int64  `json:"updated_at"`
+}
+
 type DispatchKey struct {
 	ID        string             `json:"id"`
 	KeyHash   string             `json:"key_hash"`

@@ -82,3 +82,16 @@ func (b *Breaker) OnTrialResult(cfg BreakerCfg, now int64, ok bool) {
 	}
 	b.open(cfg, now)
 }
+
+// Snapshot exports the durable verdict (excludes the in-flight trial flag).
+func (b *Breaker) Snapshot() (openUntil int64, streak, failCount int) {
+	return b.openUntil, b.streak, b.failCount
+}
+
+// Restore loads a durable verdict (used for warm-start after restart).
+func (b *Breaker) Restore(openUntil int64, streak, failCount int) {
+	b.openUntil = openUntil
+	b.streak = streak
+	b.failCount = failCount
+	b.trial = false
+}
