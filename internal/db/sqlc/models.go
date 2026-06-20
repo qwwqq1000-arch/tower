@@ -32,6 +32,28 @@ type AccountState struct {
 	UpdatedAt     int64  `json:"updated_at"`
 }
 
+type BillingLedger struct {
+	ID           int64   `json:"id"`
+	TenantID     string  `json:"tenant_id"`
+	Ts           int64   `json:"ts"`
+	Type         string  `json:"type"`
+	AmountUsd    float64 `json:"amount_usd"`
+	BalanceAfter float64 `json:"balance_after"`
+	Ref          string  `json:"ref"`
+	Note         string  `json:"note"`
+}
+
+type CostRollup struct {
+	ScopeType string  `json:"scope_type"`
+	ScopeID   string  `json:"scope_id"`
+	Day       string  `json:"day"`
+	Model     string  `json:"model"`
+	Requests  int64   `json:"requests"`
+	TokensIn  int64   `json:"tokens_in"`
+	TokensOut int64   `json:"tokens_out"`
+	CostUsd   float64 `json:"cost_usd"`
+}
+
 type DispatchKey struct {
 	ID        string             `json:"id"`
 	KeyHash   string             `json:"key_hash"`
@@ -76,10 +98,24 @@ type FallbackChannel struct {
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 
+type FallbackSpend struct {
+	ChannelID       string  `json:"channel_id"`
+	Day             string  `json:"day"`
+	Requests        int64   `json:"requests"`
+	EstCostUsd      float64 `json:"est_cost_usd"`
+	BalanceObserved float64 `json:"balance_observed"`
+}
+
 type GroupMember struct {
 	UserID  string `json:"user_id"`
 	GroupID string `json:"group_id"`
 	Role    string `json:"role"`
+}
+
+type HostingRate struct {
+	TenantID      string  `json:"tenant_id"`
+	Rate          float64 `json:"rate"`
+	EffectiveFrom int64   `json:"effective_from"`
 }
 
 type Node struct {
@@ -127,6 +163,19 @@ type Role struct {
 	Name        string `json:"name"`
 	Builtin     bool   `json:"builtin"`
 	Permissions []byte `json:"permissions"`
+}
+
+type Settlement struct {
+	ID          string  `json:"id"`
+	TenantID    string  `json:"tenant_id"`
+	PeriodStart int64   `json:"period_start"`
+	PeriodEnd   int64   `json:"period_end"`
+	GrossUsd    float64 `json:"gross_usd"`
+	SettledUsd  float64 `json:"settled_usd"`
+	Status      string  `json:"status"`
+	CreatedAt   int64   `json:"created_at"`
+	SettledAt   int64   `json:"settled_at"`
+	Note        string  `json:"note"`
 }
 
 type Tenant struct {
