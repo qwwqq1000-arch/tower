@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestLoad_Defaults(t *testing.T) {
 	t.Setenv("TOWER_DATABASE_URL", "postgres://localhost/tower")
@@ -25,7 +28,13 @@ func TestLoad_MissingRequired(t *testing.T) {
 	t.Setenv("TOWER_MASTER_KEY", "")
 	t.Setenv("TOWER_SESSION_SECRET", "")
 
-	if _, err := Load(); err == nil {
+	_, err := Load()
+	if err == nil {
 		t.Fatal("Load() expected error for missing required env, got nil")
+	}
+	for _, varName := range []string{"TOWER_DATABASE_URL", "TOWER_MASTER_KEY", "TOWER_SESSION_SECRET"} {
+		if !strings.Contains(err.Error(), varName) {
+			t.Errorf("error message missing var name %q: %v", varName, err)
+		}
 	}
 }

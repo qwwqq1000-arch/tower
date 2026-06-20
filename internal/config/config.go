@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 )
 
 // Config holds all runtime configuration for the Tower control plane.
@@ -34,7 +35,7 @@ func Load() (Config, error) {
 		missing = append(missing, "TOWER_SESSION_SECRET")
 	}
 	if len(missing) > 0 {
-		return Config{}, fmt.Errorf("missing required env: %v", missing)
+		return Config{}, fmt.Errorf("missing required env: %s", strings.Join(missing, ", "))
 	}
 	return cfg, nil
 }
