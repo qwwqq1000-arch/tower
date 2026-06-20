@@ -8,6 +8,20 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Account struct {
+	ID               string             `json:"id"`
+	OwnerID          string             `json:"owner_id"`
+	Email            string             `json:"email"`
+	SubscriptionType string             `json:"subscription_type"`
+	OauthAccessEnc   string             `json:"oauth_access_enc"`
+	OauthRefreshEnc  string             `json:"oauth_refresh_enc"`
+	ExpiresAt        int64              `json:"expires_at"`
+	Status           string             `json:"status"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	OnboardedAt      int64              `json:"onboarded_at"`
+	BannedAt         int64              `json:"banned_at"`
+}
+
 type DispatchKey struct {
 	ID        string             `json:"id"`
 	KeyHash   string             `json:"key_hash"`
@@ -23,6 +37,34 @@ type GroupMember struct {
 	UserID  string `json:"user_id"`
 	GroupID string `json:"group_id"`
 	Role    string `json:"role"`
+}
+
+type Node struct {
+	ID              string             `json:"id"`
+	Name            string             `json:"name"`
+	BaseUrl         string             `json:"base_url"`
+	ApiKey          string             `json:"api_key"`
+	MgmtKey         string             `json:"mgmt_key"`
+	OwnerID         string             `json:"owner_id"`
+	GroupID         string             `json:"group_id"`
+	Region          string             `json:"region"`
+	ShortID         string             `json:"short_id"`
+	Version         string             `json:"version"`
+	FingerprintSeed string             `json:"fingerprint_seed"`
+	Enabled         bool               `json:"enabled"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
+type NodeAccount struct {
+	NodeID    string `json:"node_id"`
+	AccountID string `json:"account_id"`
+	ProfileID string `json:"profile_id"`
+	Enabled   bool   `json:"enabled"`
+	Egress    string `json:"egress"`
+	Weight    int32  `json:"weight"`
+	Role      string `json:"role"`
+	SlotID    string `json:"slot_id"`
+	PushedAt  int64  `json:"pushed_at"`
 }
 
 type NodeGroup struct {
