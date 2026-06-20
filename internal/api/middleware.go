@@ -1,0 +1,36 @@
+package api
+
+import (
+	"context"
+	"net/http"
+
+	"github.com/qwwqq1000-arch/tower/internal/auth"
+)
+
+type ctxKey string
+
+const ctxKeySession ctxKey = "session"
+
+// requireSession rejects requests without a valid tower_session cookie and
+// injects the verified payload into the request context.
+func requireSession(secret string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		c, err := r.Cookie("tower_session")
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return
+		}
+		p, ok := auth.VerifySession(secret, c.Value, nowUnix())
+		if !ok {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return
+		}
+		ctx := context.WithValue(r.Context(), ctxKeySession, p)
+		next(w, r.WithContext(ctx))
+	}
+}
+
+func sessionFrom(r *http.Request) (auth.SessionPayload, bool) {
+	p, ok := r.Context().Value(ctxKeySession).(auth.SessionPayload)
+	return p, ok
+}

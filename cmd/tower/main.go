@@ -31,7 +31,7 @@ func main() {
 	defer pool.Close()
 
 	log.Printf("tower listening on %s", cfg.HTTPAddr)
-	if err := http.ListenAndServe(cfg.HTTPAddr, api.NewRouter(pool)); err != nil {
+	if err := http.ListenAndServe(cfg.HTTPAddr, api.NewRouter(pool, cfg.SessionSecret)); err != nil {
 		log.Fatal(err)
 	}
 }
