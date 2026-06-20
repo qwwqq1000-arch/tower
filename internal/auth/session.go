@@ -25,7 +25,10 @@ func sign(secret, msg string) string {
 // IssueSession builds a signed token: base64url(payload) + "." + hex(HMAC).
 func IssueSession(secret, sub, role string, nowUnix, ttlSec int64) string {
 	p := SessionPayload{Sub: sub, Role: role, Exp: nowUnix + ttlSec}
-	raw, _ := json.Marshal(p)
+	raw, err := json.Marshal(p)
+	if err != nil {
+		panic("auth: IssueSession marshal: " + err.Error())
+	}
 	body := base64.RawURLEncoding.EncodeToString(raw)
 	return body + "." + sign(secret, body)
 }

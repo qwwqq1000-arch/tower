@@ -30,6 +30,22 @@ func HashPassword(pw string) (hash, salt string, err error) {
 	return hex.EncodeToString(dk), hex.EncodeToString(s), nil
 }
 
+// dummyHash and dummySalt are precomputed once at init to enable constant-work
+// verification on the user-not-found path, preventing timing-oracle attacks.
+var dummyHash, dummySalt = func() (string, string) {
+	h, s, err := HashPassword("tower-dummy-password-for-timing")
+	if err != nil {
+		panic(err)
+	}
+	return h, s
+}()
+
+// DummyVerify performs a scrypt computation equivalent to VerifyPassword,
+// to equalize timing on the user-not-found path. Always returns false.
+func DummyVerify(pw string) bool {
+	return VerifyPassword(pw, dummyHash, dummySalt)
+}
+
 // VerifyPassword reports whether pw matches the stored hex hash+salt (constant time).
 func VerifyPassword(pw, hash, salt string) bool {
 	s, err := hex.DecodeString(salt)

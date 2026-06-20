@@ -18,6 +18,19 @@ func TestHashVerifyPassword(t *testing.T) {
 	}
 }
 
+func TestDummyVerify_AlwaysFalse(t *testing.T) {
+	// DummyVerify must return false for any attacker-supplied password.
+	if DummyVerify("anything") {
+		t.Fatal("DummyVerify must return false for arbitrary input")
+	}
+	if DummyVerify("") {
+		t.Fatal("DummyVerify must return false for empty string")
+	}
+	if DummyVerify("correct horse battery staple") {
+		t.Fatal("DummyVerify must return false for any non-dummy password")
+	}
+}
+
 func TestHashPassword_UniqueSalt(t *testing.T) {
 	h1, s1, _ := HashPassword("same")
 	h2, s2, _ := HashPassword("same")

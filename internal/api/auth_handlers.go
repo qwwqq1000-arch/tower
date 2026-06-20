@@ -29,7 +29,14 @@ func loginHandler(pool *pgxpool.Pool, secret string) http.HandlerFunc {
 		}
 		q := sqlc.New(pool)
 		u, err := q.GetTenantByUsername(r.Context(), body.Username)
-		if err != nil || !auth.VerifyPassword(body.Password, u.PwHash, u.Salt) {
+		var ok bool
+		if err != nil {
+			auth.DummyVerify(body.Password) // burn equivalent time
+			ok = false
+		} else {
+			ok = auth.VerifyPassword(body.Password, u.PwHash, u.Salt)
+		}
+		if !ok {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 			return
 		}
