@@ -59,3 +59,7 @@ func truncate(b []byte, n int) string {
 	}
 	return string(b)
 }
+
+func errStatus(method, path string, code int) error {
+	return fmt.Errorf("node %s %s: status %d", method, path, code)
+}
