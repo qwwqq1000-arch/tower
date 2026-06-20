@@ -2,10 +2,11 @@ package sqlc
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"os"
 	"testing"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/qwwqq1000-arch/tower/internal/db"
 )
 
@@ -14,11 +15,15 @@ func TestCreateAndGetTenant(t *testing.T) {
 	if url == "" {
 		t.Skip("TEST_DATABASE_URL not set")
 	}
+
+	buf := make([]byte, 6)
+	_, _ = rand.Read(buf)
+	suffix := hex.EncodeToString(buf)
+
 	ctx := context.Background()
 	if err := db.Migrate(ctx, url); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	var pool *pgxpool.Pool
 	pool, err := db.Connect(ctx, url)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
@@ -27,10 +32,10 @@ func TestCreateAndGetTenant(t *testing.T) {
 
 	q := New(pool)
 	created, err := q.CreateTenant(ctx, CreateTenantParams{
-		ID:        "t_test_1",
-		Username:  "alice_" + os.Getenv("RANDOM_SUFFIX"),
+		ID:        "t_" + suffix,
+		Username:  "alice_" + suffix,
 		PwHash:    "h", Salt: "s", Role: "tenant",
-		IngestKey: "ik_test_1",
+		IngestKey: "ik_" + suffix,
 	})
 	if err != nil {
 		t.Fatalf("CreateTenant: %v", err)
