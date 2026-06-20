@@ -32,6 +32,16 @@ type AccountState struct {
 	UpdatedAt     int64  `json:"updated_at"`
 }
 
+type AuditLog struct {
+	ID     int64  `json:"id"`
+	Ts     int64  `json:"ts"`
+	Actor  string `json:"actor"`
+	Action string `json:"action"`
+	Target string `json:"target"`
+	Before []byte `json:"before"`
+	After  []byte `json:"after"`
+}
+
 type BillingLedger struct {
 	ID           int64   `json:"id"`
 	TenantID     string  `json:"tenant_id"`
