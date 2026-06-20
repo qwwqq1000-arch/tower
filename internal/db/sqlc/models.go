@@ -8,6 +8,35 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type DispatchKey struct {
+	ID        string             `json:"id"`
+	KeyHash   string             `json:"key_hash"`
+	Salt      string             `json:"salt"`
+	Prefix    string             `json:"prefix"`
+	OwnerID   string             `json:"owner_id"`
+	Label     string             `json:"label"`
+	Enabled   bool               `json:"enabled"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type GroupMember struct {
+	UserID  string `json:"user_id"`
+	GroupID string `json:"group_id"`
+	Role    string `json:"role"`
+}
+
+type NodeGroup struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	OwnerID string `json:"owner_id"`
+}
+
+type Role struct {
+	Name        string `json:"name"`
+	Builtin     bool   `json:"builtin"`
+	Permissions []byte `json:"permissions"`
+}
+
 type Tenant struct {
 	ID           string             `json:"id"`
 	Username     string             `json:"username"`
