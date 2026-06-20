@@ -7,7 +7,6 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"io"
 )
@@ -55,8 +54,12 @@ func (c *Cipher) Decrypt(s string) ([]byte, error) {
 	}
 	ns := c.aead.NonceSize()
 	if len(raw) < ns {
-		return nil, errors.New("ciphertext too short")
+		return nil, fmt.Errorf("ciphertext too short: need at least %d bytes, got %d", ns, len(raw))
 	}
 	nonce, ct := raw[:ns], raw[ns:]
-	return c.aead.Open(nil, nonce, ct, nil)
+	plain, err := c.aead.Open(nil, nonce, ct, nil)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt: %w", err)
+	}
+	return plain, nil
 }

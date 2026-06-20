@@ -46,8 +46,9 @@ func TestNewCipher_BadKeyLength(t *testing.T) {
 func TestDecrypt_TamperFails(t *testing.T) {
 	c, _ := NewCipher(newKeyB64(t))
 	enc, _ := c.Encrypt([]byte("secret"))
-	// flip last char
-	bad := enc[:len(enc)-1] + string([]byte{enc[len(enc)-1] ^ 0x01})
+	raw, _ := base64.StdEncoding.DecodeString(enc)
+	raw[len(raw)-1] ^= 0x01
+	bad := base64.StdEncoding.EncodeToString(raw)
 	if _, err := c.Decrypt(bad); err == nil {
 		t.Fatal("expected error decrypting tampered ciphertext")
 	}
