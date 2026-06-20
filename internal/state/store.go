@@ -92,6 +92,13 @@ func (s *Store) OnSuccess(key string) {
 	}
 }
 
+// SetClock replaces the clock (test/helper use; not for concurrent runtime swaps).
+func (s *Store) SetClock(clock func() int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.now = clock
+}
+
 // OnBanSignal records a ban signal; returns whether the breaker opened.
 func (s *Store) OnBanSignal(key string, cfg BreakerCfg) bool {
 	s.mu.Lock()
