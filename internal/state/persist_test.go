@@ -44,4 +44,8 @@ func TestPersist_SaveThenWarmStart(t *testing.T) {
 	if got.Breaker.State(2000) != "open" {
 		t.Fatalf("warm-started breaker state=%s, want open (durable ban restored)", got.Breaker.State(2000))
 	}
+	openUntil, streak, fc := got.Breaker.Snapshot()
+	if openUntil != 101000 || streak != 1 || fc != 1 {
+		t.Fatalf("snapshot after warm-start = (%d,%d,%d), want (101000,1,1)", openUntil, streak, fc)
+	}
 }

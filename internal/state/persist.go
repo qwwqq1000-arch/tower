@@ -31,10 +31,7 @@ func LoadStates(ctx context.Context, q *sqlc.Queries, store *Store, capacity int
 		return err
 	}
 	for _, r := range rows {
-		a := store.Ensure(stateKey(r.NodeID, r.ProfileID), capacity)
-		store.WithLock(func() {
-			a.Breaker.Restore(r.CooldownUntil, int(r.BanStreak), int(r.FailCount))
-		})
+		store.RestoreBreaker(stateKey(r.NodeID, r.ProfileID), capacity, r.CooldownUntil, int(r.BanStreak), int(r.FailCount))
 	}
 	return nil
 }

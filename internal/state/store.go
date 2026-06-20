@@ -34,6 +34,19 @@ func (s *Store) WithLock(fn func()) {
 	fn()
 }
 
+// RestoreBreaker warm-starts one account's durable verdict atomically (single lock).
+// Ephemeral state (slots, trial) is not affected. Intended for startup warm-start.
+func (s *Store) RestoreBreaker(key string, capacity int, openUntil int64, streak, failCount int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.accts[key]
+	if a == nil {
+		a = NewAccount(capacity)
+		s.accts[key] = a
+	}
+	a.Breaker.Restore(openUntil, streak, failCount)
+}
+
 // TryDispatch atomically checks eligibility and, if dispatchable, acquires a
 // slot (claiming a half-open trial when applicable). Returns whether dispatched.
 func (s *Store) TryDispatch(key, model string, cfg BreakerCfg) bool {
