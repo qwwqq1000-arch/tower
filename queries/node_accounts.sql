@@ -1,0 +1,16 @@
+-- name: AssignAccount :one
+INSERT INTO node_accounts (node_id, account_id, profile_id, egress, weight, role, slot_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7)
+RETURNING *;
+
+-- name: ListNodeAccountsByNode :many
+SELECT * FROM node_accounts WHERE node_id = $1;
+
+-- name: ListNodeAccountsByAccount :many
+SELECT * FROM node_accounts WHERE account_id = $1;
+
+-- name: SetNodeAccountEnabled :exec
+UPDATE node_accounts SET enabled = $3 WHERE node_id = $1 AND account_id = $2;
+
+-- name: UnassignAccount :exec
+DELETE FROM node_accounts WHERE node_id = $1 AND account_id = $2;
