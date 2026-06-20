@@ -62,3 +62,12 @@ func TestDecide_PriceBeatsExhausted(t *testing.T) {
 		t.Fatalf("got %v, want Price (higher priority than Exhausted)", g)
 	}
 }
+
+func TestIsProbe_CJK(t *testing.T) {
+	if !IsProbe("测活") {
+		t.Fatal("测活 (a bundled probe word) must be detected")
+	}
+	if IsProbe("这是一段很长的中文内容需要真实处理而不是探活") {
+		t.Fatal("long CJK content must not be treated as probe")
+	}
+}

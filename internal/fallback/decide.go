@@ -2,7 +2,10 @@
 // and which channel.
 package fallback
 
-import "strings"
+import (
+	"strings"
+	"unicode/utf8"
+)
 
 // Trigger names why a request was routed to fallback.
 type Trigger string
@@ -33,7 +36,7 @@ var probeWords = map[string]bool{"hi": true, "ping": true, "测活": true, "hell
 // IsProbe reports whether body looks like a health-check probe.
 func IsProbe(body string) bool {
 	t := strings.TrimSpace(body)
-	if len(t) > 12 {
+	if utf8.RuneCountInString(t) > 12 {
 		return false
 	}
 	return probeWords[strings.ToLower(t)]
