@@ -42,6 +42,16 @@ type AuditLog struct {
 	After  []byte `json:"after"`
 }
 
+type BanEpisode struct {
+	ID          int64  `json:"id"`
+	NodeID      string `json:"node_id"`
+	ProfileID   string `json:"profile_id"`
+	BannedAt    int64  `json:"banned_at"`
+	RecoveredAt int64  `json:"recovered_at"`
+	SurvivalMs  int64  `json:"survival_ms"`
+	Detail      []byte `json:"detail"`
+}
+
 type BillingLedger struct {
 	ID           int64   `json:"id"`
 	TenantID     string  `json:"tenant_id"`
@@ -62,6 +72,15 @@ type CostRollup struct {
 	TokensIn  int64   `json:"tokens_in"`
 	TokensOut int64   `json:"tokens_out"`
 	CostUsd   float64 `json:"cost_usd"`
+}
+
+type DispatchEvent struct {
+	ID      int64  `json:"id"`
+	Ts      int64  `json:"ts"`
+	Type    string `json:"type"`
+	Target  string `json:"target"`
+	OwnerID string `json:"owner_id"`
+	Detail  []byte `json:"detail"`
 }
 
 type DispatchKey struct {
