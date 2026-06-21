@@ -48,6 +48,7 @@ func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc
 		mux.HandleFunc("GET /api/admin/accounts", requireAdmin(secret, listAccountsHandler(q)))
 		mux.HandleFunc("DELETE /api/admin/accounts/{nodeId}/{accountId}", requireAdmin(secret, unassignAccountHandler(q)))
 		mux.HandleFunc("PATCH /api/admin/accounts/{nodeId}/{accountId}", requireAdmin(secret, updateNodeAccountHandler(q)))
+		mux.HandleFunc("PATCH /api/admin/accounts/{accountId}/expiry", requireAdmin(secret, setAccountExpiryHandler(q)))
 		mux.HandleFunc("GET /api/admin/nodes/{id}/profiles", requireAdmin(secret, listProfilesHandler(q)))
 		mux.HandleFunc("POST /api/admin/nodes/{id}/accounts/import", requireAdmin(secret, importProfileHandler(q)))
 		mux.HandleFunc("POST /api/admin/nodes/{id}/oauth/start", requireAdmin(secret, oauthStartHandler(q)))

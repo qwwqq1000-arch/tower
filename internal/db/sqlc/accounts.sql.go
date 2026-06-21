@@ -148,3 +148,17 @@ func (q *Queries) UpdateAccountCreds(ctx context.Context, arg UpdateAccountCreds
 	)
 	return err
 }
+
+const setAccountExpiry = `-- name: SetAccountExpiry :exec
+UPDATE accounts SET expires_at=$2 WHERE id=$1
+`
+
+type SetAccountExpiryParams struct {
+	ID        string `json:"id"`
+	ExpiresAt int64  `json:"expires_at"`
+}
+
+func (q *Queries) SetAccountExpiry(ctx context.Context, arg SetAccountExpiryParams) error {
+	_, err := q.db.Exec(ctx, setAccountExpiry, arg.ID, arg.ExpiresAt)
+	return err
+}

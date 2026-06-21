@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 	"github.com/qwwqq1000-arch/tower/internal/nodeclient"
@@ -94,7 +95,7 @@ func oauthExchangeHandler(q *sqlc.Queries) http.HandlerFunc {
 			SubscriptionType: "",
 			OauthAccessEnc:   "",
 			OauthRefreshEnc:  "",
-			ExpiresAt:        0,
+			ExpiresAt:        time.Now().Add(30 * 24 * time.Hour).UnixMilli(),
 			OnboardedAt:      0,
 		}); err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
@@ -160,7 +161,7 @@ func importProfileHandler(q *sqlc.Queries) http.HandlerFunc {
 			SubscriptionType: "",
 			OauthAccessEnc:   "",
 			OauthRefreshEnc:  "",
-			ExpiresAt:        0,
+			ExpiresAt:        time.Now().Add(30 * 24 * time.Hour).UnixMilli(),
 			OnboardedAt:      0,
 		}); err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
@@ -224,22 +225,45 @@ func listAccountsHandler(q *sqlc.Queries) http.HandlerFunc {
 		for _, a := range rows {
 			key := a.NodeID + ":" + a.ProfileID
 			out = append(out, map[string]any{
-				"nodeId":       a.NodeID,
-				"nodeName":     a.NodeName,
-				"baseUrl":      a.BaseUrl,
-				"accountId":    a.AccountID,
-				"profileId":    a.ProfileID,
-				"enabled":      a.Enabled,
-				"weight":       a.Weight,
-				"role":         a.Role,
-				"egress":       a.Egress,
-				"email":        a.Email,
-				"status":       a.AcctStatus,
-				"todayCostUsd": todayCostMap[key],
-				"totalCostUsd": totalCostMap[key],
+				"nodeId":           a.NodeID,
+				"nodeName":         a.NodeName,
+				"baseUrl":          a.BaseUrl,
+				"accountId":        a.AccountID,
+				"profileId":        a.ProfileID,
+				"enabled":          a.Enabled,
+				"weight":           a.Weight,
+				"role":             a.Role,
+				"egress":           a.Egress,
+				"email":            a.Email,
+				"status":           a.AcctStatus,
+				"todayCostUsd":     todayCostMap[key],
+				"totalCostUsd":     totalCostMap[key],
+				"expiresAt":        a.ExpiresAt,
+				"subscriptionType": a.SubscriptionType,
 			})
 		}
 		writeJSON(w, 200, out)
+	}
+}
+
+func setAccountExpiryHandler(q *sqlc.Queries) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		accountID := r.PathValue("accountId")
+		var body struct {
+			ExpiresAt int64 `json:"expiresAt"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "invalid body"})
+			return
+		}
+		if err := q.SetAccountExpiry(r.Context(), sqlc.SetAccountExpiryParams{
+			ID:        accountID,
+			ExpiresAt: body.ExpiresAt,
+		}); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }
 

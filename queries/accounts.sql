@@ -14,3 +14,6 @@ UPDATE accounts SET oauth_access_enc=$2, oauth_refresh_enc=$3, expires_at=$4 WHE
 
 -- name: SetAccountStatus :exec
 UPDATE accounts SET status=$2, banned_at=$3 WHERE id=$1;
+
+-- name: SetAccountExpiry :exec
+UPDATE accounts SET expires_at=$2 WHERE id=$1;
