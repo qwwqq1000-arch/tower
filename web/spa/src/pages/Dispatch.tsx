@@ -180,43 +180,67 @@ function TrafficPanel({ data }: { data: DispatchStatus }) {
 }
 
 // ------------------------------------------------------------------
-// Event type badge
+// Shared event type helpers (labels + styles)
 // ------------------------------------------------------------------
-function EventTypeBadge({ type }: { type: string }) {
-  let cls = 'bg-blue-500/20 text-blue-400 border-blue-500/40';
-  if (type === 'ban' || type.startsWith('ban_')) {
-    cls = 'bg-red-500/20 text-red-400 border-red-500/40';
-  } else if (type === 'dispatch_ok' || type === 'ok') {
-    cls = 'bg-green-500/20 text-green-400 border-green-500/40';
-  } else if (type === 'dispatch_err' || type === 'error' || type.endsWith('_err')) {
-    cls = 'bg-orange-500/20 text-orange-400 border-orange-500/40';
-  } else if (type === 'half_open' || type === 'recover') {
-    cls = 'bg-yellow-500/20 text-yellow-400 border-yellow-500/40';
+const FALLBACK_REASON_CN: Record<string, string> = {
+  probe:      '探活',
+  price:      '低价',
+  keyword:    '关键词',
+  model:      '指定模型',
+  exhausted:  '号池耗尽',
+  session:    '会话连错',
+  cyber:      '安全拒答',
+};
+
+interface EventLabel { label: string; cls: string; }
+
+function getEventLabel(type: string): EventLabel {
+  switch (type) {
+    case 'dispatch_ok': return { label: '派单成功', cls: 'bg-green-500/20 text-green-400 border-green-500/40' };
+    case 'ban':         return { label: '封号',     cls: 'bg-red-500/20 text-red-400 border-red-500/40' };
+    case 'recover':     return { label: '恢复',     cls: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/40' };
+    case 'fallback':    return { label: '保底触发', cls: 'bg-blue-500/20 text-blue-400 border-blue-500/40' };
+    case 'scale_up':    return { label: '弹性扩容', cls: 'bg-blue-500/20 text-blue-400 border-blue-500/40' };
+    case 'scale_down':  return { label: '弹性缩容', cls: 'bg-gray-500/20 text-gray-400 border-gray-500/40' };
+    default:
+      if (type === 'dispatch_err' || type.endsWith('_err') || type === 'error') {
+        return { label: type, cls: 'bg-orange-500/20 text-orange-400 border-orange-500/40' };
+      }
+      return { label: type, cls: 'bg-blue-500/20 text-blue-400 border-blue-500/40' };
   }
-  return (
-    <span className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-mono shrink-0 ${cls}`}>
-      {type}
-    </span>
-  );
+}
+
+function renderEventDetail(type: string, target: string, fallbackNames?: Map<string, string>): string {
+  if (type === 'fallback') {
+    const cn = FALLBACK_REASON_CN[target] ?? target;
+    return cn ? `保底触发 · ${cn}` : '保底触发';
+  }
+  if (type === 'scale_up' || type === 'scale_down') {
+    return target || '';
+  }
+  if (type === 'ban' || type === 'dispatch_ok' || type === 'recover') {
+    // suppress raw ids
+    if (!target || target.startsWith('n_') || target.startsWith('fc_') || target.startsWith('fb:')) return '';
+    if (target.startsWith('fallback:')) {
+      const id = target.slice('fallback:'.length);
+      const name = fallbackNames?.get(id);
+      return name !== undefined ? `保底: ${name}` : '保底';
+    }
+    return target;
+  }
+  if (target.startsWith('fallback:')) {
+    const id = target.slice('fallback:'.length);
+    const name = fallbackNames?.get(id);
+    return name !== undefined ? `保底: ${name}` : '保底';
+  }
+  if (target.startsWith('n_') || target.startsWith('fc_') || target.startsWith('fb:')) return '节点';
+  return target || '';
 }
 
 // ------------------------------------------------------------------
 // Events timeline
 // ------------------------------------------------------------------
 function EventTimeline({ events, fallbackNames }: { events: DispatchEvent[]; fallbackNames: Map<string, string> }) {
-  function renderTarget(target: string): string {
-    if (target.startsWith('fallback:')) {
-      const id = target.slice('fallback:'.length);
-      const name = fallbackNames.get(id);
-      return name !== undefined ? `保底: ${name}` : '保底';
-    }
-    // raw node/account keys — never expose them
-    if (target.startsWith('n_') || target.startsWith('fc_') || target.startsWith('fb:')) {
-      return '节点';
-    }
-    return target || '节点';
-  }
-
   function formatTs(ts: number | undefined): string {
     if (ts == null || ts === 0) return '—';
     try {
@@ -233,15 +257,21 @@ function EventTimeline({ events, fallbackNames }: { events: DispatchEvent[]; fal
         <p className="px-4 py-6 text-center text-muted text-xs">暂无事件</p>
       )}
       <ul className="divide-y divide-line/50 max-h-80 overflow-y-auto">
-        {events.map((e, idx) => (
-          <li key={idx} className="flex items-center gap-3 px-4 py-2.5 hover:bg-line/30 transition">
-            <span className="text-xs text-muted tabular-nums shrink-0 w-20">
-              {formatTs(e.ts)}
-            </span>
-            <EventTypeBadge type={e.type} />
-            <span className="text-xs text-muted truncate">{renderTarget(e.target)}</span>
-          </li>
-        ))}
+        {events.map((e, idx) => {
+          const { label, cls } = getEventLabel(e.type);
+          const detail = renderEventDetail(e.type, e.target, fallbackNames);
+          return (
+            <li key={idx} className="flex items-center gap-3 px-4 py-2.5 hover:bg-line/30 transition">
+              <span className="text-xs text-muted tabular-nums shrink-0 w-20">
+                {formatTs(e.ts)}
+              </span>
+              <span className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-mono shrink-0 ${cls}`}>
+                {label}
+              </span>
+              {detail && <span className="text-xs text-muted truncate">{detail}</span>}
+            </li>
+          );
+        })}
       </ul>
     </div>
   );

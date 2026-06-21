@@ -163,6 +163,7 @@ export default function Policies() {
   const elasticEnabled = useField<boolean>(false);
   const elasticScaleUpUtil = useField<number>(0.8);
   const elasticMaxReserve = useField<number>(1000);
+  const elasticBaselineCount = useField<number>(1);
   // Boolean
   const fallbackEnabled = useField<boolean>(false);
   const fallbackProbeEnabled = useField<boolean>(false);
@@ -222,6 +223,7 @@ export default function Policies() {
         setBool(elasticEnabled, 'ElasticEnabled');
         setNum(elasticScaleUpUtil, 'ElasticScaleUpUtil');
         setNum(elasticMaxReserve, 'ElasticMaxReserve');
+        setNum(elasticBaselineCount, 'ElasticBaselineCount');
       } catch {
         // silently ignore — page still usable
       }
@@ -271,6 +273,7 @@ export default function Policies() {
     if (elasticEnabled.enabled) patch.ElasticEnabled = elasticEnabled.value;
     if (elasticScaleUpUtil.enabled) patch.ElasticScaleUpUtil = elasticScaleUpUtil.value;
     if (elasticMaxReserve.enabled) patch.ElasticMaxReserve = elasticMaxReserve.value;
+    if (elasticBaselineCount.enabled) patch.ElasticBaselineCount = elasticBaselineCount.value;
     return patch;
   }
 
@@ -310,7 +313,7 @@ export default function Policies() {
     quotaRotateThreshold, maxFailover,
     warmupHours, warmupMaxConcurrent, warmupBlockOpus,
     sessionErrorThreshold, sessionCooldownSec, responseExileEnabled, responseExileKeywords,
-    elasticEnabled, elasticScaleUpUtil, elasticMaxReserve,
+    elasticEnabled, elasticScaleUpUtil, elasticMaxReserve, elasticBaselineCount,
   ].some((f) => f.enabled);
 
   return (
@@ -810,6 +813,20 @@ export default function Policies() {
             onChange={elasticMaxReserve.set}
             disabled={!elasticMaxReserve.enabled}
             min={0}
+          />
+        </FieldRow>
+
+        <FieldRow
+          label="默认活跃账户数(打满后才按弹性扩容)"
+          desc="弹性扩容触发前默认保持活跃的账户数量"
+          enabled={elasticBaselineCount.enabled}
+          onToggle={elasticBaselineCount.toggle}
+        >
+          <NumInput
+            value={elasticBaselineCount.value}
+            onChange={elasticBaselineCount.set}
+            disabled={!elasticBaselineCount.enabled}
+            min={1}
           />
         </FieldRow>
       </div>

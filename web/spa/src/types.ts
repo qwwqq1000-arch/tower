@@ -152,6 +152,7 @@ export interface PolicyPatch {
   ElasticEnabled?: boolean;
   ElasticScaleUpUtil?: number;
   ElasticMaxReserve?: number;
+  ElasticBaselineCount?: number;
 }
 
 // policy.Config (resolved)

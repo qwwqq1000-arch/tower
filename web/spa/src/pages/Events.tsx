@@ -15,14 +15,28 @@ function fmtTime(ms: number): string {
   });
 }
 
-const TYPE_STYLES: Record<string, { dot: string; badge: string }> = {
-  node_up:      { dot: 'bg-ok', badge: 'bg-ok/10 text-ok border-ok/30' },
-  node_down:    { dot: 'bg-err', badge: 'bg-err/10 text-err border-err/30' },
-  ban:          { dot: 'bg-err', badge: 'bg-err/10 text-err border-err/30' },
-  unban:        { dot: 'bg-ok', badge: 'bg-ok/10 text-ok border-ok/30' },
-  fallback:     { dot: 'bg-warn', badge: 'bg-warn/10 text-warn border-warn/30' },
+const TYPE_STYLES: Record<string, { dot: string; badge: string; label?: string }> = {
+  node_up:      { dot: 'bg-ok',     badge: 'bg-ok/10 text-ok border-ok/30' },
+  node_down:    { dot: 'bg-err',    badge: 'bg-err/10 text-err border-err/30' },
+  ban:          { dot: 'bg-err',    badge: 'bg-err/10 text-err border-err/30',     label: '封号' },
+  unban:        { dot: 'bg-ok',     badge: 'bg-ok/10 text-ok border-ok/30' },
+  recover:      { dot: 'bg-warn',   badge: 'bg-warn/10 text-warn border-warn/30',  label: '恢复' },
+  dispatch_ok:  { dot: 'bg-ok',     badge: 'bg-ok/10 text-ok border-ok/30',        label: '派单成功' },
+  fallback:     { dot: 'bg-warn',   badge: 'bg-warn/10 text-warn border-warn/30',  label: '保底触发' },
+  scale_up:     { dot: 'bg-accent', badge: 'bg-accent/10 text-accent border-accent/30', label: '弹性扩容' },
+  scale_down:   { dot: 'bg-muted',  badge: 'bg-surface text-muted border-line',    label: '弹性缩容' },
   provision:    { dot: 'bg-accent', badge: 'bg-accent/10 text-accent border-accent/30' },
   settle:       { dot: 'bg-accent', badge: 'bg-accent/10 text-accent border-accent/30' },
+};
+
+const FALLBACK_REASON_CN: Record<string, string> = {
+  probe:     '探活',
+  price:     '低价',
+  keyword:   '关键词',
+  model:     '指定模型',
+  exhausted: '号池耗尽',
+  session:   '会话连错',
+  cyber:     '安全拒答',
 };
 
 function getStyle(type: string) {
@@ -33,9 +47,25 @@ function getStyle(type: string) {
   );
 }
 
+function renderTargetText(type: string, target: string): string {
+  if (type === 'fallback') {
+    const cn = FALLBACK_REASON_CN[target] ?? target;
+    return cn ? `保底触发 · ${cn}` : '保底触发';
+  }
+  if (type === 'scale_up' || type === 'scale_down') {
+    return target || '';
+  }
+  // suppress raw internal ids
+  if (!target || target.startsWith('n_') || target.startsWith('fc_') || target.startsWith('fb:')) return '';
+  return target;
+}
+
 // ---- Timeline item ----
 function EventItem({ row }: { row: EventRecord }) {
-  const { dot, badge } = getStyle(row.type);
+  const style = getStyle(row.type);
+  const { dot, badge } = style;
+  const label = style.label ?? row.type;
+  const targetText = renderTargetText(row.type, row.target ?? '');
   return (
     <div className="flex gap-4">
       {/* Timeline track */}
@@ -47,12 +77,12 @@ function EventItem({ row }: { row: EventRecord }) {
       <div className="pb-5 min-w-0 flex-1">
         <div className="flex flex-wrap items-start gap-x-3 gap-y-1">
           <span className={`inline-flex items-center text-xs font-medium border rounded-full px-2 py-0.5 ${badge}`}>
-            {row.type}
+            {label}
           </span>
           <span className="text-xs text-muted font-mono mt-0.5">{fmtTime(row.ts)}</span>
         </div>
-        {row.target && (
-          <p className="text-sm text-ink mt-1 truncate" title={row.target}>{row.target}</p>
+        {targetText && (
+          <p className="text-sm text-ink mt-1 truncate" title={targetText}>{targetText}</p>
         )}
         {row.detail && Object.keys(row.detail).length > 0 && (
           <pre className="mt-1.5 text-xs text-muted bg-bg border border-line rounded-lg px-3 py-2 overflow-x-auto max-w-full">
