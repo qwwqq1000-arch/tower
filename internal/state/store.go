@@ -1,6 +1,7 @@
 package state
 
 import (
+	"sort"
 	"strings"
 	"sync"
 )
@@ -177,4 +178,26 @@ func (s *Store) SetDisabled(key string, capacity int, disabled bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ensureLocked(key, capacity).Disabled = disabled
+}
+
+// AccountSnapshot is a read-only view of one account's live state.
+type AccountSnapshot struct {
+	Key       string
+	Status    string
+	Inflight  int
+	Available int
+}
+
+// Snapshot returns a sorted, point-in-time view of every account's live state.
+func (s *Store) Snapshot(now int64) []AccountSnapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]AccountSnapshot, 0, len(s.accts))
+	for key, a := range s.accts {
+		out = append(out, AccountSnapshot{
+			Key: key, Status: a.Status(now), Inflight: a.Slots.InUse(), Available: a.Slots.Available(now),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out
 }
