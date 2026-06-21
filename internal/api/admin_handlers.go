@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
-	"strings"
 
 	"github.com/qwwqq1000-arch/tower/internal/auth"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
@@ -21,7 +20,7 @@ func randHex(prefix string) string {
 func createNodeHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct{ Name, BaseUrl, ApiKey, OwnerId string }
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.BaseUrl == "" {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Name == "" || body.BaseUrl == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name/baseUrl required"})
 			return
 		}
@@ -114,14 +113,20 @@ func dashboardHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
+		var store interface{ NodeStatus(string) string }
+		if svc != nil && svc.Store != nil {
+			store = svc.Store
+		}
 		nodes := make([]map[string]any, 0, len(rows))
 		for _, n := range rows {
 			m := map[string]any{"id": n.ID, "name": n.Name, "baseUrl": n.BaseUrl, "enabled": n.Enabled, "ownerId": n.OwnerID}
+			if store != nil {
+				if st := store.NodeStatus(n.ID); st != "" {
+					m["status"] = st
+				}
+			}
 			nodes = append(nodes, m)
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"nodes": nodes})
 	}
 }
-
-// adminID is a tiny path-suffix helper: not used (we use r.PathValue).
-var _ = strings.TrimPrefix

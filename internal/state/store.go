@@ -1,6 +1,9 @@
 package state
 
-import "sync"
+import (
+	"strings"
+	"sync"
+)
 
 // Store is the thread-safe in-memory registry of per-account state.
 type Store struct {
@@ -125,4 +128,26 @@ func (s *Store) OnBanSignal(key string, cfg BreakerCfg) bool {
 		return false
 	}
 	return a.Breaker.OnBanSignal(cfg, s.now())
+}
+
+// NodeStatus returns an aggregate status for all accounts whose key begins with
+// nodeID+":". Priority order: disabled > banned > half_open > active.
+// Returns "" if no accounts are found for the node.
+func (s *Store) NodeStatus(nodeID string) string {
+	prefix := nodeID + ":"
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+	rank := map[string]int{"disabled": 3, "banned": 2, "half_open": 1, "active": 0}
+	best := ""
+	for k, a := range s.accts {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		st := a.Status(now)
+		if best == "" || rank[st] > rank[best] {
+			best = st
+		}
+	}
+	return best
 }
