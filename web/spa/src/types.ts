@@ -11,12 +11,12 @@ export interface User {
 // --- Nodes ---
 export interface NodeRecord {
   id: string;
-  host: string;
-  port: number;
-  auth_valid: boolean;
-  server_state: string;
-  created_at: string;
-  updated_at: string;
+  name: string;
+  baseUrl: string;
+  ownerId: string;
+  enabled: boolean;
+  version?: string;
+  status?: string;
 }
 
 // --- Keys (号库) ---
@@ -42,13 +42,8 @@ export interface DispatchKeyCreated {
 }
 
 // --- Dashboard ---
-export interface DashboardStats {
-  nodes_total: number;
-  nodes_healthy: number;
-  keys_total: number;
-  requests_today: number;
-  errors_today: number;
-  latency_p99_ms: number;
+export interface DashboardResponse {
+  nodes: NodeRecord[];
 }
 
 // --- Provision ---

@@ -4,10 +4,9 @@
 import type {
   User,
   NodeRecord,
-  KeyRecord,
   DispatchKeyRecord,
   DispatchKeyCreated,
-  DashboardStats,
+  DashboardResponse,
   ProvisionRequest,
   ProvisionJob,
   Policy,
@@ -56,7 +55,7 @@ export const me = () => api<User>('GET', '/auth/me');
 // Dashboard
 // ------------------------------------------------------------------
 export const getDashboard = () =>
-  api<DashboardStats>('GET', '/api/dashboard');
+  api<DashboardResponse>('GET', '/api/dashboard');
 
 // ------------------------------------------------------------------
 // Nodes
@@ -64,23 +63,11 @@ export const getDashboard = () =>
 export const listNodes = () =>
   api<NodeRecord[]>('GET', '/api/admin/nodes');
 
-export const createNode = (data: { host: string; port?: number }) =>
+export const createNode = (data: { name: string; baseUrl: string; apiKey?: string; ownerId?: string }) =>
   api<NodeRecord>('POST', '/api/admin/nodes', data);
 
 export const deleteNode = (id: string) =>
   api<void>('DELETE', `/api/admin/nodes/${id}`);
-
-// ------------------------------------------------------------------
-// Keys (号库)
-// ------------------------------------------------------------------
-export const listKeys = () =>
-  api<KeyRecord[]>('GET', '/api/admin/keys');
-
-export const createKey = (data: { key: string; label?: string }) =>
-  api<KeyRecord>('POST', '/api/admin/keys', data);
-
-export const deleteKey = (id: string) =>
-  api<void>('DELETE', `/api/admin/keys/${id}`);
 
 // ------------------------------------------------------------------
 // Dispatch Keys (调度密钥)

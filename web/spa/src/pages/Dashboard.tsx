@@ -1,10 +1,10 @@
 // ============================================================
 // Tower SPA — Dashboard page
-// GET /api/dashboard → node card grid + top stats
+// GET /api/dashboard → {nodes} → derive stats locally
 // ============================================================
 import { useEffect, useState } from 'react';
-import { getDashboard, listNodes } from '../api';
-import type { DashboardStats, NodeRecord } from '../types';
+import { getDashboard } from '../api';
+import type { NodeRecord } from '../types';
 
 // ------------------------------------------------------------------
 // Stat card
@@ -34,29 +34,21 @@ function StatCard({ label, value, accent, warn }: StatCardProps) {
 // Node card
 // ------------------------------------------------------------------
 function NodeCard({ node }: { node: NodeRecord }) {
-  const isHealthy = node.auth_valid && node.server_state === 'running';
-  const statusColor = isHealthy
-    ? 'text-ok'
-    : node.server_state === 'stopped'
-      ? 'text-muted'
-      : 'text-err';
+  const isHealthy = node.enabled;
+  const statusColor = isHealthy ? 'text-ok' : 'text-muted';
 
-  const statusLabel = !node.auth_valid
-    ? '封号'
-    : node.server_state === 'running'
-      ? '运行中'
-      : node.server_state === 'stopped'
-        ? '已停止'
-        : node.server_state;
+  const statusLabel = node.status
+    ? node.status
+    : node.enabled ? '运行中' : '已停用';
 
   return (
     <div className="bg-surface border border-line rounded-xl p-4 flex flex-col gap-2 hover:border-accent/50 transition">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="text-sm font-semibold text-ink truncate">
-            {node.host}:{node.port}
+            {node.name}
           </p>
-          <p className="text-xs text-muted mt-0.5 truncate">ID: {node.id}</p>
+          <p className="text-xs text-muted mt-0.5 truncate">{node.baseUrl}</p>
         </div>
         <span
           className={`shrink-0 text-xs font-medium px-2 py-0.5 rounded-full border ${statusColor} border-current`}
@@ -67,14 +59,10 @@ function NodeCard({ node }: { node: NodeRecord }) {
 
       <div className="flex items-center gap-2 text-xs text-muted">
         <span
-          className={`inline-block w-2 h-2 rounded-full ${node.auth_valid ? 'bg-ok' : 'bg-err'}`}
+          className={`inline-block w-2 h-2 rounded-full ${node.enabled ? 'bg-ok' : 'bg-muted'}`}
         />
-        <span>{node.auth_valid ? '密钥有效' : '密钥失效'}</span>
+        <span>{node.enabled ? '已启用' : '已停用'}</span>
       </div>
-
-      <p className="text-xs text-muted">
-        更新: {new Date(node.updated_at).toLocaleString('zh-CN')}
-      </p>
     </div>
   );
 }
@@ -83,7 +71,6 @@ function NodeCard({ node }: { node: NodeRecord }) {
 // Dashboard page
 // ------------------------------------------------------------------
 export default function Dashboard() {
-  const [stats, setStats] = useState<DashboardStats | null>(null);
   const [nodes, setNodes] = useState<NodeRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -95,10 +82,9 @@ export default function Dashboard() {
       setLoading(true);
       setError(null);
       try {
-        const [s, n] = await Promise.all([getDashboard(), listNodes()]);
+        const data = await getDashboard();
         if (!cancelled) {
-          setStats(s);
-          setNodes(n);
+          setNodes(data.nodes);
         }
       } catch (err) {
         if (!cancelled) {
@@ -135,34 +121,24 @@ export default function Dashboard() {
     );
   }
 
+  const total = nodes.length;
+  const enabled = nodes.filter((n) => n.enabled).length;
+
   return (
     <div className="p-4 md:p-6 space-y-6">
       {/* Page title */}
       <h1 className="text-2xl font-semibold text-ink">看板</h1>
 
       {/* Top stats */}
-      {stats && (
-        <section>
-          <h2 className="text-xs font-medium text-muted uppercase tracking-wide mb-3">
-            总览
-          </h2>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            <StatCard label="节点总数" value={stats.nodes_total} />
-            <StatCard label="健康节点" value={stats.nodes_healthy} accent />
-            <StatCard label="密钥总数" value={stats.keys_total} />
-            <StatCard label="今日请求" value={stats.requests_today} />
-            <StatCard
-              label="今日错误"
-              value={stats.errors_today}
-              warn={stats.errors_today > 0}
-            />
-            <StatCard
-              label="P99 延迟"
-              value={`${stats.latency_p99_ms} ms`}
-            />
-          </div>
-        </section>
-      )}
+      <section>
+        <h2 className="text-xs font-medium text-muted uppercase tracking-wide mb-3">
+          总览
+        </h2>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+          <StatCard label="节点总数" value={total} />
+          <StatCard label="启用节点" value={enabled} accent />
+        </div>
+      </section>
 
       {/* Node grid */}
       <section>
@@ -172,7 +148,7 @@ export default function Dashboard() {
 
         {nodes.length === 0 ? (
           <div className="bg-surface border border-line rounded-xl p-8 text-center text-muted text-sm">
-            暂无节点 — 前往「节点」页面添加或开通新节点
+            暂无节点 — 前往「节点」页面添加新节点
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
