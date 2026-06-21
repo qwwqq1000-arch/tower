@@ -182,6 +182,7 @@ export interface LogEntry {
   status: string;
   httpStatus: number;
   latencyMs: number;
+  ttfbMs?: number;
   tokensIn: number;
   tokensOut: number;
   fallbackReason: string;

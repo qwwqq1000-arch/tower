@@ -1,10 +1,10 @@
 // ============================================================
 // Tower SPA — Logs page (调度日志)
 // GET /api/admin/logs?limit=200 → table with client-side search
-// Columns: time / model / target / status / http / latency / tokens in+out / fallbackReason
+// Columns: time / model / target / status / http / latency / ttfb / tokens in+out / fallbackReason
 // ============================================================
 import { useEffect, useState, useCallback } from 'react';
-import { getLogs } from '../api';
+import { getLogs, listFallbackChannels } from '../api';
 import type { LogEntry } from '../types';
 
 // ---- helpers ----
@@ -14,6 +14,12 @@ function fmtTime(ms: number): string {
     month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit',
   });
+}
+
+function fmtMs(ms: number | undefined): string {
+  if (!ms) return '—';
+  if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${ms}ms`;
 }
 
 function statusBadge(status: string, http: number) {
@@ -26,16 +32,31 @@ function statusBadge(status: string, http: number) {
   );
 }
 
+function renderTarget(target: string, channelMap: Map<string, string>): string {
+  if (!target) return '—';
+  if (target.startsWith('fallback:')) {
+    const id = target.slice('fallback:'.length);
+    const name = channelMap.get(id);
+    if (name) return `保底: ${name}`;
+    // unknown: show short id
+    const shortId = id.length > 8 ? id.slice(0, 8) + '…' : id;
+    return `保底: ${shortId}`;
+  }
+  return target;
+}
+
 // ---- Desktop table row ----
-function LogRow({ row }: { row: LogEntry }) {
+function LogRow({ row, channelMap }: { row: LogEntry; channelMap: Map<string, string> }) {
+  const targetLabel = renderTarget(row.target, channelMap);
   return (
     <tr className="border-t border-line hover:bg-line/20 transition text-sm">
       <td className="px-3 py-2 text-xs text-muted whitespace-nowrap font-mono">{fmtTime(row.ts)}</td>
       <td className="px-3 py-2 text-ink truncate max-w-[140px]" title={row.model}>{row.model || '—'}</td>
-      <td className="px-3 py-2 text-ink truncate max-w-[120px] font-mono text-xs" title={row.target}>{row.target || '—'}</td>
+      <td className="px-3 py-2 text-ink truncate max-w-[120px] font-mono text-xs" title={targetLabel}>{targetLabel}</td>
       <td className="px-3 py-2">{statusBadge(row.status, row.httpStatus)}</td>
       <td className="px-3 py-2 text-muted text-xs">{row.httpStatus || '—'}</td>
-      <td className="px-3 py-2 text-muted text-xs whitespace-nowrap">{row.latencyMs ? `${row.latencyMs} ms` : '—'}</td>
+      <td className="px-3 py-2 text-muted text-xs whitespace-nowrap">{fmtMs(row.latencyMs)}</td>
+      <td className="px-3 py-2 text-muted text-xs whitespace-nowrap">{fmtMs(row.ttfbMs)}</td>
       <td className="px-3 py-2 text-muted text-xs whitespace-nowrap">
         {row.tokensIn ? `↑${row.tokensIn}` : '—'} / {row.tokensOut ? `↓${row.tokensOut}` : '—'}
       </td>
@@ -47,20 +68,22 @@ function LogRow({ row }: { row: LogEntry }) {
 }
 
 // ---- Mobile card ----
-function LogCard({ row }: { row: LogEntry }) {
+function LogCard({ row, channelMap }: { row: LogEntry; channelMap: Map<string, string> }) {
+  const targetLabel = renderTarget(row.target, channelMap);
   return (
     <div className="bg-surface border border-line rounded-xl p-4 space-y-2 text-sm">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="font-medium text-ink truncate">{row.model || '—'}</p>
-          <p className="text-xs text-muted font-mono truncate mt-0.5">{row.target || '—'}</p>
+          <p className="text-xs text-muted font-mono truncate mt-0.5">{targetLabel}</p>
         </div>
         {statusBadge(row.status, row.httpStatus)}
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
         <span>{fmtTime(row.ts)}</span>
         <span>HTTP {row.httpStatus || '—'}</span>
-        <span>{row.latencyMs ? `${row.latencyMs} ms` : '—'}</span>
+        <span>延迟 {fmtMs(row.latencyMs)}</span>
+        <span>首字 {fmtMs(row.ttfbMs)}</span>
         <span>↑{row.tokensIn ?? 0} / ↓{row.tokensOut ?? 0}</span>
       </div>
       {row.fallbackReason && (
@@ -78,6 +101,20 @@ export default function Logs() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [channelMap, setChannelMap] = useState<Map<string, string>>(new Map());
+
+  // Fetch fallback channels once on mount to build id→name map
+  useEffect(() => {
+    listFallbackChannels()
+      .then((channels) => {
+        const m = new Map<string, string>();
+        for (const ch of channels) m.set(ch.id, ch.name);
+        setChannelMap(m);
+      })
+      .catch(() => {
+        // Resilient: if fetch fails, map stays empty and raw target is shown
+      });
+  }, []);
 
   const fetchLogs = useCallback(async () => {
     setLoading(true);
@@ -160,7 +197,7 @@ export default function Logs() {
       {!loading && !error && filtered.length > 0 && (
         <>
           <div className="hidden md:block bg-surface border border-line rounded-xl overflow-x-auto">
-            <table className="w-full text-left min-w-[780px]">
+            <table className="w-full text-left min-w-[880px]">
               <thead>
                 <tr className="text-xs text-muted uppercase tracking-wide">
                   <th className="px-3 py-3 font-medium">时间</th>
@@ -169,13 +206,14 @@ export default function Logs() {
                   <th className="px-3 py-3 font-medium">状态</th>
                   <th className="px-3 py-3 font-medium">HTTP</th>
                   <th className="px-3 py-3 font-medium">延迟</th>
+                  <th className="px-3 py-3 font-medium">首字</th>
                   <th className="px-3 py-3 font-medium">Token ↑/↓</th>
                   <th className="px-3 py-3 font-medium">兜底原因</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((row, i) => (
-                  <LogRow key={i} row={row} />
+                  <LogRow key={i} row={row} channelMap={channelMap} />
                 ))}
               </tbody>
             </table>
@@ -183,7 +221,7 @@ export default function Logs() {
 
           {/* Mobile cards */}
           <div className="md:hidden space-y-3">
-            {filtered.map((row, i) => <LogCard key={i} row={row} />)}
+            {filtered.map((row, i) => <LogCard key={i} row={row} channelMap={channelMap} />)}
           </div>
 
           <p className="text-xs text-muted text-right">
