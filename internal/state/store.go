@@ -1,9 +1,12 @@
 package state
 
 import (
+	"context"
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 )
 
 // Store is the thread-safe in-memory registry of per-account state.
@@ -231,4 +234,53 @@ func (s *Store) Snapshot(now int64) []AccountSnapshot {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
 	return out
+}
+
+// accountDurable holds a snapshot of an account's durable fields for PersistAll.
+type accountDurable struct {
+	nodeID    string
+	profileID string
+	account   Account // shallow copy (Breaker is a value type, safe to copy)
+	now       int64
+}
+
+// PersistAll persists every node:profile account's durable verdict to the DB.
+// It copies durable fields under the lock and then performs DB writes without
+// holding the lock, preventing mutex + I/O deadlock risk.
+// Keys prefixed with "fb:" (fallback channel slots) are skipped.
+// Errors are best-effort; the last error encountered is returned.
+func (s *Store) PersistAll(ctx context.Context, q *sqlc.Queries, now int64) error {
+	s.mu.Lock()
+	snapshots := make([]accountDurable, 0, len(s.accts))
+	for key, a := range s.accts {
+		if strings.HasPrefix(key, "fb:") {
+			continue
+		}
+		i := strings.LastIndex(key, ":")
+		if i < 0 {
+			continue
+		}
+		snapshots = append(snapshots, accountDurable{
+			nodeID:    key[:i],
+			profileID: key[i+1:],
+			// Copy the Account value; Breaker and scalar fields are value types.
+			account: Account{
+				Breaker:   a.Breaker,
+				Slots:     a.Slots,   // pointer — only durable Breaker fields are read by SaveState
+				Disabled:  a.Disabled,
+				Offline:   a.Offline,
+			},
+			now: now,
+		})
+	}
+	s.mu.Unlock()
+
+	var lastErr error
+	for i := range snapshots {
+		sn := &snapshots[i]
+		if err := SaveState(ctx, q, sn.nodeID, sn.profileID, &sn.account, sn.now); err != nil {
+			lastErr = err
+		}
+	}
+	return lastErr
 }

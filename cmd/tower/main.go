@@ -60,6 +60,17 @@ func main() {
 	}
 	svc := dispatch.NewService(q, store, base, nowMs)
 
+	// Periodically persist account_state so warm-start after restart has data.
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := store.PersistAll(context.Background(), q, nowMs()); err != nil {
+				log.Printf("persist account_state: %v", err)
+			}
+		}
+	}()
+
 	poller := &telemetry.Poller{Q: q, Store: store, Threshold: 0.95, DefaultTTLMs: 3600000, Capacity: base.MaxConcurrent, Now: nowMs}
 	go poller.Run(context.Background(), 60*time.Second)
 

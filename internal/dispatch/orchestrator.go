@@ -27,7 +27,8 @@ type Orchestrator struct {
 	CooldownMin int64
 	CooldownMax int64
 	MaxAttempts int
-	OnBan       func(key string) // optional: fired when an account is (re)banned
+	OnBan       func(key string)                             // optional: fired when an account is (re)banned
+	OnAttempt   func(key string, status int, ok bool, banned bool) // optional: fired after each attempt
 }
 
 // attempt sends one request to key with guaranteed settlement. ok reports a clean 2xx.
@@ -89,6 +90,9 @@ func (o *Orchestrator) Dispatch(ctx context.Context, model string, order []strin
 		}
 		attempts++
 		res, ok := o.attempt(ctx, model, key, px)
+		if o.OnAttempt != nil {
+			o.OnAttempt(key, res.Status, ok, res.Banned)
+		}
 		if ok {
 			return res, key, true
 		}

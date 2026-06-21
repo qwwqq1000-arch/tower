@@ -134,7 +134,13 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 		if maxFailover <= 0 {
 			maxFailover = 50
 		}
-		orch := &Orchestrator{Store: s.Store, Cfg: breaker, CooldownMin: cfg.SlotCooldownMinMs, CooldownMax: cfg.SlotCooldownMaxMs, MaxAttempts: maxFailover, OnBan: s.recordBan}
+		orch := &Orchestrator{Store: s.Store, Cfg: breaker, CooldownMin: cfg.SlotCooldownMinMs, CooldownMax: cfg.SlotCooldownMaxMs, MaxAttempts: maxFailover, OnBan: s.recordBan,
+			OnAttempt: func(key string, status int, ok bool, banned bool) {
+				if !ok {
+					s.logAttemptErr(ctx, ownerID, model, key, status)
+				}
+			},
+		}
 		np := &NodeProxy{Body: body, Resolve: resolver, BanSignals: cfg.BanSignals, BanKeywords: cfg.BanKeywords}
 		res, winKey, ok := orch.Dispatch(ctx, model, order, np)
 		if ok {
@@ -446,6 +452,17 @@ func (s *Service) logErr(ctx context.Context, ownerID, model string, status int,
 	})
 }
 
+// logAttemptErr logs a single per-attempt failure (non-2xx or banned) without
+// overwriting the final-outcome row written by logOK / logErr. Latency is 0
+// because we have no settled TTFB for a failed attempt.
+func (s *Service) logAttemptErr(ctx context.Context, ownerID, model, key string, status int) {
+	_ = s.Q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{
+		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: key, ProfileID: "",
+		Status: "error", HttpStatus: int32(status), LatencyMs: 0, FallbackReason: "",
+		Stream: false, CostUsd: 0,
+	})
+}
+
 // flushCopyCapture streams src→dst flushing each chunk; returns ttfb (ms to
 // first byte, from start) and a bounded copy of the body (for token parsing).
 func flushCopyCapture(dst http.ResponseWriter, src io.Reader, start time.Time) (ttfbMs int64, body string) {
@@ -622,7 +639,8 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 			}
 			return out
 		}
-		// not committed → failed before first byte → record error + failover
+		// not committed → failed before first byte → log per-attempt error + failover
+		s.logAttemptErr(ctx, ownerID, model, key, out.Status)
 		s.sess.RecordError(conv, int64(cfg.SessionErrorThreshold), int64(cfg.SessionCooldownSec)*1000, nowMs)
 	}
 
@@ -688,8 +706,9 @@ func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, 
 		return Outcome{}, false, "" // connection error → failover
 	}
 	if st.Banned || st.Status < 200 || st.Status >= 300 {
+		httpStatus := st.Status
 		_ = st.Body.Close()
-		return Outcome{}, false, "" // bad status before first byte → settle(false) via defer, failover
+		return Outcome{Status: httpStatus, Target: key}, false, "" // bad status before first byte → settle(false) via defer, failover
 	}
 	// commit: stream to client
 	start := time.Now()
