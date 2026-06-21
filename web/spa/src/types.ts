@@ -273,6 +273,14 @@ export interface FallbackChannel {
   ownerId: string;
 }
 
+// --- Users ---
+export interface UserRow {
+  id: string;
+  username: string;
+  role: string;
+  rate: number;
+}
+
 // --- Dispatch Status ---
 export interface DispatchAccountSnapshot {
   key: string;

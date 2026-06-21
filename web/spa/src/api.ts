@@ -25,6 +25,7 @@ import type {
   OAuthExchangeResult,
   DispatchStatus,
   FallbackChannel,
+  UserRow,
 } from './types';
 
 // ------------------------------------------------------------------
@@ -237,6 +238,27 @@ export const setFallbackEnabled = (id: string, enabled: boolean) =>
 
 export const deleteFallbackChannel = (id: string) =>
   api<void>('DELETE', `/api/admin/fallback-channels/${id}`);
+
+// ------------------------------------------------------------------
+// Users (用户管理)
+// ------------------------------------------------------------------
+export const listUsers = () =>
+  api<UserRow[]>('GET', '/api/admin/users');
+
+export const createUser = (body: { username: string; password: string; role: string }) =>
+  api<{ id: string }>('POST', '/api/admin/users', body);
+
+export const deleteUser = (id: string) =>
+  api<void>('DELETE', `/api/admin/users/${id}`);
+
+export const setUserRole = (id: string, role: string) =>
+  api<{ ok: string }>('PATCH', `/api/admin/users/${id}/role`, { role });
+
+export const setUserHostingRate = (id: string, rate: number) =>
+  api<{ ok: string }>('PATCH', `/api/admin/users/${id}/hosting-rate`, { rate });
+
+export const changePassword = (body: { oldPassword: string; newPassword: string }) =>
+  api<{ ok: string }>('POST', '/auth/change-password', body);
 
 // ------------------------------------------------------------------
 // Ban analysis (封号分析)

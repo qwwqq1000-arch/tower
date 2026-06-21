@@ -17,6 +17,7 @@ import Audit        from './pages/Audit';
 import Events       from './pages/Events';
 import BanAnalysis  from './pages/BanAnalysis';
 import Fallback     from './pages/Fallback';
+import Users        from './pages/Users';
 
 export default function App() {
   return (
@@ -39,6 +40,7 @@ export default function App() {
               <Route path="/events"        element={<Events />} />
               <Route path="/ban-analysis" element={<BanAnalysis />} />
               <Route path="/fallback"     element={<Fallback />} />
+              <Route path="/users"        element={<Users />} />
             </Routes>
           </Shell>
         </LoginGate>

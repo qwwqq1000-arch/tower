@@ -10,6 +10,125 @@ import { useState, useEffect, useCallback, type ReactNode } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from './auth';
 import { useTheme } from './theme';
+import { changePassword } from './api';
+
+// ------------------------------------------------------------------
+// Change-password modal
+// ------------------------------------------------------------------
+function ChangePasswordModal({ onClose }: { onClose: () => void }) {
+  const [oldPassword, setOldPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (newPassword.length < 8) {
+      setErr('新密码至少 8 位');
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await changePassword({ oldPassword, newPassword });
+      setSuccess(true);
+    } catch (ex) {
+      setErr(ex instanceof Error ? ex.message : '修改失败');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const inputCls =
+    'w-full bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink ' +
+    'focus:outline-none focus:border-accent transition';
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-black/50"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-sm bg-surface border border-line rounded-xl shadow-2xl p-6 space-y-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 className="text-base font-semibold text-ink">修改密码</h2>
+
+        {success ? (
+          <div className="space-y-4">
+            <div className="bg-ok/10 border border-ok/30 rounded-lg p-3 text-ok text-sm">
+              密码修改成功！
+            </div>
+            <button
+              onClick={onClose}
+              className="w-full px-4 py-2 text-sm font-medium bg-accent text-white rounded-lg
+                         hover:bg-accent/80 transition"
+            >
+              关闭
+            </button>
+          </div>
+        ) : (
+          <form onSubmit={(e) => { void handleSubmit(e); }} className="space-y-3">
+            {err && (
+              <div className="bg-err/10 border border-err/30 rounded-lg p-3 text-err text-sm">{err}</div>
+            )}
+            <div>
+              <label className="block text-xs text-muted mb-1">当前密码</label>
+              <input
+                type="password"
+                required
+                value={oldPassword}
+                onChange={(e) => setOldPassword(e.target.value)}
+                autoComplete="current-password"
+                className={inputCls}
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-muted mb-1">新密码 (≥8位)</label>
+              <input
+                type="password"
+                required
+                minLength={8}
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                autoComplete="new-password"
+                className={inputCls}
+              />
+            </div>
+            <div className="flex gap-3 pt-1">
+              <button
+                type="submit"
+                disabled={busy}
+                className="flex-1 px-4 py-2 text-sm font-medium bg-accent text-white rounded-lg
+                           hover:bg-accent/80 disabled:opacity-50 transition"
+              >
+                {busy ? '提交中…' : '确认修改'}
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={busy}
+                className="px-4 py-2 text-sm font-medium border border-line text-muted rounded-lg
+                           hover:text-ink transition"
+              >
+                取消
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
 
 // ------------------------------------------------------------------
 // Nav item definition
@@ -35,6 +154,7 @@ const NAV_ITEMS: NavItem[] = [
   { path: '/events',     label: '事件',     icon: '⚡' },
   { path: '/ban-analysis', label: '封号分析', icon: '⚠', adminOnly: true },
   { path: '/fallback',     label: '保底渠道', icon: '⤵', adminOnly: true },
+  { path: '/users',        label: '用户',     icon: '👤', adminOnly: true },
 ];
 
 // ------------------------------------------------------------------
@@ -121,6 +241,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const { role, logout } = useAuth();
   const { theme, toggle } = useTheme();
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [changePwOpen, setChangePwOpen] = useState(false);
 
   // Filter nav by role
   const items = NAV_ITEMS.filter((i) => !i.adminOnly || role === 'admin');
@@ -216,6 +337,15 @@ export function Shell({ children }: { children: ReactNode }) {
             {theme === 'dark' ? '☀' : '☽'}
           </button>
 
+          {/* Change password */}
+          <button
+            onClick={() => setChangePwOpen(true)}
+            className="w-8 h-8 flex items-center justify-center text-muted hover:text-ink rounded-lg hover:bg-line transition"
+            title="改密"
+          >
+            🔒
+          </button>
+
           {/* Logout */}
           <button
             onClick={() => { void logout(); }}
@@ -255,6 +385,11 @@ export function Shell({ children }: { children: ReactNode }) {
       {/* Command palette */}
       {paletteOpen && (
         <Palette items={items} onClose={() => setPaletteOpen(false)} />
+      )}
+
+      {/* Change-password modal */}
+      {changePwOpen && (
+        <ChangePasswordModal onClose={() => setChangePwOpen(false)} />
       )}
     </div>
   );
