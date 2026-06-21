@@ -151,6 +151,7 @@ export interface PolicyPatch {
   ResponseExileKeywords?: string[];
   ElasticEnabled?: boolean;
   ElasticScaleUpUtil?: number;
+  ElasticScaleDownUtil?: number;
   ElasticMaxReserve?: number;
   ElasticBaselineCount?: number;
 }

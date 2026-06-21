@@ -162,6 +162,7 @@ export default function Policies() {
   // Elastic
   const elasticEnabled = useField<boolean>(false);
   const elasticScaleUpUtil = useField<number>(0.8);
+  const elasticScaleDownUtil = useField<number>(0.3);
   const elasticMaxReserve = useField<number>(1000);
   const elasticBaselineCount = useField<number>(1);
   // Boolean
@@ -222,6 +223,7 @@ export default function Policies() {
         setArr(responseExileKeywords, 'ResponseExileKeywords');
         setBool(elasticEnabled, 'ElasticEnabled');
         setNum(elasticScaleUpUtil, 'ElasticScaleUpUtil');
+        setNum(elasticScaleDownUtil, 'ElasticScaleDownUtil');
         setNum(elasticMaxReserve, 'ElasticMaxReserve');
         setNum(elasticBaselineCount, 'ElasticBaselineCount');
       } catch {
@@ -272,6 +274,7 @@ export default function Policies() {
     if (responseExileKeywords.enabled) patch.ResponseExileKeywords = responseExileKeywords.value.split(',').map(s => s.trim()).filter(Boolean);
     if (elasticEnabled.enabled) patch.ElasticEnabled = elasticEnabled.value;
     if (elasticScaleUpUtil.enabled) patch.ElasticScaleUpUtil = elasticScaleUpUtil.value;
+    if (elasticScaleDownUtil.enabled) patch.ElasticScaleDownUtil = elasticScaleDownUtil.value;
     if (elasticMaxReserve.enabled) patch.ElasticMaxReserve = elasticMaxReserve.value;
     if (elasticBaselineCount.enabled) patch.ElasticBaselineCount = elasticBaselineCount.value;
     return patch;
@@ -313,7 +316,7 @@ export default function Policies() {
     quotaRotateThreshold, maxFailover,
     warmupHours, warmupMaxConcurrent, warmupBlockOpus,
     sessionErrorThreshold, sessionCooldownSec, responseExileEnabled, responseExileKeywords,
-    elasticEnabled, elasticScaleUpUtil, elasticMaxReserve, elasticBaselineCount,
+    elasticEnabled, elasticScaleUpUtil, elasticScaleDownUtil, elasticMaxReserve, elasticBaselineCount,
   ].some((f) => f.enabled);
 
   return (
@@ -796,6 +799,22 @@ export default function Policies() {
             value={elasticScaleUpUtil.value}
             onChange={elasticScaleUpUtil.set}
             disabled={!elasticScaleUpUtil.enabled}
+            min={0}
+            max={1}
+            step={0.05}
+          />
+        </FieldRow>
+
+        <FieldRow
+          label="缩容利用率阈值(利用率≤此值才释放备用号)"
+          desc="利用率持续低于此阈值时才释放备用号（与扩容阈值形成迟滞区间）"
+          enabled={elasticScaleDownUtil.enabled}
+          onToggle={elasticScaleDownUtil.toggle}
+        >
+          <NumInput
+            value={elasticScaleDownUtil.value}
+            onChange={elasticScaleDownUtil.set}
+            disabled={!elasticScaleDownUtil.enabled}
             min={0}
             max={1}
             step={0.05}
