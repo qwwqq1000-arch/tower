@@ -34,6 +34,15 @@ function Toast({ msg, onClose }: { msg: string; onClose: () => void }) {
 }
 
 // ------------------------------------------------------------------
+// Cost formatter
+// ------------------------------------------------------------------
+function fmtCost(n: number | undefined): string {
+  if (n == null) return '—';
+  if (n === 0) return '$0.0000';
+  return n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`;
+}
+
+// ------------------------------------------------------------------
 // Quota badge helper
 // ------------------------------------------------------------------
 function QuotaBadge({ utilization, label }: { utilization: number; label: string }) {
@@ -544,6 +553,8 @@ function AccountTableRow({
         </td>
         <td className="px-4 py-3 text-sm text-muted">{account.weight}</td>
         <td className="px-4 py-3 text-xs text-muted">{account.role || '—'}</td>
+        <td className="px-4 py-3 text-xs text-muted text-right tabular-nums">{fmtCost(account.todayCostUsd)}</td>
+        <td className="px-4 py-3 text-xs text-muted text-right tabular-nums">{fmtCost(account.totalCostUsd)}</td>
         <td className="px-4 py-3">
           <div className="flex items-center gap-2">
             <button
@@ -673,6 +684,8 @@ function AccountMobileCard({
           <span>权重 {account.weight}</span>
           {account.role && <span>角色 {account.role}</span>}
           {account.egress && <span className="font-mono">出口 {account.egress}</span>}
+          <span>今日 {fmtCost(account.todayCostUsd)}</span>
+          <span>总计 {fmtCost(account.totalCostUsd)}</span>
         </div>
 
         <QuotaCell nodeId={account.nodeId} profileId={account.profileId} quotaMap={quotaMap} />
@@ -795,6 +808,8 @@ export default function Accounts() {
                   <th className="px-4 py-3 font-medium">限额</th>
                   <th className="px-4 py-3 font-medium">权重</th>
                   <th className="px-4 py-3 font-medium">角色</th>
+                  <th className="px-4 py-3 font-medium text-right">今日消费</th>
+                  <th className="px-4 py-3 font-medium text-right">总消费</th>
                   <th className="px-4 py-3 font-medium">操作</th>
                 </tr>
               </thead>

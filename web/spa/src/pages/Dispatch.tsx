@@ -57,6 +57,12 @@ function StatsBar({ data }: { data: DispatchStatus }) {
 // ------------------------------------------------------------------
 // Concurrency panel
 // ------------------------------------------------------------------
+function fmtCost(n: number | undefined): string {
+  if (n == null) return '—';
+  if (n === 0) return '$0.0000';
+  return n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`;
+}
+
 function ConcurrencyPanel({ accounts }: { accounts: DispatchAccountSnapshot[] }) {
   return (
     <div className="bg-surface border border-line rounded-xl overflow-hidden mb-6">
@@ -69,12 +75,14 @@ function ConcurrencyPanel({ accounts }: { accounts: DispatchAccountSnapshot[] })
               <th className="px-4 py-2 font-medium">状态</th>
               <th className="px-4 py-2 font-medium text-right">并发中</th>
               <th className="px-4 py-2 font-medium text-right">可用</th>
+              <th className="px-4 py-2 font-medium text-right">今日消费</th>
+              <th className="px-4 py-2 font-medium text-right">总消费</th>
             </tr>
           </thead>
           <tbody>
             {accounts.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-4 py-6 text-center text-muted text-xs">无数据</td>
+                <td colSpan={6} className="px-4 py-6 text-center text-muted text-xs">无数据</td>
               </tr>
             )}
             {accounts.map((a) => (
@@ -85,6 +93,8 @@ function ConcurrencyPanel({ accounts }: { accounts: DispatchAccountSnapshot[] })
                 <td className="px-4 py-2"><StatusBadge status={a.status} /></td>
                 <td className="px-4 py-2 text-right tabular-nums">{a.inflight}</td>
                 <td className="px-4 py-2 text-right tabular-nums">{a.available}</td>
+                <td className="px-4 py-2 text-right tabular-nums text-xs text-muted">{fmtCost(a.todayCostUsd)}</td>
+                <td className="px-4 py-2 text-right tabular-nums text-xs text-muted">{fmtCost(a.totalCostUsd)}</td>
               </tr>
             ))}
           </tbody>

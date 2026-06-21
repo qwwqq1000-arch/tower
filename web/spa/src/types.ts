@@ -262,6 +262,8 @@ export interface AccountRow {
   email: string;
   status?: string;
   slotId?: string;
+  todayCostUsd?: number;
+  totalCostUsd?: number;
 }
 
 // --- Node Quota ---
@@ -380,6 +382,8 @@ export interface DispatchAccountSnapshot {
   status: string; // active | banned | half_open | offline | disabled
   inflight: number;
   available: number;
+  todayCostUsd?: number;
+  totalCostUsd?: number;
 }
 
 export interface DispatchTraffic {
