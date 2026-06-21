@@ -16,17 +16,19 @@ function fmtTime(ms: number): string {
 }
 
 const TYPE_STYLES: Record<string, { dot: string; badge: string; label?: string }> = {
-  node_up:      { dot: 'bg-ok',     badge: 'bg-ok/10 text-ok border-ok/30' },
-  node_down:    { dot: 'bg-err',    badge: 'bg-err/10 text-err border-err/30' },
-  ban:          { dot: 'bg-err',    badge: 'bg-err/10 text-err border-err/30',     label: '封号' },
-  unban:        { dot: 'bg-ok',     badge: 'bg-ok/10 text-ok border-ok/30' },
-  recover:      { dot: 'bg-warn',   badge: 'bg-warn/10 text-warn border-warn/30',  label: '恢复' },
-  dispatch_ok:  { dot: 'bg-ok',     badge: 'bg-ok/10 text-ok border-ok/30',        label: '派单成功' },
-  fallback:     { dot: 'bg-warn',   badge: 'bg-warn/10 text-warn border-warn/30',  label: '保底触发' },
-  scale_up:     { dot: 'bg-accent', badge: 'bg-accent/10 text-accent border-accent/30', label: '弹性扩容' },
-  scale_down:   { dot: 'bg-muted',  badge: 'bg-surface text-muted border-line',    label: '弹性缩容' },
-  provision:    { dot: 'bg-accent', badge: 'bg-accent/10 text-accent border-accent/30' },
-  settle:       { dot: 'bg-accent', badge: 'bg-accent/10 text-accent border-accent/30' },
+  node_up:        { dot: 'bg-ok',     badge: 'bg-ok/10 text-ok border-ok/30' },
+  node_down:      { dot: 'bg-err',    badge: 'bg-err/10 text-err border-err/30' },
+  ban:            { dot: 'bg-err',    badge: 'bg-err/10 text-err border-err/30',     label: '封控' },
+  unban:          { dot: 'bg-ok',     badge: 'bg-ok/10 text-ok border-ok/30' },
+  recover:        { dot: 'bg-warn',   badge: 'bg-warn/10 text-warn border-warn/30',  label: '恢复' },
+  dispatch_ok:    { dot: 'bg-ok',     badge: 'bg-ok/10 text-ok border-ok/30',        label: '派单成功' },
+  fallback:       { dot: 'bg-accent', badge: 'bg-accent/10 text-accent border-accent/30', label: '保底触发' },
+  quota_limited:  { dot: 'bg-warn',   badge: 'bg-warn/10 text-warn border-warn/30',  label: '账户限额' },
+  session_exile:  { dot: 'bg-warn',   badge: 'bg-warn/10 text-warn border-warn/30',  label: '会话连错放逐' },
+  scale_up:       { dot: 'bg-accent', badge: 'bg-accent/10 text-accent border-accent/30', label: '弹性扩容' },
+  scale_down:     { dot: 'bg-muted',  badge: 'bg-surface text-muted border-line',    label: '弹性缩容' },
+  provision:      { dot: 'bg-accent', badge: 'bg-accent/10 text-accent border-accent/30' },
+  settle:         { dot: 'bg-accent', badge: 'bg-accent/10 text-accent border-accent/30' },
 };
 
 const FALLBACK_REASON_CN: Record<string, string> = {
@@ -55,6 +57,11 @@ function parseDetail(detail: Record<string, unknown> | string | undefined): Reco
   return detail;
 }
 
+const SESSION_EXILE_SUFFIX: Record<string, string> = {
+  cyber:   '安全拒答',
+  session: '连续错误',
+};
+
 function renderTargetText(
   type: string,
   target: string,
@@ -68,7 +75,7 @@ function renderTargetText(
   }
   if (type === 'ban') {
     const email = accountMap.get(target);
-    return email ? `封号 · ${email}` : `封号 · ${target || '节点'}`;
+    return email ? `封控 · ${email}` : `封控 · ${target || '节点'}`;
   }
   if (type === 'fallback') {
     const cn = FALLBACK_REASON_CN[target] ?? target;
@@ -76,6 +83,14 @@ function renderTargetText(
     const channelName = channelId ? channelMap.get(channelId) : undefined;
     const base = cn ? `保底触发 · ${cn}` : '保底触发';
     return channelName ? `${base} · ${channelName}` : base;
+  }
+  if (type === 'quota_limited') {
+    const email = accountMap.get(target);
+    return email ? `账户限额 · ${email}` : `账户限额 · ${target || '节点'}`;
+  }
+  if (type === 'session_exile') {
+    const suffix = SESSION_EXILE_SUFFIX[target] ?? target;
+    return suffix ? `会话连错放逐 · ${suffix}` : '会话连错放逐';
   }
   if (type === 'scale_up') {
     return `弹性扩容 · ${target || ''}`.trimEnd().replace(/ · $/, '');

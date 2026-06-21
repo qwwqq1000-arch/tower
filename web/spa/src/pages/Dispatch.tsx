@@ -206,12 +206,14 @@ interface EventLabel { label: string; cls: string; }
 
 function getEventLabel(type: string): EventLabel {
   switch (type) {
-    case 'dispatch_ok': return { label: '派单成功', cls: 'bg-green-500/20 text-green-400 border-green-500/40' };
-    case 'ban':         return { label: '封号',     cls: 'bg-red-500/20 text-red-400 border-red-500/40' };
-    case 'recover':     return { label: '恢复',     cls: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/40' };
-    case 'fallback':    return { label: '保底触发', cls: 'bg-blue-500/20 text-blue-400 border-blue-500/40' };
-    case 'scale_up':    return { label: '弹性扩容', cls: 'bg-blue-500/20 text-blue-400 border-blue-500/40' };
-    case 'scale_down':  return { label: '弹性缩容', cls: 'bg-gray-500/20 text-gray-400 border-gray-500/40' };
+    case 'dispatch_ok':   return { label: '派单成功',    cls: 'bg-green-500/20 text-green-400 border-green-500/40' };
+    case 'ban':           return { label: '封控',        cls: 'bg-red-500/20 text-red-400 border-red-500/40' };
+    case 'recover':       return { label: '恢复',        cls: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/40' };
+    case 'fallback':      return { label: '保底触发',    cls: 'bg-blue-500/20 text-blue-400 border-blue-500/40' };
+    case 'quota_limited': return { label: '账户限额',    cls: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/40' };
+    case 'session_exile': return { label: '会话连错放逐', cls: 'bg-orange-500/20 text-orange-400 border-orange-500/40' };
+    case 'scale_up':      return { label: '弹性扩容',    cls: 'bg-blue-500/20 text-blue-400 border-blue-500/40' };
+    case 'scale_down':    return { label: '弹性缩容',    cls: 'bg-gray-500/20 text-gray-400 border-gray-500/40' };
     default:
       if (type === 'dispatch_err' || type.endsWith('_err') || type === 'error') {
         return { label: type, cls: 'bg-orange-500/20 text-orange-400 border-orange-500/40' };
@@ -219,6 +221,11 @@ function getEventLabel(type: string): EventLabel {
       return { label: type, cls: 'bg-blue-500/20 text-blue-400 border-blue-500/40' };
   }
 }
+
+const SESSION_EXILE_SUFFIX_CN: Record<string, string> = {
+  cyber:   '安全拒答',
+  session: '连续错误',
+};
 
 // Returns the extra detail text shown next to the badge (does NOT repeat the badge label).
 function renderEventDetail(
@@ -251,6 +258,14 @@ function renderEventDetail(
     if (cn) parts.push(cn);
     if (channelName) parts.push(channelName);
     return parts.join(' · ');
+  }
+  if (type === 'quota_limited') {
+    const email = accountNames?.get(target);
+    return email ? `账户限额 · ${email}` : `账户限额 · ${target || '节点'}`;
+  }
+  if (type === 'session_exile') {
+    const suffix = SESSION_EXILE_SUFFIX_CN[target] ?? target;
+    return suffix ? `会话连错放逐 · ${suffix}` : '会话连错放逐';
   }
   if (type === 'scale_up' || type === 'scale_down') {
     return target || '';
