@@ -243,8 +243,9 @@ export function Shell({ children }: { children: ReactNode }) {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [changePwOpen, setChangePwOpen] = useState(false);
 
-  // Filter nav by role
-  const items = NAV_ITEMS.filter((i) => !i.adminOnly || role === 'admin');
+  // Filter nav by role (admin AND superadmin see admin-only items)
+  const isAdmin = role === 'admin' || role === 'superadmin';
+  const items = NAV_ITEMS.filter((i) => !i.adminOnly || isAdmin);
   const mobileItems = items.slice(0, 5);
 
   // ⌘K / Ctrl+K global shortcut
