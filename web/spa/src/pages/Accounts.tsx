@@ -13,8 +13,9 @@ import {
   listNodeProfiles,
   importNodeProfile,
   getNodeQuota,
+  listSlots,
 } from '../api';
-import type { NodeRecord, AccountRow, NodeProfile, QuotaAll } from '../types';
+import type { NodeRecord, AccountRow, NodeProfile, QuotaAll, Slot } from '../types';
 
 // ------------------------------------------------------------------
 // Small toast helper
@@ -351,6 +352,14 @@ function AccountEditModal({
   const [enabled, setEnabled] = useState(account.enabled);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [slotId, setSlotId] = useState(account.slotId ?? '');
+  const [slots, setSlots] = useState<Slot[]>([]);
+
+  useEffect(() => {
+    listSlots()
+      .then(setSlots)
+      .catch(() => { /* ignore, dropdown just stays empty */ });
+  }, []);
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -362,6 +371,7 @@ function AccountEditModal({
         role,
         egress,
         enabled,
+        slotId: slotId || undefined,
       });
       onSave();
       onClose();
@@ -413,6 +423,20 @@ function AccountEditModal({
               className="bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink
                          placeholder:text-muted focus:outline-none focus:border-accent transition"
             />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-muted font-medium">槽位</label>
+            <select
+              value={slotId}
+              onChange={(e) => setSlotId(e.target.value)}
+              className="bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink
+                         focus:outline-none focus:border-accent transition"
+            >
+              <option value="">不限</option>
+              {slots.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
           </div>
           <div className="flex items-center gap-3">
             <label className="text-xs text-muted font-medium">启用</label>

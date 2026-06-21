@@ -142,6 +142,16 @@ export interface PolicyPatch {
   BanKeywords?: string[];
   QuotaRotateThreshold?: number;
   MaxFailover?: number;
+  WarmupHours?: number;
+  WarmupMaxConcurrent?: number;
+  WarmupBlockOpus?: boolean;
+  SessionErrorThreshold?: number;
+  SessionCooldownSec?: number;
+  ResponseExileEnabled?: boolean;
+  ResponseExileKeywords?: string[];
+  ElasticEnabled?: boolean;
+  ElasticScaleUpUtil?: number;
+  ElasticMaxReserve?: number;
 }
 
 // policy.Config (resolved)
@@ -250,6 +260,7 @@ export interface AccountRow {
   egress: string;
   email: string;
   status?: string;
+  slotId?: string;
 }
 
 // --- Node Quota ---
@@ -403,6 +414,15 @@ export interface DispatchStatus {
   nodes: { total: number; enabled: number };
   asOf: number;
   fallbackChannels?: DispatchFallbackChannel[];
+}
+
+// --- Slots (时段槽位) ---
+export interface Slot {
+  id: string;
+  name: string;
+  startMin: number;
+  endMin: number;
+  enabled: boolean;
 }
 
 export interface ServerStatus {

@@ -147,6 +147,7 @@ const NAV_ITEMS: NavItem[] = [
   { path: '/accounts',   label: '号库',     icon: '⚿' },
   { path: '/keys',       label: '调度密钥', icon: '🔑', adminOnly: true },
   { path: '/policies',   label: '封控策略', icon: '⛨', adminOnly: true },
+  { path: '/slots',     label: '时段槽位', icon: '⏱', adminOnly: true },
   { path: '/desired',    label: '配置对账', icon: '⇌', adminOnly: true },
   { path: '/logs',       label: '日志',     icon: '≡' },
   { path: '/billing',    label: '计费',     icon: '₿', adminOnly: true },

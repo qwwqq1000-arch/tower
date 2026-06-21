@@ -29,6 +29,7 @@ import type {
   NodeTelemetry,
   QuotaAll,
   ServerStatus,
+  Slot,
 } from './types';
 
 // ------------------------------------------------------------------
@@ -106,7 +107,7 @@ export const getProvision = (jobId: string) =>
 export const updateNodeAccount = (
   nodeId: string,
   accountId: string,
-  body: { egress?: string; weight?: number; role?: string; enabled?: boolean },
+  body: { egress?: string; weight?: number; role?: string; enabled?: boolean; slotId?: string },
 ) => api<{ ok: string }>('PATCH', `/api/admin/accounts/${nodeId}/${accountId}`, body);
 
 // ------------------------------------------------------------------
@@ -299,3 +300,18 @@ export const getBanAnalysis = () =>
 // ------------------------------------------------------------------
 export const getServerStatus = () =>
   api<ServerStatus>('GET', '/api/admin/server-status');
+
+// ------------------------------------------------------------------
+// Slots (时段槽位)
+// ------------------------------------------------------------------
+export const listSlots = () =>
+  api<Slot[]>('GET', '/api/admin/slots');
+
+export const createSlot = (body: { name: string; startMin: number; endMin: number }) =>
+  api<{ id: string }>('POST', '/api/admin/slots', body);
+
+export const deleteSlot = (id: string) =>
+  api<void>('DELETE', `/api/admin/slots/${id}`);
+
+export const setSlotEnabled = (id: string, enabled: boolean) =>
+  api<void>('PATCH', `/api/admin/slots/${id}/enabled`, { enabled });

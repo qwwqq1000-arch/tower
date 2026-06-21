@@ -18,6 +18,7 @@ import Events       from './pages/Events';
 import BanAnalysis  from './pages/BanAnalysis';
 import Fallback     from './pages/Fallback';
 import Users        from './pages/Users';
+import Slots        from './pages/Slots';
 
 export default function App() {
   return (
@@ -33,6 +34,7 @@ export default function App() {
               <Route path="/accounts"  element={<Accounts />} />
               <Route path="/keys"      element={<Keys />} />
               <Route path="/policies"  element={<Policies />} />
+              <Route path="/slots"     element={<Slots />} />
               <Route path="/desired"   element={<Desired />} />
               <Route path="/logs"      element={<Logs />} />
               <Route path="/billing"   element={<Billing />} />

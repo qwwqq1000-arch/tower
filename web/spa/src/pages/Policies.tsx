@@ -150,6 +150,19 @@ export default function Policies() {
   const fallbackPriceThresholdUsd = useField<number>(0.005);
   const quotaRotateThreshold = useField<number>(0.95);
   const maxFailover = useField<number>(50);
+  // Warmup
+  const warmupHours = useField<number>(0);
+  const warmupMaxConcurrent = useField<number>(1);
+  const warmupBlockOpus = useField<boolean>(true);
+  // Session / exile
+  const sessionErrorThreshold = useField<number>(0);
+  const sessionCooldownSec = useField<number>(300);
+  const responseExileEnabled = useField<boolean>(false);
+  const responseExileKeywords = useField<string>('');
+  // Elastic
+  const elasticEnabled = useField<boolean>(false);
+  const elasticScaleUpUtil = useField<number>(0.8);
+  const elasticMaxReserve = useField<number>(1000);
   // Boolean
   const fallbackEnabled = useField<boolean>(false);
   const fallbackProbeEnabled = useField<boolean>(false);
@@ -197,6 +210,16 @@ export default function Policies() {
     }
     if (quotaRotateThreshold.enabled) patch.QuotaRotateThreshold = quotaRotateThreshold.value;
     if (maxFailover.enabled) patch.MaxFailover = maxFailover.value;
+    if (warmupHours.enabled) patch.WarmupHours = warmupHours.value;
+    if (warmupMaxConcurrent.enabled) patch.WarmupMaxConcurrent = warmupMaxConcurrent.value;
+    if (warmupBlockOpus.enabled) patch.WarmupBlockOpus = warmupBlockOpus.value;
+    if (sessionErrorThreshold.enabled) patch.SessionErrorThreshold = sessionErrorThreshold.value;
+    if (sessionCooldownSec.enabled) patch.SessionCooldownSec = sessionCooldownSec.value;
+    if (responseExileEnabled.enabled) patch.ResponseExileEnabled = responseExileEnabled.value;
+    if (responseExileKeywords.enabled) patch.ResponseExileKeywords = responseExileKeywords.value.split(',').map(s => s.trim()).filter(Boolean);
+    if (elasticEnabled.enabled) patch.ElasticEnabled = elasticEnabled.value;
+    if (elasticScaleUpUtil.enabled) patch.ElasticScaleUpUtil = elasticScaleUpUtil.value;
+    if (elasticMaxReserve.enabled) patch.ElasticMaxReserve = elasticMaxReserve.value;
     return patch;
   }
 
@@ -234,6 +257,9 @@ export default function Policies() {
     cooldownBaseMs, cooldownMaxMs, cooldownMult, affinityTTLSec,
     fallbackEnabled, fallbackPriceThresholdUsd, fallbackKeywords, fallbackModels, fallbackProbeEnabled, banSignals, banKeywords,
     quotaRotateThreshold, maxFailover,
+    warmupHours, warmupMaxConcurrent, warmupBlockOpus,
+    sessionErrorThreshold, sessionCooldownSec, responseExileEnabled, responseExileKeywords,
+    elasticEnabled, elasticScaleUpUtil, elasticMaxReserve,
   ].some((f) => f.enabled);
 
   return (
@@ -563,6 +589,176 @@ export default function Policies() {
             onChange={maxFailover.set}
             disabled={!maxFailover.enabled}
             min={1}
+          />
+        </FieldRow>
+
+        <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2 pt-4">预热</h2>
+
+        <FieldRow
+          label="WarmupHours"
+          desc="预热时长(小时,0=关)"
+          enabled={warmupHours.enabled}
+          onToggle={warmupHours.toggle}
+        >
+          <NumInput
+            value={warmupHours.value}
+            onChange={warmupHours.set}
+            disabled={!warmupHours.enabled}
+            min={0}
+          />
+        </FieldRow>
+
+        <FieldRow
+          label="WarmupMaxConcurrent"
+          desc="预热期最大并发"
+          enabled={warmupMaxConcurrent.enabled}
+          onToggle={warmupMaxConcurrent.toggle}
+        >
+          <NumInput
+            value={warmupMaxConcurrent.value}
+            onChange={warmupMaxConcurrent.set}
+            disabled={!warmupMaxConcurrent.enabled}
+            min={1}
+          />
+        </FieldRow>
+
+        <FieldRow
+          label="WarmupBlockOpus"
+          desc="预热期挡 opus"
+          enabled={warmupBlockOpus.enabled}
+          onToggle={warmupBlockOpus.toggle}
+        >
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={warmupBlockOpus.value}
+              onChange={(e) => warmupBlockOpus.set(e.target.checked)}
+              disabled={!warmupBlockOpus.enabled}
+              className="accent-accent w-4 h-4"
+            />
+            <span className="text-sm text-ink">
+              {warmupBlockOpus.value ? '已启用' : '已禁用'}
+            </span>
+          </label>
+        </FieldRow>
+
+        <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2 pt-4">会话/安全放逐</h2>
+
+        <FieldRow
+          label="SessionErrorThreshold"
+          desc="会话连错阈值(0=关)"
+          enabled={sessionErrorThreshold.enabled}
+          onToggle={sessionErrorThreshold.toggle}
+        >
+          <NumInput
+            value={sessionErrorThreshold.value}
+            onChange={sessionErrorThreshold.set}
+            disabled={!sessionErrorThreshold.enabled}
+            min={0}
+          />
+        </FieldRow>
+
+        <FieldRow
+          label="SessionCooldownSec"
+          desc="会话放逐冷却(秒)"
+          enabled={sessionCooldownSec.enabled}
+          onToggle={sessionCooldownSec.toggle}
+        >
+          <NumInput
+            value={sessionCooldownSec.value}
+            onChange={sessionCooldownSec.set}
+            disabled={!sessionCooldownSec.enabled}
+            min={0}
+          />
+        </FieldRow>
+
+        <FieldRow
+          label="ResponseExileEnabled"
+          desc="安全拒答放逐(cyber)"
+          enabled={responseExileEnabled.enabled}
+          onToggle={responseExileEnabled.toggle}
+        >
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={responseExileEnabled.value}
+              onChange={(e) => responseExileEnabled.set(e.target.checked)}
+              disabled={!responseExileEnabled.enabled}
+              className="accent-accent w-4 h-4"
+            />
+            <span className="text-sm text-ink">
+              {responseExileEnabled.value ? '已启用' : '已禁用'}
+            </span>
+          </label>
+        </FieldRow>
+
+        <FieldRow
+          label="拒答关键词(逗号分隔)"
+          desc="拒答关键词(逗号分隔)"
+          enabled={responseExileKeywords.enabled}
+          onToggle={responseExileKeywords.toggle}
+        >
+          <input
+            type="text"
+            value={responseExileKeywords.value}
+            onChange={(e) => responseExileKeywords.set(e.target.value)}
+            disabled={!responseExileKeywords.enabled}
+            placeholder="keyword1,keyword2"
+            className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink
+                       placeholder:text-muted focus:outline-none focus:border-accent transition
+                       disabled:cursor-not-allowed"
+          />
+        </FieldRow>
+
+        <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2 pt-4">弹性伸缩</h2>
+
+        <FieldRow
+          label="ElasticEnabled"
+          desc="启用弹性"
+          enabled={elasticEnabled.enabled}
+          onToggle={elasticEnabled.toggle}
+        >
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={elasticEnabled.value}
+              onChange={(e) => elasticEnabled.set(e.target.checked)}
+              disabled={!elasticEnabled.enabled}
+              className="accent-accent w-4 h-4"
+            />
+            <span className="text-sm text-ink">
+              {elasticEnabled.value ? '已启用' : '已禁用'}
+            </span>
+          </label>
+        </FieldRow>
+
+        <FieldRow
+          label="ElasticScaleUpUtil"
+          desc="扩容利用率阈值"
+          enabled={elasticScaleUpUtil.enabled}
+          onToggle={elasticScaleUpUtil.toggle}
+        >
+          <NumInput
+            value={elasticScaleUpUtil.value}
+            onChange={elasticScaleUpUtil.set}
+            disabled={!elasticScaleUpUtil.enabled}
+            min={0}
+            max={1}
+            step={0.05}
+          />
+        </FieldRow>
+
+        <FieldRow
+          label="ElasticMaxReserve"
+          desc="最大备用数"
+          enabled={elasticMaxReserve.enabled}
+          onToggle={elasticMaxReserve.toggle}
+        >
+          <NumInput
+            value={elasticMaxReserve.value}
+            onChange={elasticMaxReserve.set}
+            disabled={!elasticMaxReserve.enabled}
+            min={0}
           />
         </FieldRow>
       </div>
