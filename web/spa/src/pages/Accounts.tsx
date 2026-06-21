@@ -365,8 +365,8 @@ function AccountEditModal({
                          focus:outline-none focus:border-accent transition"
             >
               <option value="">共享（无租户）</option>
-              {users.filter((u) => u.role === 'tenant').map((u) => (
-                <option key={u.id} value={u.id}>{u.username}</option>
+              {users.filter((u) => u.role !== 'superadmin' && u.role !== 'admin').map((u) => (
+                <option key={u.id} value={u.id}>{u.username} ({u.role})</option>
               ))}
             </select>
           </div>

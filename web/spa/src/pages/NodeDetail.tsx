@@ -310,8 +310,8 @@ export default function NodeDetail() {
           )}
         </div>
 
-        {/* Refresh token button */}
-        <div className="flex items-center gap-3 pt-1 border-t border-line">
+        {/* Refresh token button + 控制台 */}
+        <div className="flex items-center gap-3 pt-1 border-t border-line flex-wrap">
           <button
             onClick={() => { void handleRefresh(); }}
             disabled={refreshing}
@@ -320,6 +320,15 @@ export default function NodeDetail() {
           >
             {refreshing ? '刷新中…' : '刷新 token'}
           </button>
+          <a
+            href={node.baseUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-4 py-2 text-sm font-medium bg-surface border border-line rounded-lg
+                       hover:bg-line/30 transition text-ink"
+          >
+            控制台
+          </a>
           {refreshMsg && (
             <span className={`text-xs ${refreshError ? 'text-err' : 'text-ok'}`}>
               {refreshMsg}

@@ -841,6 +841,14 @@ function NodeRow({
           >
             详情
           </Link>
+          <a
+            href={node.baseUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-muted hover:text-ink transition"
+          >
+            控制台
+          </a>
           <button
             onClick={() => { void handleToggle(); }}
             disabled={toggling}
@@ -948,6 +956,14 @@ function NodeMobileCard({
         >
           {node.enabled ? '停用' : '启用'}
         </button>
+        <a
+          href={node.baseUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-xs text-muted hover:text-ink transition"
+        >
+          控制台
+        </a>
       </div>
     </div>
   );
