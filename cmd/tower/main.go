@@ -4,12 +4,18 @@ package main
 import (
 	"context"
 	"log"
+	"math/rand"
 	"net/http"
+	"time"
 
 	"github.com/qwwqq1000-arch/tower/internal/api"
 	"github.com/qwwqq1000-arch/tower/internal/config"
 	"github.com/qwwqq1000-arch/tower/internal/crypto"
 	"github.com/qwwqq1000-arch/tower/internal/db"
+	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
+	"github.com/qwwqq1000-arch/tower/internal/dispatch"
+	"github.com/qwwqq1000-arch/tower/internal/policy"
+	"github.com/qwwqq1000-arch/tower/internal/state"
 )
 
 func main() {
@@ -30,8 +36,23 @@ func main() {
 	}
 	defer pool.Close()
 
+	q := sqlc.New(pool)
+	nowMs := func() int64 { return time.Now().UnixMilli() }
+	rng := func(min, max int64) int64 {
+		if max <= min {
+			return min
+		}
+		return min + rand.Int63n(max-min+1)
+	}
+	store := state.NewStore(nowMs, rng)
+	base := policy.Defaults()
+	if err := state.LoadStates(ctx, q, store, base.MaxConcurrent); err != nil {
+		log.Printf("warm-start: %v", err)
+	}
+	svc := dispatch.NewService(q, store, base, nowMs)
+
 	log.Printf("tower listening on %s", cfg.HTTPAddr)
-	if err := http.ListenAndServe(cfg.HTTPAddr, api.NewRouter(pool, cfg.SessionSecret)); err != nil {
+	if err := http.ListenAndServe(cfg.HTTPAddr, api.NewRouter(pool, cfg.SessionSecret, svc, q)); err != nil {
 		log.Fatal(err)
 	}
 }

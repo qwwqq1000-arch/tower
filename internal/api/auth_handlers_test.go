@@ -40,7 +40,7 @@ func TestLoginMeLogout(t *testing.T) {
 	}
 
 	const secret = "test-secret-padding-to-32-chars!"
-	router := NewRouter(pool, secret)
+	router := NewRouter(pool, secret, nil, nil)
 
 	// login
 	body := strings.NewReader(`{"username":"admin_b6","password":"pw12345678"}`)

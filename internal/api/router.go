@@ -8,15 +8,21 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
+	"github.com/qwwqq1000-arch/tower/internal/dispatch"
 )
 
 // NewRouter builds the HTTP handler. pool may be nil (health reports degraded).
-func NewRouter(pool *pgxpool.Pool, secret string) http.Handler {
+// svc and q may be nil for test/partial setups; the dispatch route is only registered when svc != nil.
+func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc.Queries) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthzHandler(pool))
 	mux.HandleFunc("POST /auth/login", loginHandler(pool, secret))
 	mux.HandleFunc("POST /auth/logout", logoutHandler())
 	mux.HandleFunc("GET /auth/me", requireSession(secret, meHandler(pool)))
+	if svc != nil {
+		mux.HandleFunc("POST /v1/messages", dispatchMessagesHandler(svc, q))
+	}
 	return mux
 }
 
