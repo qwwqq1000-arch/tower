@@ -18,6 +18,13 @@ import type { FallbackChannel } from '../types';
 // ------------------------------------------------------------------
 // Helpers
 // ------------------------------------------------------------------
+/** Adaptive cost formatting: <0.01 → 4 decimals, else 2 */
+function fmtCost(usd: number | undefined): string {
+  if (usd === undefined || usd === null) return '—';
+  if (usd < 0.01) return `$${usd.toFixed(4)}`;
+  return `$${usd.toFixed(2)}`;
+}
+
 function emptyForm() {
   return {
     name: '',
@@ -445,6 +452,9 @@ export default function Fallback() {
                       <th className="px-4 py-3 font-medium text-right">Weight</th>
                       <th className="px-4 py-3 font-medium text-right">并发</th>
                       <th className="px-4 py-3 font-medium text-right">价格阈值</th>
+                      <th className="px-4 py-3 font-medium text-right">今日消费</th>
+                      <th className="px-4 py-3 font-medium text-right">总消费</th>
+                      <th className="px-4 py-3 font-medium text-right">余额</th>
                       <th className="px-4 py-3 font-medium">启用</th>
                       <th className="px-4 py-3 font-medium">操作</th>
                     </tr>
@@ -467,6 +477,19 @@ export default function Fallback() {
                         <td className="px-4 py-3 text-right tabular-nums">
                           {c.priceThreshold > 0 ? `$${c.priceThreshold.toFixed(4)}` : '—'}
                         </td>
+                        <td className="px-4 py-3 text-right tabular-nums">
+                          <span>{fmtCost(c.todayCostUsd)}</span>
+                          {c.todayRequests !== undefined && (
+                            <span className="block text-[10px] text-muted">({c.todayRequests} 次)</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums">
+                          <span>{fmtCost(c.totalCostUsd)}</span>
+                          {c.totalRequests !== undefined && (
+                            <span className="block text-[10px] text-muted">({c.totalRequests} 次)</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right text-muted text-xs" title="未接入，中转站余额需对接其余额 API">—</td>
                         <td className="px-4 py-3">
                           <EnableToggle id={c.id} enabled={c.enabled} onChange={handleToggle} />
                         </td>
@@ -526,6 +549,26 @@ export default function Fallback() {
                         <p className="text-ink font-medium tabular-nums">
                           {c.priceThreshold > 0 ? `$${c.priceThreshold.toFixed(4)}` : '—'}
                         </p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 text-xs">
+                      <div>
+                        <p className="text-muted">今日消费</p>
+                        <p className="text-ink font-medium tabular-nums">{fmtCost(c.todayCostUsd)}</p>
+                        {c.todayRequests !== undefined && (
+                          <p className="text-[10px] text-muted">({c.todayRequests} 次)</p>
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-muted">总消费</p>
+                        <p className="text-ink font-medium tabular-nums">{fmtCost(c.totalCostUsd)}</p>
+                        {c.totalRequests !== undefined && (
+                          <p className="text-[10px] text-muted">({c.totalRequests} 次)</p>
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-muted">余额</p>
+                        <p className="text-muted tabular-nums" title="未接入，中转站余额需对接其余额 API">—</p>
                       </div>
                     </div>
                     {c.modelAllowlist && (

@@ -278,6 +278,10 @@ export interface FallbackChannel {
   modelAllowlist: string;
   enabled: boolean;
   ownerId: string;
+  todayRequests?: number;
+  todayCostUsd?: number;
+  totalRequests?: number;
+  totalCostUsd?: number;
 }
 
 // --- Users ---
