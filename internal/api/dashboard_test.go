@@ -43,7 +43,7 @@ func TestDashboardComprehensive(t *testing.T) {
 	}
 	var out map[string]any
 	_ = json.Unmarshal(rec.Body.Bytes(), &out)
-	for _, k := range []string{"nodes", "accounts", "today", "hosting"} {
+	for _, k := range []string{"nodes", "accounts", "today", "hosting", "totalCostUsd"} {
 		if _, ok := out[k]; !ok {
 			t.Fatalf("missing %s in dashboard", k)
 		}

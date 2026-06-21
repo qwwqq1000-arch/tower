@@ -95,6 +95,7 @@ export interface DashboardData {
     byModel: DashboardByModel[];
   };
   hosting: DashboardHostingRow[];
+  totalCostUsd: number;
 }
 
 // --- Provision ---

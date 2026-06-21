@@ -178,6 +178,9 @@ func dashboardHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
 		}
 		today := map[string]any{"requests": reqN, "ok": okN, "successRate": successRate, "tokensIn": inTok, "tokensOut": outTok, "costUsd": cost, "byModel": byModel}
 
+		// total accumulated cost
+		totalCost, _ := q.SumAllCost(ctx)
+
 		// hosting fees per tenant
 		hosting := []map[string]any{}
 		if ts, err := q.ListTenantsBasic(ctx); err == nil {
@@ -189,6 +192,6 @@ func dashboardHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
 			}
 		}
 
-		writeJSON(w, http.StatusOK, map[string]any{"nodes": nodes, "accounts": map[string]any{"total": accTotal}, "today": today, "hosting": hosting})
+		writeJSON(w, http.StatusOK, map[string]any{"nodes": nodes, "accounts": map[string]any{"total": accTotal}, "today": today, "hosting": hosting, "totalCostUsd": totalCost})
 	}
 }

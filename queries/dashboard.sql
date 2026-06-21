@@ -12,3 +12,6 @@ SELECT id, username, role FROM tenants ORDER BY created_at;
 
 -- name: GetHostingRate :one
 SELECT rate FROM hosting_rates WHERE tenant_id = $1 ORDER BY effective_from DESC LIMIT 1;
+
+-- name: SumAllCost :one
+SELECT coalesce(sum(cost_usd),0)::float8 AS total FROM cost_rollup;

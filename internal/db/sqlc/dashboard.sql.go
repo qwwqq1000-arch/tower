@@ -50,6 +50,17 @@ func (q *Queries) ListTenantsBasic(ctx context.Context) ([]ListTenantsBasicRow, 
 	return items, nil
 }
 
+const sumAllCost = `-- name: SumAllCost :one
+SELECT coalesce(sum(cost_usd),0)::float8 AS total FROM cost_rollup
+`
+
+func (q *Queries) SumAllCost(ctx context.Context) (float64, error) {
+	row := q.db.QueryRow(ctx, sumAllCost)
+	var total float64
+	err := row.Scan(&total)
+	return total, err
+}
+
 const todayDispatchByModel = `-- name: TodayDispatchByModel :many
 SELECT model,
        count(*)::int AS requests,

@@ -168,7 +168,7 @@ export default function Dashboard() {
 
   if (!data) return null;
 
-  const { nodes, accounts, today, hosting } = data;
+  const { nodes, accounts, today, hosting, totalCostUsd } = data;
   const byStatus = nodes.byStatus ?? {};
 
   return (
@@ -179,7 +179,7 @@ export default function Dashboard() {
       {/* ---- Top stat cards ---- */}
       <section>
         <h2 className="text-xs font-medium text-muted uppercase tracking-wide mb-3">总览</h2>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
           <StatCard
             label="节点"
             value={`${nodes.enabled} / ${nodes.total}`}
@@ -199,8 +199,12 @@ export default function Dashboard() {
             warn={today.successRate < 0.8}
           />
           <StatCard
-            label="今日成本"
+            label="今日消耗"
             value={fmtCost(today.costUsd)}
+          />
+          <StatCard
+            label="总消耗"
+            value={fmtCost(totalCostUsd)}
           />
           <StatCard
             label="今日入 Token"
