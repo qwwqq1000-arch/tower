@@ -77,6 +77,35 @@ func (q *Queries) GetAccount(ctx context.Context, id string) (Account, error) {
 	return i, err
 }
 
+const listAccountOwners = `-- name: ListAccountOwners :many
+SELECT id, owner_id FROM accounts
+`
+
+type ListAccountOwnersRow struct {
+	ID      string `json:"id"`
+	OwnerID string `json:"owner_id"`
+}
+
+func (q *Queries) ListAccountOwners(ctx context.Context) ([]ListAccountOwnersRow, error) {
+	rows, err := q.db.Query(ctx, listAccountOwners)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAccountOwnersRow
+	for rows.Next() {
+		var i ListAccountOwnersRow
+		if err := rows.Scan(&i.ID, &i.OwnerID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAccountsByOwner = `-- name: ListAccountsByOwner :many
 SELECT id, owner_id, email, subscription_type, oauth_access_enc, oauth_refresh_enc, expires_at, status, created_at, onboarded_at, banned_at FROM accounts WHERE owner_id = $1 ORDER BY created_at DESC
 `
@@ -113,6 +142,34 @@ func (q *Queries) ListAccountsByOwner(ctx context.Context, ownerID string) ([]Ac
 	return items, nil
 }
 
+const setAccountExpiry = `-- name: SetAccountExpiry :exec
+UPDATE accounts SET expires_at=$2 WHERE id=$1
+`
+
+type SetAccountExpiryParams struct {
+	ID        string `json:"id"`
+	ExpiresAt int64  `json:"expires_at"`
+}
+
+func (q *Queries) SetAccountExpiry(ctx context.Context, arg SetAccountExpiryParams) error {
+	_, err := q.db.Exec(ctx, setAccountExpiry, arg.ID, arg.ExpiresAt)
+	return err
+}
+
+const setAccountOwner = `-- name: SetAccountOwner :exec
+UPDATE accounts SET owner_id=$2 WHERE id=$1
+`
+
+type SetAccountOwnerParams struct {
+	ID      string `json:"id"`
+	OwnerID string `json:"owner_id"`
+}
+
+func (q *Queries) SetAccountOwner(ctx context.Context, arg SetAccountOwnerParams) error {
+	_, err := q.db.Exec(ctx, setAccountOwner, arg.ID, arg.OwnerID)
+	return err
+}
+
 const setAccountStatus = `-- name: SetAccountStatus :exec
 UPDATE accounts SET status=$2, banned_at=$3 WHERE id=$1
 `
@@ -146,19 +203,5 @@ func (q *Queries) UpdateAccountCreds(ctx context.Context, arg UpdateAccountCreds
 		arg.OauthRefreshEnc,
 		arg.ExpiresAt,
 	)
-	return err
-}
-
-const setAccountExpiry = `-- name: SetAccountExpiry :exec
-UPDATE accounts SET expires_at=$2 WHERE id=$1
-`
-
-type SetAccountExpiryParams struct {
-	ID        string `json:"id"`
-	ExpiresAt int64  `json:"expires_at"`
-}
-
-func (q *Queries) SetAccountExpiry(ctx context.Context, arg SetAccountExpiryParams) error {
-	_, err := q.db.Exec(ctx, setAccountExpiry, arg.ID, arg.ExpiresAt)
 	return err
 }

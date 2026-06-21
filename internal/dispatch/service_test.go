@@ -54,6 +54,12 @@ func TestService_DispatchToNode(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create node: %v", err)
 	}
+	if _, err := q.CreateAccount(ctx, sqlc.CreateAccountParams{
+		ID:      "a_" + sfx,
+		OwnerID: "owner_" + sfx,
+	}); err != nil {
+		t.Fatalf("create account: %v", err)
+	}
 	if _, err := q.AssignAccount(ctx, sqlc.AssignAccountParams{
 		NodeID:    nodeID,
 		AccountID: "a_" + sfx,
@@ -437,6 +443,111 @@ func TestElasticCountPartition(t *testing.T) {
 		}
 		if got[2] != "a3" {
 			t.Errorf("expected a3 as reserve, got %s", got[2])
+		}
+	})
+}
+
+// TestBuildCandidates_OwnerIsolation verifies that buildCandidates filters by account owner:
+// - ownerID="A" → only accounts owned by A are candidates
+// - ownerID="" (admin) → all accounts are candidates
+func TestBuildCandidates_OwnerIsolation(t *testing.T) {
+	q, closeDB := setupDB(t)
+	defer closeDB()
+	ctx := context.Background()
+
+	// Shared node that hosts both accounts.
+	sfx := suffixDispatch(t)
+	nodeID := "n_iso_" + sfx
+	if _, err := q.CreateNode(ctx, sqlc.CreateNodeParams{
+		ID:      nodeID,
+		Name:    "iso-node-" + sfx,
+		BaseUrl: "http://unused",
+		ApiKey:  "k",
+		OwnerID: "",
+	}); err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+
+	ownerA := "owner_a_" + sfx
+	ownerB := "owner_b_" + sfx
+	accA := "acc_a_" + sfx
+	accB := "acc_b_" + sfx
+
+	// Create two accounts, one per tenant.
+	if _, err := q.CreateAccount(ctx, sqlc.CreateAccountParams{
+		ID:      accA,
+		OwnerID: ownerA,
+	}); err != nil {
+		t.Fatalf("create accA: %v", err)
+	}
+	if _, err := q.CreateAccount(ctx, sqlc.CreateAccountParams{
+		ID:      accB,
+		OwnerID: ownerB,
+	}); err != nil {
+		t.Fatalf("create accB: %v", err)
+	}
+
+	// Assign both accounts to the shared node with distinct profiles.
+	if _, err := q.AssignAccount(ctx, sqlc.AssignAccountParams{
+		NodeID: nodeID, AccountID: accA, ProfileID: "profA", Weight: 100, Role: "baseline",
+	}); err != nil {
+		t.Fatalf("assign accA: %v", err)
+	}
+	if _, err := q.AssignAccount(ctx, sqlc.AssignAccountParams{
+		NodeID: nodeID, AccountID: accB, ProfileID: "profB", Weight: 100, Role: "baseline",
+	}); err != nil {
+		t.Fatalf("assign accB: %v", err)
+	}
+
+	store := state.NewStore(func() int64 { return 0 }, func(min, max int64) int64 { return min })
+	svc := &Service{Q: q, Store: store, Base: policy.Defaults(), Now: func() int64 { return 0 }}
+	cfg := policy.Defaults()
+
+	keyA := nodeID + ":profA"
+	keyB := nodeID + ":profB"
+
+	// ownerID=ownerA → only accA candidate.
+	t.Run("owner A sees only A", func(t *testing.T) {
+		order, _ := svc.buildCandidates(ctx, ownerA, "claude-3", cfg)
+		found := map[string]bool{}
+		for _, k := range order {
+			found[k] = true
+		}
+		if !found[keyA] {
+			t.Errorf("expected %s in candidates, got %v", keyA, order)
+		}
+		if found[keyB] {
+			t.Errorf("expected %s NOT in candidates for ownerA, got %v", keyB, order)
+		}
+	})
+
+	// ownerID=ownerB → only accB candidate.
+	t.Run("owner B sees only B", func(t *testing.T) {
+		order, _ := svc.buildCandidates(ctx, ownerB, "claude-3", cfg)
+		found := map[string]bool{}
+		for _, k := range order {
+			found[k] = true
+		}
+		if !found[keyB] {
+			t.Errorf("expected %s in candidates, got %v", keyB, order)
+		}
+		if found[keyA] {
+			t.Errorf("expected %s NOT in candidates for ownerB, got %v", keyA, order)
+		}
+	})
+
+	// ownerID="" (admin) → both accounts visible.
+	t.Run("admin (empty ownerID) sees all", func(t *testing.T) {
+		order, _ := svc.buildCandidates(ctx, "", "claude-3", cfg)
+		found := map[string]bool{}
+		for _, k := range order {
+			found[k] = true
+		}
+		if !found[keyA] {
+			t.Errorf("expected %s in admin candidates, got %v", keyA, order)
+		}
+		if !found[keyB] {
+			t.Errorf("expected %s in admin candidates, got %v", keyB, order)
 		}
 	})
 }

@@ -17,3 +17,9 @@ UPDATE accounts SET status=$2, banned_at=$3 WHERE id=$1;
 
 -- name: SetAccountExpiry :exec
 UPDATE accounts SET expires_at=$2 WHERE id=$1;
+
+-- name: SetAccountOwner :exec
+UPDATE accounts SET owner_id=$2 WHERE id=$1;
+
+-- name: ListAccountOwners :many
+SELECT id, owner_id FROM accounts;

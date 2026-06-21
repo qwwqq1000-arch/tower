@@ -240,6 +240,7 @@ func listAccountsHandler(q *sqlc.Queries) http.HandlerFunc {
 				"totalCostUsd":     totalCostMap[key],
 				"expiresAt":        a.ExpiresAt,
 				"subscriptionType": a.SubscriptionType,
+				"ownerId":          a.AcctOwnerID,
 			})
 		}
 		writeJSON(w, 200, out)
@@ -259,6 +260,27 @@ func setAccountExpiryHandler(q *sqlc.Queries) http.HandlerFunc {
 		if err := q.SetAccountExpiry(r.Context(), sqlc.SetAccountExpiryParams{
 			ID:        accountID,
 			ExpiresAt: body.ExpiresAt,
+		}); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, 200, map[string]string{"ok": "true"})
+	}
+}
+
+func setAccountOwnerHandler(q *sqlc.Queries) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		accountID := r.PathValue("accountId")
+		var body struct {
+			OwnerID string `json:"ownerId"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "invalid body"})
+			return
+		}
+		if err := q.SetAccountOwner(r.Context(), sqlc.SetAccountOwnerParams{
+			ID:      accountID,
+			OwnerID: body.OwnerID,
 		}); err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return

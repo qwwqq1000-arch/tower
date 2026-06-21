@@ -57,6 +57,9 @@ func TestDispatchStream_ToNode(t *testing.T) {
 	if _, err := q.CreateNode(ctx, sqlc.CreateNodeParams{ID: nodeID, Name: "n", BaseUrl: node.URL, ApiKey: "k", OwnerID: "o_" + s}); err != nil {
 		t.Fatalf("node: %v", err)
 	}
+	if _, err := q.CreateAccount(ctx, sqlc.CreateAccountParams{ID: "a_" + s, OwnerID: "o_" + s}); err != nil {
+		t.Fatalf("create account: %v", err)
+	}
 	if _, err := q.AssignAccount(ctx, sqlc.AssignAccountParams{NodeID: nodeID, AccountID: "a_" + s, ProfileID: "default", Weight: 100, Role: "baseline"}); err != nil {
 		t.Fatalf("assign: %v", err)
 	}

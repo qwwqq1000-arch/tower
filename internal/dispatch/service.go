@@ -239,9 +239,13 @@ func slotActiveNow(startMin, endMin int, nowMs int64) bool {
 }
 
 func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cfg policy.Config) ([]string, Resolver) {
-	nodes, err := s.Q.ListNodesByOwner(ctx, ownerID)
-	if err != nil || len(nodes) == 0 {
-		nodes, _ = s.Q.ListNodes(ctx)
+	nodes, _ := s.Q.ListNodes(ctx)
+	// Build account-owner map for strict tenant isolation.
+	acctOwner := map[string]string{}
+	if ownerRows, aerr := s.Q.ListAccountOwners(ctx); aerr == nil {
+		for _, row := range ownerRows {
+			acctOwner[row.ID] = row.OwnerID
+		}
 	}
 	refs := map[string]NodeRef{}
 	type cand struct {
@@ -272,6 +276,11 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 		}
 		for _, na := range accs {
 			if !na.Enabled {
+				continue
+			}
+			// Strict per-account tenant isolation: skip accounts not owned by the requesting tenant.
+			// ownerID=="" means admin/unowned dispatch key → include all accounts.
+			if ownerID != "" && acctOwner[na.AccountID] != ownerID {
 				continue
 			}
 			// Slot-window filter: skip only when slot exists, is enabled, and window is inactive.
