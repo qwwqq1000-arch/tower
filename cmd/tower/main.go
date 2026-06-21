@@ -17,6 +17,7 @@ import (
 	"github.com/qwwqq1000-arch/tower/internal/dispatch"
 	"github.com/qwwqq1000-arch/tower/internal/policy"
 	"github.com/qwwqq1000-arch/tower/internal/state"
+	"github.com/qwwqq1000-arch/tower/internal/telemetry"
 )
 
 func main() {
@@ -56,6 +57,9 @@ func main() {
 		log.Printf("warm-start: %v", err)
 	}
 	svc := dispatch.NewService(q, store, base, nowMs)
+
+	poller := &telemetry.Poller{Q: q, Store: store, Threshold: 0.95, DefaultTTLMs: 3600000, Capacity: base.MaxConcurrent, Now: nowMs}
+	go poller.Run(context.Background(), 60*time.Second)
 
 	log.Printf("tower listening on %s", cfg.HTTPAddr)
 	if err := http.ListenAndServe(cfg.HTTPAddr, api.NewRouter(pool, cfg.SessionSecret, svc, q)); err != nil {
