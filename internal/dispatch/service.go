@@ -398,7 +398,7 @@ func (s *Service) enabledChannels(ctx context.Context, _ string) []sqlc.Fallback
 func fbSlotKey(id string) string { return "fb:" + id }
 
 func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []byte, ch sqlc.FallbackChannel, reason string, latencyMs int64) Outcome {
-	_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: "fallback", Target: reason, OwnerID: ownerID})
+	_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: "fallback", Target: reason, OwnerID: ownerID, Detail: map[string]string{"channel": ch.ID}})
 	cap := int(ch.MaxConcurrent)
 	if cap <= 0 {
 		cap = 1000
@@ -422,15 +422,17 @@ func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []
 		status = "error"
 	}
 	var cost float64
+	var in, out int64
 	if status == "ok" {
-		in, out, cacheRead, cache5m, cache1h := parseUsage(res.Body)
+		var cacheRead, cache5m, cache1h int64
+		in, out, cacheRead, cache5m, cache1h = parseUsage(res.Body)
 		cost = billing.CostUsdFull(model, in, out, cacheRead, cache5m, cache1h)
 		_ = s.Q.UpsertFallbackSpend(ctx, sqlc.UpsertFallbackSpendParams{ChannelID: ch.ID, Day: todayDayStr(), Requests: 1, EstCostUsd: cost, BalanceObserved: 0})
 	}
 	_ = s.Q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{
 		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: "fallback:" + ch.ID,
 		ProfileID: "", Status: status, HttpStatus: int32(res.Status), LatencyMs: latencyMs, FallbackReason: reason,
-		Stream: false, CostUsd: cost,
+		TokensIn: in, TokensOut: out, Stream: false, CostUsd: cost,
 	})
 	return Outcome{Status: res.Status, Body: res.Body, Target: "fallback:" + ch.ID, Reason: reason}
 }
@@ -804,7 +806,7 @@ func lastUserText(body []byte) string {
 
 // streamChannel attempts a fallback channel stream. committed=true means we wrote to the client.
 func (s *Service) streamChannel(ctx context.Context, w http.ResponseWriter, ch sqlc.FallbackChannel, body []byte, ownerID, model, reason string) (Outcome, bool) {
-	_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: "fallback", Target: reason, OwnerID: ownerID})
+	_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: "fallback", Target: reason, OwnerID: ownerID, Detail: map[string]string{"channel": ch.ID}})
 	cap := int(ch.MaxConcurrent)
 	if cap <= 0 {
 		cap = 1000
