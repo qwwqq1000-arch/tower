@@ -6,6 +6,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { listDispatchKeys, createDispatchKey, disableDispatchKey } from '../api';
 import type { DispatchKeyRecord } from '../types';
+import { copyText } from '../lib/clipboard';
 
 // ------------------------------------------------------------------
 // New-key modal — shows plaintext key once after creation
@@ -24,9 +25,11 @@ function NewKeyModal({ result, onClose }: NewKeyModalProps) {
   const [copied, setCopied] = useState(false);
 
   function handleCopy() {
-    void navigator.clipboard.writeText(result.key).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+    void copyText(result.key).then((ok) => {
+      if (ok) {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      }
     });
   }
 
@@ -264,12 +267,14 @@ function KeyMobileCard({
 // ------------------------------------------------------------------
 function GatewayPanel() {
   const [copied, setCopied] = useState(false);
-  const gatewayUrl = `${window.location.origin}/v1/messages`;
+  const gatewayUrl = `${window.location.origin}`;
 
   function handleCopy() {
-    void navigator.clipboard.writeText(gatewayUrl).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+    void copyText(gatewayUrl).then((ok) => {
+      if (ok) {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      }
     });
   }
 
@@ -299,7 +304,7 @@ function GatewayPanel() {
         </div>
       </div>
       <p className="text-xs text-muted">
-        在 new-api 新建 Claude 渠道：地址填上面，密钥填下面新建的 dk_…
+        new-api 渠道「代理地址」填这个(末尾不要加 /v1/messages,new-api 会自动补)。密钥填下面新建的 dk_…
       </p>
     </div>
   );

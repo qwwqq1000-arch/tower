@@ -3,7 +3,7 @@
 // SSE primary; polling fallback on error
 // ============================================================
 import { useEffect, useRef, useState } from 'react';
-import { getDispatchStatus } from '../api';
+import { getDispatchStatus, listFallbackChannels } from '../api';
 import type { DispatchStatus, DispatchAccountSnapshot, DispatchEvent } from '../types';
 
 // ------------------------------------------------------------------
@@ -125,7 +125,16 @@ function TrafficPanel({ data }: { data: DispatchStatus }) {
 // ------------------------------------------------------------------
 // Events timeline
 // ------------------------------------------------------------------
-function EventTimeline({ events }: { events: DispatchEvent[] }) {
+function EventTimeline({ events, fallbackNames }: { events: DispatchEvent[]; fallbackNames: Map<string, string> }) {
+  function renderTarget(target: string): string {
+    if (target.startsWith('fallback:')) {
+      const id = target.slice('fallback:'.length);
+      const name = fallbackNames.get(id);
+      return name !== undefined ? `保底: ${name}` : target;
+    }
+    return target;
+  }
+
   return (
     <div className="bg-surface border border-line rounded-xl overflow-hidden">
       <div className="px-4 py-3 border-b border-line text-sm font-medium text-ink">事件时间线（最近 20）</div>
@@ -139,7 +148,7 @@ function EventTimeline({ events }: { events: DispatchEvent[] }) {
               {new Date(e.ts).toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
             </span>
             <span className="text-xs font-mono text-accent shrink-0">{e.type}</span>
-            <span className="text-xs text-muted truncate">{e.target}</span>
+            <span className="text-xs text-muted truncate">{renderTarget(e.target)}</span>
           </li>
         ))}
       </ul>
@@ -154,6 +163,7 @@ export default function Dispatch() {
   const [data, setData] = useState<DispatchStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<'sse' | 'poll'>('sse');
+  const [fallbackNames, setFallbackNames] = useState<Map<string, string>>(new Map());
   const esRef = useRef<EventSource | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -184,6 +194,15 @@ export default function Dispatch() {
   };
 
   useEffect(() => {
+    // Fetch fallback channel names for display (best-effort)
+    listFallbackChannels()
+      .then((channels) => {
+        const m = new Map<string, string>();
+        for (const ch of channels) m.set(ch.id, ch.name);
+        setFallbackNames(m);
+      })
+      .catch(() => { /* non-fatal: show raw target on failure */ });
+
     // Try SSE first
     const es = new EventSource('/api/admin/dispatch/stream');
     esRef.current = es;
@@ -247,7 +266,7 @@ export default function Dispatch() {
               <ConcurrencyPanel accounts={data.accounts} />
               <TrafficPanel data={data} />
             </div>
-            <EventTimeline events={data.events} />
+            <EventTimeline events={data.events} fallbackNames={fallbackNames} />
           </div>
         </>
       )}
