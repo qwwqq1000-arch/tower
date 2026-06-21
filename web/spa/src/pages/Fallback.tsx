@@ -402,6 +402,11 @@ export default function Fallback() {
 
   useEffect(() => { void fetchChannels(); }, [fetchChannels]);
 
+  useEffect(() => {
+    const t = setInterval(() => { void fetchChannels(); }, 60000);
+    return () => clearInterval(t);
+  }, [fetchChannels]);
+
   // ---- create ----
   async function handleCreate(f: FormState) {
     setCreating(true);
