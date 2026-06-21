@@ -4,6 +4,7 @@ import { LoginGate } from './auth';
 import { Shell } from './Shell';
 
 import Dashboard    from './pages/Dashboard';
+import Dispatch     from './pages/Dispatch';
 import Nodes        from './pages/Nodes';
 import Accounts     from './pages/Accounts';
 import Keys         from './pages/Keys';
@@ -22,6 +23,7 @@ export default function App() {
           <Shell>
             <Routes>
               <Route path="/"          element={<Dashboard />} />
+              <Route path="/dispatch"  element={<Dispatch />} />
               <Route path="/nodes"     element={<Nodes />} />
               <Route path="/accounts"  element={<Accounts />} />
               <Route path="/keys"      element={<Keys />} />

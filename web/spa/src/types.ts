@@ -203,3 +203,34 @@ export interface OAuthStartResult {
 export interface OAuthExchangeResult {
   accountId: string;
 }
+
+// --- Dispatch Status ---
+export interface DispatchAccountSnapshot {
+  key: string;
+  label?: string;
+  status: string; // active | banned | half_open | offline | disabled
+  inflight: number;
+  available: number;
+}
+
+export interface DispatchTraffic {
+  total: number;
+  ok: number;
+  error: number;
+  tokensIn: number;
+  tokensOut: number;
+}
+
+export interface DispatchEvent {
+  ts: number;
+  type: string;
+  target: string;
+}
+
+export interface DispatchStatus {
+  accounts: DispatchAccountSnapshot[];
+  traffic: DispatchTraffic;
+  events: DispatchEvent[];
+  nodes: { total: number; enabled: number };
+  asOf: number;
+}

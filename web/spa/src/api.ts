@@ -23,6 +23,7 @@ import type {
   NodeProfile,
   OAuthStartResult,
   OAuthExchangeResult,
+  DispatchStatus,
 } from './types';
 
 // ------------------------------------------------------------------
@@ -169,3 +170,9 @@ export const oauthExchange = (
   nodeId: string,
   payload: { codeVerifier: string; state: string; code: string },
 ) => api<OAuthExchangeResult>('POST', `/api/admin/nodes/${nodeId}/oauth/exchange`, payload);
+
+// ------------------------------------------------------------------
+// Dispatch status (调度状态)
+// ------------------------------------------------------------------
+export const getDispatchStatus = () =>
+  api<DispatchStatus>('GET', '/api/admin/dispatch/status');

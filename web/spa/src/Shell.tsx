@@ -23,6 +23,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { path: '/',           label: '看板',     icon: '◈' },
+  { path: '/dispatch',   label: '调度',     icon: '⇄', adminOnly: true },
   { path: '/nodes',      label: '节点',     icon: '⬡' },
   { path: '/accounts',   label: '号库',     icon: '⚿' },
   { path: '/keys',       label: '调度密钥', icon: '🔑', adminOnly: true },
