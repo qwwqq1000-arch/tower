@@ -64,8 +64,8 @@ function QuotaCell({
     return <span className="text-xs text-muted">—</span>;
   }
 
-  const w5h = profile.windows.find((w) => w.type === '5h');
-  const w7d = profile.windows.find((w) => w.type === '7d');
+  const w5h = profile.windows.find((w) => w.type === 'five_hour');
+  const w7d = profile.windows.find((w) => w.type === 'seven_day');
 
   if (!w5h && !w7d) return <span className="text-xs text-muted">—</span>;
 
