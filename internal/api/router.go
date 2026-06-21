@@ -45,14 +45,7 @@ func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc
 		mux.HandleFunc("GET /api/admin/events", requireAdmin(secret, listEventsHandler(q)))
 		mux.HandleFunc("GET /api/admin/audit", requireAdmin(secret, listAuditHandler(q)))
 	}
-	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write(web.IndexHTML)
-	})
+	mux.Handle("/", web.SPAHandler())
 	return mux
 }
 

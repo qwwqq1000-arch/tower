@@ -3,3 +3,5 @@
 *.md
 tower
 dist
+web/spa/node_modules
+web/spa/dist
