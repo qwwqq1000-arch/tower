@@ -292,6 +292,49 @@ export interface UserRow {
   rate: number;
 }
 
+// --- Node Telemetry (遥测 / 健康) ---
+export interface NodeHealth {
+  version: string;
+  loggedIn: boolean;
+  email: string;
+  subscriptionType: string;
+  mode: string;
+}
+
+export interface NodeTelemetryPercentiles {
+  p50: number;
+  p95: number;
+}
+
+export interface NodeTelemetryModelStat {
+  count: number;
+  avgTotalMs: number;
+}
+
+export interface NodeTelemetryTokenUsage {
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCacheReadTokens: number;
+  totalCacheCreationTokens: number;
+  avgCacheHitRate: number;
+}
+
+export interface NodeTelemetryStats {
+  windowMs: number;
+  totalRequests: number;
+  errorCount: number;
+  requestsPerMinute: number;
+  ttfb: NodeTelemetryPercentiles;
+  totalDuration: NodeTelemetryPercentiles;
+  byModel: Record<string, NodeTelemetryModelStat>;
+  tokenUsage: NodeTelemetryTokenUsage;
+}
+
+export interface NodeTelemetry {
+  health: NodeHealth;
+  telemetry: NodeTelemetryStats | null;
+}
+
 // --- Dispatch Status ---
 export interface DispatchAccountSnapshot {
   key: string;

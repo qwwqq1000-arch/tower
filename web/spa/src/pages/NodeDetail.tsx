@@ -5,8 +5,8 @@
 // ============================================================
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { listNodes, getNodeFeatures, patchNodeFeatures, refreshNode, setNodeEnabled } from '../api';
-import type { NodeRecord } from '../types';
+import { listNodes, getNodeFeatures, patchNodeFeatures, refreshNode, setNodeEnabled, getNodeTelemetry } from '../api';
+import type { NodeRecord, NodeTelemetry } from '../types';
 
 // ------------------------------------------------------------------
 // Feature editor for a single adapter
@@ -136,6 +136,10 @@ export default function NodeDetail() {
   const [togglingEnabled, setTogglingEnabled] = useState(false);
   const [enableErr, setEnableErr] = useState<string | null>(null);
 
+  const [telemetry, setTelemetry] = useState<NodeTelemetry | null>(null);
+  const [loadingTelemetry, setLoadingTelemetry] = useState(false);
+  const [telemetryErr, setTelemetryErr] = useState<string | null>(null);
+
   // ---- load node ----
   const fetchNode = useCallback(async () => {
     if (!id) return;
@@ -168,10 +172,26 @@ export default function NodeDetail() {
     }
   }, [id]);
 
+  // ---- load telemetry ----
+  const fetchTelemetry = useCallback(async () => {
+    if (!id) return;
+    setLoadingTelemetry(true);
+    setTelemetryErr(null);
+    try {
+      const data = await getNodeTelemetry(id);
+      setTelemetry(data);
+    } catch (err) {
+      setTelemetryErr(err instanceof Error ? err.message : '加载遥测失败');
+    } finally {
+      setLoadingTelemetry(false);
+    }
+  }, [id]);
+
   useEffect(() => {
     void fetchNode();
     void fetchFeatures();
-  }, [fetchNode, fetchFeatures]);
+    void fetchTelemetry();
+  }, [fetchNode, fetchFeatures, fetchTelemetry]);
 
   // ---- refresh token ----
   async function handleRefresh() {
@@ -306,6 +326,176 @@ export default function NodeDetail() {
             </span>
           )}
         </div>
+      </div>
+
+      {/* 遥测 / 健康 */}
+      <div className="bg-surface border border-line rounded-xl p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-ink uppercase tracking-wide">遥测 / 健康</h2>
+          <button
+            onClick={() => { void fetchTelemetry(); }}
+            disabled={loadingTelemetry}
+            className="px-3 py-1 text-xs font-medium bg-surface border border-line rounded-lg
+                       hover:bg-line/30 disabled:opacity-50 disabled:cursor-not-allowed transition text-ink"
+          >
+            {loadingTelemetry ? '刷新中…' : '刷新'}
+          </button>
+        </div>
+
+        {loadingTelemetry && (
+          <div className="flex items-center justify-center min-h-20">
+            <span className="text-muted animate-pulse text-sm">加载遥测数据…</span>
+          </div>
+        )}
+
+        {!loadingTelemetry && telemetryErr && (
+          <div className="bg-err/10 border border-err/30 rounded-xl p-4 text-err text-sm">
+            {telemetryErr}
+          </div>
+        )}
+
+        {!loadingTelemetry && !telemetryErr && telemetry && (
+          <div className="space-y-5">
+            {/* Health row */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div>
+                <div className="text-xs text-muted uppercase tracking-wide">版本</div>
+                <div className="mt-0.5 text-sm text-ink font-mono">{telemetry.health.version || '—'}</div>
+              </div>
+              <div>
+                <div className="text-xs text-muted uppercase tracking-wide">登录态</div>
+                <div className={`mt-0.5 text-sm font-medium ${telemetry.health.loggedIn ? 'text-ok' : 'text-err'}`}>
+                  {telemetry.health.loggedIn ? '✓' : '✗'}
+                  {telemetry.health.email && (
+                    <span className="ml-1 text-xs text-muted font-normal truncate">{telemetry.health.email}</span>
+                  )}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-muted uppercase tracking-wide">订阅</div>
+                <div className="mt-0.5 text-sm text-ink">{telemetry.health.subscriptionType || '—'}</div>
+              </div>
+              <div>
+                <div className="text-xs text-muted uppercase tracking-wide">模式</div>
+                <div className="mt-0.5 text-sm text-ink">{telemetry.health.mode || '—'}</div>
+              </div>
+            </div>
+
+            {/* Telemetry stats */}
+            {telemetry.telemetry === null ? (
+              <div className="bg-line/20 border border-line rounded-lg p-4 text-center text-muted text-sm">
+                节点遥测不可达
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {/* Main stats grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                  <div>
+                    <div className="text-xs text-muted uppercase tracking-wide">近1h请求</div>
+                    <div className="mt-0.5 text-lg font-semibold text-ink">{telemetry.telemetry.totalRequests.toLocaleString()}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted uppercase tracking-wide">RPM</div>
+                    <div className="mt-0.5 text-lg font-semibold text-ink">{telemetry.telemetry.requestsPerMinute.toFixed(1)}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted uppercase tracking-wide">错误</div>
+                    <div className="mt-0.5 text-lg font-semibold text-err">
+                      {telemetry.telemetry.errorCount}
+                      {telemetry.telemetry.totalRequests > 0 && (
+                        <span className="ml-1 text-xs font-normal text-muted">
+                          ({((telemetry.telemetry.errorCount / telemetry.telemetry.totalRequests) * 100).toFixed(1)}%)
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted uppercase tracking-wide">首字延迟 p50/p95</div>
+                    <div className="mt-0.5 text-sm font-medium text-ink">
+                      {telemetry.telemetry.ttfb.p50 >= 1000
+                        ? `${(telemetry.telemetry.ttfb.p50 / 1000).toFixed(2)}s`
+                        : `${telemetry.telemetry.ttfb.p50}ms`}
+                      {' / '}
+                      {telemetry.telemetry.ttfb.p95 >= 1000
+                        ? `${(telemetry.telemetry.ttfb.p95 / 1000).toFixed(2)}s`
+                        : `${telemetry.telemetry.ttfb.p95}ms`}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted uppercase tracking-wide">总耗时 p50/p95</div>
+                    <div className="mt-0.5 text-sm font-medium text-ink">
+                      {telemetry.telemetry.totalDuration.p50 >= 1000
+                        ? `${(telemetry.telemetry.totalDuration.p50 / 1000).toFixed(2)}s`
+                        : `${telemetry.telemetry.totalDuration.p50}ms`}
+                      {' / '}
+                      {telemetry.telemetry.totalDuration.p95 >= 1000
+                        ? `${(telemetry.telemetry.totalDuration.p95 / 1000).toFixed(2)}s`
+                        : `${telemetry.telemetry.totalDuration.p95}ms`}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Token usage */}
+                <div>
+                  <div className="text-xs text-muted uppercase tracking-wide mb-2">Token 用量</div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                    <div className="bg-bg rounded-lg p-2.5">
+                      <div className="text-xs text-muted">入</div>
+                      <div className="text-sm font-medium text-ink mt-0.5">{telemetry.telemetry.tokenUsage.totalInputTokens.toLocaleString()}</div>
+                    </div>
+                    <div className="bg-bg rounded-lg p-2.5">
+                      <div className="text-xs text-muted">出</div>
+                      <div className="text-sm font-medium text-ink mt-0.5">{telemetry.telemetry.tokenUsage.totalOutputTokens.toLocaleString()}</div>
+                    </div>
+                    <div className="bg-bg rounded-lg p-2.5">
+                      <div className="text-xs text-muted">缓存读</div>
+                      <div className="text-sm font-medium text-ink mt-0.5">{telemetry.telemetry.tokenUsage.totalCacheReadTokens.toLocaleString()}</div>
+                    </div>
+                    <div className="bg-bg rounded-lg p-2.5">
+                      <div className="text-xs text-muted">缓存写</div>
+                      <div className="text-sm font-medium text-ink mt-0.5">{telemetry.telemetry.tokenUsage.totalCacheCreationTokens.toLocaleString()}</div>
+                    </div>
+                    <div className="bg-bg rounded-lg p-2.5">
+                      <div className="text-xs text-muted">缓存命中率</div>
+                      <div className="text-sm font-medium text-ok mt-0.5">{(telemetry.telemetry.tokenUsage.avgCacheHitRate * 100).toFixed(1)}%</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* By model table */}
+                {Object.keys(telemetry.telemetry.byModel).length > 0 && (
+                  <div>
+                    <div className="text-xs text-muted uppercase tracking-wide mb-2">按模型</div>
+                    <div className="overflow-x-auto rounded-lg border border-line">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-surface border-b border-line">
+                            <th className="text-left px-3 py-2 text-xs text-muted font-medium">模型</th>
+                            <th className="text-right px-3 py-2 text-xs text-muted font-medium">请求数</th>
+                            <th className="text-right px-3 py-2 text-xs text-muted font-medium">平均耗时</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {Object.entries(telemetry.telemetry.byModel).map(([model, stat]) => (
+                            <tr key={model} className="border-b border-line last:border-0 hover:bg-surface/50">
+                              <td className="px-3 py-2 font-mono text-xs text-ink">{model}</td>
+                              <td className="px-3 py-2 text-right text-ink">{stat.count.toLocaleString()}</td>
+                              <td className="px-3 py-2 text-right text-muted">
+                                {stat.avgTotalMs >= 1000
+                                  ? `${(stat.avgTotalMs / 1000).toFixed(2)}s`
+                                  : `${stat.avgTotalMs.toFixed(0)}ms`}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* SDK Features */}

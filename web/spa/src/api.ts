@@ -26,6 +26,7 @@ import type {
   DispatchStatus,
   FallbackChannel,
   UserRow,
+  NodeTelemetry,
 } from './types';
 
 // ------------------------------------------------------------------
@@ -266,6 +267,12 @@ export const setUserHostingRate = (id: string, rate: number) =>
 
 export const changePassword = (body: { oldPassword: string; newPassword: string }) =>
   api<{ ok: string }>('POST', '/auth/change-password', body);
+
+// ------------------------------------------------------------------
+// Node Telemetry (遥测 / 健康)
+// ------------------------------------------------------------------
+export const getNodeTelemetry = (id: string) =>
+  api<NodeTelemetry>('GET', `/api/admin/nodes/${id}/telemetry`);
 
 // ------------------------------------------------------------------
 // Ban analysis (封号分析)
