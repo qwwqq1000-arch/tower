@@ -226,6 +226,7 @@ function renderEventDetail(
   target: string,
   fallbackNames?: Map<string, string>,
   accountNames?: Map<string, string>,
+  detail?: any,
 ): string {
   if (type === 'dispatch_ok') {
     const email = accountNames?.get(target);
@@ -238,7 +239,18 @@ function renderEventDetail(
   }
   if (type === 'fallback') {
     const cn = FALLBACK_REASON_CN[target] ?? target;
-    return cn || '';
+    // Resolve channel name from detail.channel
+    let channelName: string | undefined;
+    try {
+      const d: any = typeof detail === 'string' ? JSON.parse(detail) : detail;
+      if (d && typeof d.channel === 'string' && d.channel) {
+        channelName = fallbackNames?.get(d.channel);
+      }
+    } catch { /* ignore */ }
+    const parts = ['保底触发'];
+    if (cn) parts.push(cn);
+    if (channelName) parts.push(channelName);
+    return parts.join(' · ');
   }
   if (type === 'scale_up' || type === 'scale_down') {
     return target || '';
@@ -282,7 +294,7 @@ function EventTimeline({
       <ul className="divide-y divide-line/50 max-h-80 overflow-y-auto">
         {events.map((e, idx) => {
           const { label, cls } = getEventLabel(e.type);
-          const detail = renderEventDetail(e.type, e.target, fallbackNames, accountNames);
+          const detail = renderEventDetail(e.type, e.target, fallbackNames, accountNames, e.detail);
           return (
             <li key={idx} className="flex items-center gap-3 px-4 py-2.5 hover:bg-line/30 transition">
               <span className="text-xs text-muted tabular-nums shrink-0 w-20">

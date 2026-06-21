@@ -398,6 +398,7 @@ export interface DispatchEvent {
   ts: number;
   type: string;
   target: string;
+  detail?: any;
 }
 
 export interface DispatchFallbackChannel {
