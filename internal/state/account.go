@@ -7,6 +7,7 @@ type Account struct {
 	Disabled     bool
 	Offline      bool
 	LimitedUntil map[string]int64 // model class ("opus"/"sonnet"/"all") -> reset time ms
+	WarmupCap    int              // 0 = no warmup limit; >0 = max in-flight during warmup
 }
 
 // NewAccount builds an account with a slot set of the given capacity.
@@ -60,6 +61,10 @@ func (a *Account) CanDispatch(now int64, model string, cfg BreakerCfg) (ok bool,
 		return false, false
 	}
 	if a.Slots.Available(now) <= 0 {
+		return false, false
+	}
+	// Warmup cap: effective concurrency = min(slot capacity, WarmupCap).
+	if a.WarmupCap > 0 && a.Slots.InUse() >= a.WarmupCap {
 		return false, false
 	}
 	switch a.Breaker.State(now) {

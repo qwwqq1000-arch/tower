@@ -24,6 +24,12 @@ type Config struct {
 	QuotaRotateThreshold      float64
 	MaxFailover               int
 
+	// Warmup: new accounts (onboarded within WarmupHours) serve at reduced concurrency.
+	// 0 = off.
+	WarmupHours         int
+	WarmupMaxConcurrent int
+	WarmupBlockOpus     bool
+
 	// Session exile: route a conversation to fallback after this many consecutive
 	// errors from our nodes. 0 = disabled.
 	SessionErrorThreshold int
@@ -57,6 +63,9 @@ func Defaults() Config {
 		BanKeywords:               []string{"authentication_error", "account_disabled", "account_suspended"},
 		QuotaRotateThreshold:      0.95,
 		MaxFailover:               50,
+		WarmupHours:               0,
+		WarmupMaxConcurrent:       1,
+		WarmupBlockOpus:           true,
 		SessionErrorThreshold:     0,
 		SessionCooldownSec:        300,
 		ResponseExileEnabled:      false,
@@ -83,6 +92,9 @@ type Patch struct {
 	BanKeywords               *[]string
 	QuotaRotateThreshold      *float64
 	MaxFailover               *int
+	WarmupHours         *int
+	WarmupMaxConcurrent *int
+	WarmupBlockOpus     *bool
 	SessionErrorThreshold     *int
 	SessionCooldownSec        *int
 	ResponseExileEnabled      *bool
@@ -145,6 +157,15 @@ func apply(c *Config, p Patch) {
 	if p.MaxFailover != nil {
 		c.MaxFailover = *p.MaxFailover
 	}
+	if p.WarmupHours != nil {
+		c.WarmupHours = *p.WarmupHours
+	}
+	if p.WarmupMaxConcurrent != nil {
+		c.WarmupMaxConcurrent = *p.WarmupMaxConcurrent
+	}
+	if p.WarmupBlockOpus != nil {
+		c.WarmupBlockOpus = *p.WarmupBlockOpus
+	}
 	if p.SessionErrorThreshold != nil {
 		c.SessionErrorThreshold = *p.SessionErrorThreshold
 	}
@@ -202,6 +223,9 @@ func DryRun(base Config, patches ...Patch) (Config, []Diff) {
 	add("BanKeywords", base.BanKeywords, final.BanKeywords)
 	add("QuotaRotateThreshold", base.QuotaRotateThreshold, final.QuotaRotateThreshold)
 	add("MaxFailover", base.MaxFailover, final.MaxFailover)
+	add("WarmupHours", base.WarmupHours, final.WarmupHours)
+	add("WarmupMaxConcurrent", base.WarmupMaxConcurrent, final.WarmupMaxConcurrent)
+	add("WarmupBlockOpus", base.WarmupBlockOpus, final.WarmupBlockOpus)
 	add("SessionErrorThreshold", base.SessionErrorThreshold, final.SessionErrorThreshold)
 	add("SessionCooldownSec", base.SessionCooldownSec, final.SessionCooldownSec)
 	add("ResponseExileEnabled", base.ResponseExileEnabled, final.ResponseExileEnabled)

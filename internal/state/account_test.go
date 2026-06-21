@@ -58,3 +58,35 @@ func TestAccount_CanDispatch_AllLimited(t *testing.T) {
 	a.LimitedUntil = map[string]int64{"all": 5000}
 	if ok, _ := a.CanDispatch(1000, "sonnet", c); ok { t.Fatal("all-limited → deny any model") }
 }
+
+func TestAccount_CanDispatch_WarmupCap(t *testing.T) {
+	c := BreakerCfg{PersistStreak: 3, BaseMs: 1000, MaxMs: 9999, Mult: 2}
+
+	// WarmupCap=1: one slot in use → deny even though slot capacity is higher.
+	a := NewAccount(3) // capacity 3
+	a.WarmupCap = 1
+	a.Slots.Acquire(0) // 1 in use
+	if ok, _ := a.CanDispatch(0, "sonnet", c); ok {
+		t.Fatal("WarmupCap=1 with 1 in-use: should deny")
+	}
+
+	// WarmupCap=1: no slots in use → allow.
+	b := NewAccount(3)
+	b.WarmupCap = 1
+	if ok, _ := b.CanDispatch(0, "sonnet", c); !ok {
+		t.Fatal("WarmupCap=1 with 0 in-use: should allow")
+	}
+
+	// WarmupCap=0 (disabled): normal slot rules apply.
+	d := NewAccount(3)
+	d.WarmupCap = 0
+	d.Slots.Acquire(0)
+	d.Slots.Acquire(0)
+	if ok, _ := d.CanDispatch(0, "sonnet", c); !ok {
+		t.Fatal("WarmupCap=0 with 2/3 in-use: should allow (no warmup limit)")
+	}
+	d.Slots.Acquire(0)
+	if ok, _ := d.CanDispatch(0, "sonnet", c); ok {
+		t.Fatal("WarmupCap=0 with 3/3 in-use: capacity exhausted → deny")
+	}
+}

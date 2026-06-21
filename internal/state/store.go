@@ -180,6 +180,16 @@ func (s *Store) SetDisabled(key string, capacity int, disabled bool) {
 	s.ensureLocked(key, capacity).Disabled = disabled
 }
 
+// SetWarmupCap sets the warmup concurrency cap for an existing account (no-op if absent).
+// cap=0 disables warmup limiting.
+func (s *Store) SetWarmupCap(key string, cap int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if a := s.accts[key]; a != nil {
+		a.WarmupCap = cap
+	}
+}
+
 // AccountSnapshot is a read-only view of one account's live state.
 type AccountSnapshot struct {
 	Key       string
@@ -194,8 +204,18 @@ func (s *Store) Snapshot(now int64) []AccountSnapshot {
 	defer s.mu.Unlock()
 	out := make([]AccountSnapshot, 0, len(s.accts))
 	for key, a := range s.accts {
+		avail := a.Slots.Available(now)
+		if a.WarmupCap > 0 {
+			warmupAvail := a.WarmupCap - a.Slots.InUse()
+			if warmupAvail < 0 {
+				warmupAvail = 0
+			}
+			if warmupAvail < avail {
+				avail = warmupAvail
+			}
+		}
 		out = append(out, AccountSnapshot{
-			Key: key, Status: a.Status(now), Inflight: a.Slots.InUse(), Available: a.Slots.Available(now),
+			Key: key, Status: a.Status(now), Inflight: a.Slots.InUse(), Available: avail,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })

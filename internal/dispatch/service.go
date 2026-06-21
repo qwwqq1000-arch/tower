@@ -79,7 +79,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 		MaxMs: cfg.CooldownMaxMs, Mult: cfg.CooldownMult,
 	}
 
-	order, resolver := s.buildCandidates(ctx, ownerID, cfg.MaxConcurrent)
+	order, resolver := s.buildCandidates(ctx, ownerID, model, cfg)
 	channels := s.enabledChannels(ctx, ownerID)
 
 	conv := session.ConvID(body)
@@ -162,7 +162,7 @@ func (s *Service) resolveConfig(ctx context.Context) policy.Config {
 	return policy.Resolve(s.Base, patches...)
 }
 
-func (s *Service) buildCandidates(ctx context.Context, ownerID string, capacity int) ([]string, Resolver) {
+func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cfg policy.Config) ([]string, Resolver) {
 	nodes, err := s.Q.ListNodesByOwner(ctx, ownerID)
 	if err != nil || len(nodes) == 0 {
 		nodes, _ = s.Q.ListNodes(ctx)
@@ -173,6 +173,8 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID string, capacity 
 		weight int
 	}
 	var cands []cand
+	nowMs := s.Now()
+	isOpus := strings.Contains(strings.ToLower(model), "opus")
 	for _, n := range nodes {
 		if !n.Enabled {
 			continue
@@ -181,14 +183,31 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID string, capacity 
 		if err != nil {
 			continue
 		}
-		for _, a := range accs {
-			if !a.Enabled {
+		for _, na := range accs {
+			if !na.Enabled {
 				continue
 			}
-			key := n.ID + ":" + a.ProfileID
-			refs[key] = NodeRef{BaseURL: n.BaseUrl, APIKey: n.ApiKey, ProfileID: a.ProfileID}
-			s.Store.Ensure(key, capacity)
-			cands = append(cands, cand{key: key, weight: int(a.Weight)})
+			// Determine warmup state for this account.
+			var onboardedAt int64
+			if acc, aerr := s.Q.GetAccount(ctx, na.AccountID); aerr == nil {
+				onboardedAt = acc.OnboardedAt
+			}
+			inWarmup := cfg.WarmupHours > 0 && onboardedAt > 0 &&
+				(nowMs-onboardedAt) < int64(cfg.WarmupHours)*3_600_000
+			// Skip opus candidates that are still warming up (if block is enabled).
+			if inWarmup && cfg.WarmupBlockOpus && isOpus {
+				continue
+			}
+			key := n.ID + ":" + na.ProfileID
+			refs[key] = NodeRef{BaseURL: n.BaseUrl, APIKey: n.ApiKey, ProfileID: na.ProfileID}
+			s.Store.Ensure(key, cfg.MaxConcurrent)
+			// Apply or clear warmup cap.
+			if inWarmup {
+				s.Store.SetWarmupCap(key, cfg.WarmupMaxConcurrent)
+			} else {
+				s.Store.SetWarmupCap(key, 0)
+			}
+			cands = append(cands, cand{key: key, weight: int(na.Weight)})
 		}
 	}
 	sort.SliceStable(cands, func(i, j int) bool { return cands[i].weight > cands[j].weight })
@@ -350,7 +369,7 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 		PersistStreak: cfg.BanPersistStreak, BaseMs: cfg.CooldownBaseMs,
 		MaxMs: cfg.CooldownMaxMs, Mult: cfg.CooldownMult,
 	}
-	order, resolver := s.buildCandidates(ctx, ownerID, cfg.MaxConcurrent)
+	order, resolver := s.buildCandidates(ctx, ownerID, model, cfg)
 	channels := s.enabledChannels(ctx, ownerID)
 
 	conv := session.ConvID(body)

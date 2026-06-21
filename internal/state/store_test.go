@@ -30,6 +30,27 @@ func TestStore_BanThenRecover(t *testing.T) {
 	if !s.TryDispatch("k", "opus", c) { t.Fatal("after success should dispatch") }
 }
 
+func TestStore_SetWarmupCap(t *testing.T) {
+	s := NewStore(fixedClock(0), minRand)
+	c := BreakerCfg{PersistStreak: 3, BaseMs: 1000, MaxMs: 9999, Mult: 2}
+	s.Ensure("k", 3) // capacity 3
+
+	// Set warmup cap to 1; should only allow 1 dispatch.
+	s.SetWarmupCap("k", 1)
+	if !s.TryDispatch("k", "sonnet", c) { t.Fatal("1st dispatch under warmup cap should succeed") }
+	if s.TryDispatch("k", "sonnet", c) { t.Fatal("2nd dispatch should be blocked by warmup cap") }
+
+	// Clear warmup cap; normal capacity rules apply.
+	s.SetWarmupCap("k", 0)
+	if !s.TryDispatch("k", "sonnet", c) { t.Fatal("after clearing warmup cap, 2nd dispatch should succeed") }
+}
+
+func TestStore_SetWarmupCap_NoopIfAbsent(t *testing.T) {
+	s := NewStore(fixedClock(0), minRand)
+	// Should not panic on a missing key.
+	s.SetWarmupCap("missing", 1)
+}
+
 func TestStore_ConcurrentDispatchComplete(t *testing.T) {
 	s := NewStore(fixedClock(0), minRand)
 	c := BreakerCfg{PersistStreak: 3, BaseMs: 1000, MaxMs: 9999, Mult: 2}
