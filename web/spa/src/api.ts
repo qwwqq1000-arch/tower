@@ -392,3 +392,34 @@ export const deleteMeFallback = (id: string) =>
 
 export const setMeFallbackEnabled = (id: string, enabled: boolean) =>
   api<void>('PATCH', `/api/me/fallback-channels/${id}/enabled`, { enabled });
+
+// --- Tenant slots (时段槽位) ---
+export const getMeSlots = () =>
+  api<Slot[]>('GET', '/api/me/slots');
+
+export const createMeSlot = (body: { name: string; startMin: number; endMin: number }) =>
+  api<{ id: string }>('POST', '/api/me/slots', body);
+
+export const deleteMeSlot = (id: string) =>
+  api<void>('DELETE', `/api/me/slots/${id}`);
+
+export const setMeSlotEnabled = (id: string, enabled: boolean) =>
+  api<void>('PATCH', `/api/me/slots/${id}/enabled`, { enabled });
+
+// --- Tenant dispatch keys (调度密钥) ---
+export const getMeDispatchKeys = () =>
+  api<DispatchKeyRecord[]>('GET', '/api/me/dispatch-keys');
+
+export const createMeDispatchKey = (label: string) =>
+  api<DispatchKeyCreated>('POST', '/api/me/dispatch-keys', { label });
+
+export const deleteMeDispatchKey = (id: string) =>
+  api<void>('DELETE', `/api/me/dispatch-keys/${id}`);
+
+// --- Tenant ban analysis (封号分析) ---
+export const getMeBanAnalysis = () =>
+  api<BanAnalysis>('GET', '/api/me/ban-analysis');
+
+// --- Tenant dispatch overview (调度) ---
+export const getMeDispatchStatus = () =>
+  api<DispatchStatus>('GET', '/api/me/dispatch/status');

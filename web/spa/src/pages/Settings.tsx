@@ -4,6 +4,8 @@
 // Grid of cards linking to admin/config sub-pages.
 // ============================================================
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../auth';
+import { TenantSettings } from './tenant';
 
 interface SettingsCard {
   path: string;
@@ -52,7 +54,10 @@ const CARDS: SettingsCard[] = [
 ];
 
 export default function Settings() {
+  const { isTenant } = useAuth();
   const navigate = useNavigate();
+
+  if (isTenant) return <TenantSettings />;
 
   return (
     <div className="p-6 max-w-4xl mx-auto">

@@ -154,10 +154,12 @@ const NAV_ITEMS: NavItem[] = [
 // Tenant nav: limited self-service set (own data only)
 const TENANT_NAV: NavItem[] = [
   { path: '/',         label: '看板',     icon: '◈' },
+  { path: '/dispatch', label: '调度',     icon: '⇄' },
   { path: '/accounts', label: '号库',     icon: '⚿' },
   { path: '/fallback', label: '保底渠道', icon: '⤵' },
   { path: '/logs',     label: '日志',     icon: '≡' },
   { path: '/billing',  label: '计费',     icon: '₿' },
+  { path: '/settings', label: '设置',     icon: '⚙' },
 ];
 
 // Settings sub-pages — not in primary sidebar, but searchable via palette

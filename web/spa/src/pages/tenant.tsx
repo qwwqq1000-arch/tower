@@ -8,8 +8,27 @@ import {
   getMeAccounts,
   pauseMeAccount,
   getMeLedger,
+  getMeDispatchStatus,
+  getMeSlots,
+  createMeSlot,
+  deleteMeSlot,
+  setMeSlotEnabled,
+  getMeDispatchKeys,
+  createMeDispatchKey,
+  deleteMeDispatchKey,
+  getMeBanAnalysis,
 } from '../api';
-import type { MeAccountRow, MeDashboard, LedgerEntry } from '../types';
+import type {
+  MeAccountRow,
+  MeDashboard,
+  LedgerEntry,
+  DispatchStatus,
+  Slot,
+  DispatchKeyRecord,
+} from '../types';
+import type { BanAnalysis, BanBucket } from '../api';
+import { EventTimeline } from './Dispatch';
+import { copyText } from '../lib/clipboard';
 
 // ------------------------------------------------------------------
 // Shared formatters
@@ -480,6 +499,567 @@ export function TenantBilling() {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+// ============================================================
+// TenantDispatch (/dispatch) — own dispatch overview via /api/me
+// ============================================================
+function dispStatusCls(status: string): string {
+  const colorMap: Record<string, string> = {
+    active:    'bg-green-500/20 text-green-400 border-green-500/40',
+    banned:    'bg-red-500/20 text-red-400 border-red-500/40',
+    half_open: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/40',
+    offline:   'bg-gray-500/20 text-gray-400 border-gray-500/40',
+    disabled:  'bg-gray-500/10 text-gray-500 border-gray-500/20',
+  };
+  return colorMap[status] ?? colorMap['offline'];
+}
+
+const DISPATCH_REFRESH_MS = 5_000;
+
+export function TenantDispatch() {
+  const [data, setData] = useState<DispatchStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const d = await getMeDispatchStatus();
+      setData(d);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '加载失败');
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+    const t = setInterval(() => void load(), DISPATCH_REFRESH_MS);
+    return () => clearInterval(t);
+  }, [load]);
+
+  const accounts = data?.accounts ?? [];
+  const traffic = data?.traffic;
+  const inflight = accounts.reduce((s, a) => s + a.inflight, 0);
+  const rate = traffic && traffic.total > 0 ? ((traffic.ok / traffic.total) * 100).toFixed(1) : '—';
+
+  return (
+    <div className="p-4 md:p-6 space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold text-ink">调度</h1>
+          <p className="text-xs text-muted mt-1">我的账户并发与实时流量（每 5 秒刷新）</p>
+        </div>
+        {error && (
+          <span className="text-xs text-yellow-400 bg-yellow-500/10 border border-yellow-500/30 rounded px-2 py-1">
+            {error}
+          </span>
+        )}
+      </div>
+
+      {!data && !error && (
+        <div className="flex items-center justify-center py-24 text-muted text-sm">加载中…</div>
+      )}
+
+      {data && (
+        <>
+          {/* Stats */}
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+            <StatCard label="总请求" value={traffic ? traffic.total.toLocaleString() : '—'} />
+            <StatCard label="RPM" value={traffic?.rpm != null ? traffic.rpm : '—'} />
+            <StatCard label="成功" value={traffic ? traffic.ok.toLocaleString() : '—'} />
+            <StatCard label="错误" value={traffic ? traffic.error.toLocaleString() : '—'} warn={(traffic?.error ?? 0) > 0} />
+            <StatCard label="并发中" value={inflight} sub={`成功率 ${traffic && traffic.total > 0 ? rate + '%' : '—'}`} accent />
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            {/* Concurrency */}
+            <div className="bg-surface border border-line rounded-xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-line text-sm font-medium text-ink">并发 / 账户</div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-line text-left text-xs text-muted">
+                      <th className="px-4 py-2 font-medium">邮箱</th>
+                      <th className="px-4 py-2 font-medium">状态</th>
+                      <th className="px-4 py-2 font-medium text-right">并发中</th>
+                      <th className="px-4 py-2 font-medium text-right">可用</th>
+                      <th className="px-4 py-2 font-medium text-right">今日消费</th>
+                      <th className="px-4 py-2 font-medium text-right">总消费</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {accounts.length === 0 && (
+                      <tr><td colSpan={6} className="px-4 py-6 text-center text-muted text-xs">无数据</td></tr>
+                    )}
+                    {accounts.map((a) => (
+                      <tr key={a.key} className="border-b border-line/50 hover:bg-line/30 transition">
+                        <td className="px-4 py-2 text-sm text-ink font-medium truncate max-w-[200px]">{a.label || '—'}</td>
+                        <td className="px-4 py-2">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded border text-xs font-mono ${dispStatusCls(a.status)}`}>
+                            {a.status}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums">{a.inflight}</td>
+                        <td className="px-4 py-2 text-right tabular-nums">{a.available}</td>
+                        <td className="px-4 py-2 text-right tabular-nums text-xs text-muted">{fmtCost(a.todayCostUsd)}</td>
+                        <td className="px-4 py-2 text-right tabular-nums text-xs text-muted">{fmtCost(a.totalCostUsd)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Event timeline (reuse shared rendering) */}
+            <EventTimeline events={data.events} fallbackNames={new Map()} accountNames={new Map()} />
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// TenantSettings (/settings) — slots + dispatch keys + ban analysis
+// ============================================================
+function minsToHHMM(mins: number): string {
+  const h = Math.floor(mins / 60).toString().padStart(2, '0');
+  const m = (mins % 60).toString().padStart(2, '0');
+  return `${h}:${m}`;
+}
+
+function hhmmToMins(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
+const tenantInputCls =
+  'w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink ' +
+  'placeholder:text-muted focus:outline-none focus:border-accent transition';
+
+// ---- Slot enable toggle ----
+function MeSlotToggle({ slot, onChanged }: { slot: Slot; onChanged: (id: string, enabled: boolean) => void }) {
+  const [busy, setBusy] = useState(false);
+  async function toggle() {
+    setBusy(true);
+    try {
+      await setMeSlotEnabled(slot.id, !slot.enabled);
+      onChanged(slot.id, !slot.enabled);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <button
+      onClick={() => { void toggle(); }}
+      disabled={busy}
+      title={slot.enabled ? '点击禁用' : '点击启用'}
+      className={[
+        'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition',
+        slot.enabled ? 'bg-ok' : 'bg-line',
+        busy ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
+      ].join(' ')}
+    >
+      <span className={[
+        'inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform',
+        slot.enabled ? 'translate-x-4' : 'translate-x-1',
+      ].join(' ')} />
+    </button>
+  );
+}
+
+// ---- Slots section ----
+function TenantSlotsSection() {
+  const [slots, setSlots] = useState<Slot[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+  const [name, setName] = useState('');
+  const [startTime, setStartTime] = useState('00:00');
+  const [endTime, setEndTime] = useState('08:00');
+  const [creating, setCreating] = useState(false);
+  const [createErr, setCreateErr] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setSlots(await getMeSlots());
+      setErr(null);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : '加载失败');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault();
+    setCreating(true);
+    setCreateErr(null);
+    try {
+      await createMeSlot({ name, startMin: hhmmToMins(startTime), endMin: hhmmToMins(endTime) });
+      setName(''); setStartTime('00:00'); setEndTime('08:00');
+      await load();
+    } catch (e) {
+      setCreateErr(e instanceof Error ? e.message : '创建失败');
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function handleDelete(id: string) {
+    try {
+      await deleteMeSlot(id);
+      setSlots((prev) => prev.filter((s) => s.id !== id));
+    } catch { /* ignore */ }
+  }
+
+  function handleEnabledChanged(id: string, enabled: boolean) {
+    setSlots((prev) => prev.map((s) => s.id === id ? { ...s, enabled } : s));
+  }
+
+  return (
+    <div className="space-y-4">
+      {loading && <p className="text-muted text-sm animate-pulse">加载中…</p>}
+      {!loading && err && (
+        <div className="bg-err/10 border border-err/30 rounded-xl p-4 text-err text-sm">{err}</div>
+      )}
+      {!loading && !err && (
+        <>
+          {slots.length === 0 ? (
+            <p className="text-sm text-muted">暂无时段槽位，在下方新建。</p>
+          ) : (
+            <div className="bg-surface border border-line rounded-xl overflow-hidden">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="text-xs text-muted uppercase tracking-wide border-b border-line bg-bg/50">
+                    <th className="px-4 py-3 font-medium">名称</th>
+                    <th className="px-4 py-3 font-medium">时间窗</th>
+                    <th className="px-4 py-3 font-medium">状态</th>
+                    <th className="px-4 py-3 font-medium">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {slots.map((slot) => (
+                    <tr key={slot.id} className="border-t border-line/50 hover:bg-line/30 transition">
+                      <td className="px-4 py-3 font-medium text-ink">{slot.name}</td>
+                      <td className="px-4 py-3 font-mono text-sm text-muted">
+                        {minsToHHMM(slot.startMin)}–{minsToHHMM(slot.endMin)}
+                      </td>
+                      <td className="px-4 py-3"><MeSlotToggle slot={slot} onChanged={handleEnabledChanged} /></td>
+                      <td className="px-4 py-3">
+                        <button onClick={() => { void handleDelete(slot.id); }} className="text-xs text-muted hover:text-err transition">删除</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <form onSubmit={(e) => { void handleCreate(e); }} className="bg-surface border border-line rounded-xl p-5 space-y-3">
+            <h3 className="text-sm font-semibold text-ink">新建时段槽位</h3>
+            {createErr && <div className="bg-err/10 border border-err/30 rounded-lg p-3 text-err text-sm">{createErr}</div>}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs text-muted mb-1">名称 *</label>
+                <input required value={name} onChange={(e) => setName(e.target.value)} placeholder="早高峰" autoComplete="off" className={tenantInputCls} />
+              </div>
+              <div>
+                <label className="block text-xs text-muted mb-1">开始时间</label>
+                <input type="time" required value={startTime} onChange={(e) => setStartTime(e.target.value)} className={tenantInputCls} />
+              </div>
+              <div>
+                <label className="block text-xs text-muted mb-1">结束时间</label>
+                <input type="time" required value={endTime} onChange={(e) => setEndTime(e.target.value)} className={tenantInputCls} />
+              </div>
+            </div>
+            <button type="submit" disabled={creating} className="px-4 py-2 text-sm font-medium bg-accent text-white rounded-lg hover:bg-accent/80 disabled:opacity-50 transition">
+              {creating ? '创建中…' : '创建槽位'}
+            </button>
+          </form>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---- Copy button ----
+function CopyBtn({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  async function doCopy() {
+    const ok = await copyText(text);
+    if (ok) { setCopied(true); setTimeout(() => setCopied(false), 1500); }
+  }
+  return (
+    <button onClick={() => { void doCopy(); }} className="text-xs text-accent hover:text-accent/70 transition shrink-0">
+      {copied ? '已复制' : '复制'}
+    </button>
+  );
+}
+
+// ---- Dispatch keys section ----
+function TenantKeysSection() {
+  const [keys, setKeys] = useState<DispatchKeyRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+  const [label, setLabel] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [plaintext, setPlaintext] = useState<string | null>(null);
+
+  const gatewayUrl = window.location.origin;
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setKeys(await getMeDispatchKeys());
+      setErr(null);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : '加载失败');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault();
+    setCreating(true);
+    try {
+      const created = await createMeDispatchKey(label);
+      setPlaintext(created.key);
+      setLabel('');
+      await load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : '创建失败');
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function handleDelete(id: string) {
+    try {
+      await deleteMeDispatchKey(id);
+      setKeys((prev) => prev.filter((k) => k.id !== id));
+    } catch { /* ignore */ }
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Gateway URL */}
+      <div className="bg-surface border border-line rounded-xl p-4 space-y-1">
+        <p className="text-xs text-muted">网关地址</p>
+        <div className="flex items-center gap-3">
+          <code className="text-sm text-ink font-mono truncate">{gatewayUrl}</code>
+          <CopyBtn text={gatewayUrl} />
+        </div>
+      </div>
+
+      {/* Newly created plaintext (shown once) */}
+      {plaintext && (
+        <div className="bg-accent/10 border border-accent/30 rounded-xl p-4 space-y-2">
+          <p className="text-xs text-accent font-medium">新密钥已创建（仅此一次显示，请妥善保存）</p>
+          <div className="flex items-center gap-3">
+            <code className="text-sm text-ink font-mono break-all">{plaintext}</code>
+            <CopyBtn text={plaintext} />
+          </div>
+          <button onClick={() => setPlaintext(null)} className="text-xs text-muted hover:text-ink transition">关闭</button>
+        </div>
+      )}
+
+      {loading && <p className="text-muted text-sm animate-pulse">加载中…</p>}
+      {!loading && err && <div className="bg-err/10 border border-err/30 rounded-xl p-4 text-err text-sm">{err}</div>}
+      {!loading && !err && (
+        <>
+          {keys.length === 0 ? (
+            <p className="text-sm text-muted">暂无调度密钥，在下方新建。</p>
+          ) : (
+            <div className="bg-surface border border-line rounded-xl overflow-hidden">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="text-xs text-muted uppercase tracking-wide border-b border-line bg-bg/50">
+                    <th className="px-4 py-3 font-medium">标签</th>
+                    <th className="px-4 py-3 font-medium">前缀</th>
+                    <th className="px-4 py-3 font-medium">状态</th>
+                    <th className="px-4 py-3 font-medium">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {keys.map((k) => (
+                    <tr key={k.id} className="border-t border-line/50 hover:bg-line/30 transition">
+                      <td className="px-4 py-3 font-medium text-ink">{k.label || '—'}</td>
+                      <td className="px-4 py-3 font-mono text-xs text-muted">{k.prefix}…</td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-flex items-center gap-1 text-xs ${k.enabled ? 'text-ok' : 'text-muted'}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${k.enabled ? 'bg-ok' : 'bg-muted'}`} />
+                          {k.enabled ? '启用' : '停用'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <button onClick={() => { void handleDelete(k.id); }} className="text-xs text-muted hover:text-err transition">删除</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <form onSubmit={(e) => { void handleCreate(e); }} className="bg-surface border border-line rounded-xl p-5 space-y-3">
+            <h3 className="text-sm font-semibold text-ink">新建调度密钥</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 items-end">
+              <div>
+                <label className="block text-xs text-muted mb-1">标签</label>
+                <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="我的网关密钥" autoComplete="off" className={tenantInputCls} />
+              </div>
+              <button type="submit" disabled={creating} className="px-4 py-2 text-sm font-medium bg-accent text-white rounded-lg hover:bg-accent/80 disabled:opacity-50 transition">
+                {creating ? '创建中…' : '新建'}
+              </button>
+            </div>
+          </form>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---- Ban analysis section ----
+const TENANT_WEEKDAY_LABELS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+
+function TenantBarChart({ data, labelFn, color }: { data: BanBucket[]; labelFn: (b: number) => string; color: string }) {
+  const maxCount = data.reduce((m, d) => Math.max(m, d.count), 0);
+  if (maxCount === 0) return <p className="text-xs text-muted py-4 text-center">暂无数据</p>;
+  return (
+    <div className="w-full overflow-x-auto">
+      <div className="flex items-end gap-1 min-w-0" style={{ minHeight: '120px' }}>
+        {data.map((d) => {
+          const pct = (d.count / maxCount) * 100;
+          return (
+            <div key={d.bucket} className="flex flex-col items-center flex-1 min-w-0 gap-1 group" title={`${labelFn(d.bucket)}: ${d.count}`}>
+              <span className="text-[10px] text-muted opacity-0 group-hover:opacity-100 transition whitespace-nowrap">{d.count}</span>
+              <div className="w-full flex flex-col justify-end" style={{ height: '96px' }}>
+                <div className={`w-full rounded-t ${color} transition-all duration-300`} style={{ height: `${pct}%`, minHeight: d.count > 0 ? '4px' : '0' }} />
+              </div>
+              <span className="text-[10px] text-muted truncate w-full text-center leading-none">{labelFn(d.bucket)}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function fillWeekday(data: BanBucket[]): BanBucket[] {
+  const map = new Map(data.map((d) => [d.bucket, d.count]));
+  return Array.from({ length: 7 }, (_, i) => ({ bucket: i, count: map.get(i) ?? 0 }));
+}
+function fillHour(data: BanBucket[]): BanBucket[] {
+  const map = new Map(data.map((d) => [d.bucket, d.count]));
+  return Array.from({ length: 24 }, (_, i) => ({ bucket: i, count: map.get(i) ?? 0 }));
+}
+
+function TenantBanSection() {
+  const [data, setData] = useState<BanAnalysis | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    try {
+      setData(await getMeBanAnalysis());
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '加载失败');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void fetchData(); }, [fetchData]);
+
+  const weekdayData = data ? fillWeekday(data.byWeekday) : [];
+  const hourData = data ? fillHour(data.byHour) : [];
+
+  return (
+    <div className="space-y-4">
+      {loading && <p className="text-muted text-sm animate-pulse">加载中…</p>}
+      {!loading && error && <div className="bg-err/10 border border-err/30 rounded-xl p-4 text-err text-sm">{error}</div>}
+      {!loading && !error && data && data.total === 0 && (
+        <div className="bg-surface border border-line rounded-xl p-12 text-center space-y-2">
+          <p className="text-4xl">🎉</p>
+          <p className="text-ink font-medium">暂无封号记录</p>
+          <p className="text-xs text-muted">所有账号运行正常，继续保持！</p>
+        </div>
+      )}
+      {!loading && !error && data && data.total > 0 && (
+        <>
+          <div className="bg-surface border border-line rounded-xl p-5 flex items-center gap-4">
+            <div className="w-12 h-12 rounded-full bg-err/10 flex items-center justify-center text-2xl shrink-0">⚠</div>
+            <div>
+              <p className="text-xs text-muted uppercase tracking-wide">累计封号次数</p>
+              <p className="text-3xl font-bold text-ink tabular-nums">{data.total.toLocaleString()}</p>
+            </div>
+          </div>
+          <div className="bg-surface border border-line rounded-xl p-5 space-y-3">
+            <div>
+              <h3 className="text-sm font-semibold text-ink">按星期分布</h3>
+              <p className="text-xs text-muted">封号集中在哪些星期</p>
+            </div>
+            <TenantBarChart data={weekdayData} labelFn={(b) => TENANT_WEEKDAY_LABELS[b] ?? String(b)} color="bg-err" />
+          </div>
+          <div className="bg-surface border border-line rounded-xl p-5 space-y-3">
+            <div>
+              <h3 className="text-sm font-semibold text-ink">按小时分布</h3>
+              <p className="text-xs text-muted">封号集中在哪些时段（0–23 时）</p>
+            </div>
+            <TenantBarChart data={hourData} labelFn={(b) => String(b).padStart(2, '0')} color="bg-warn" />
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+type SettingsTab = 'slots' | 'keys' | 'ban';
+
+export function TenantSettings() {
+  const [tab, setTab] = useState<SettingsTab>('slots');
+
+  const tabs: { id: SettingsTab; label: string }[] = [
+    { id: 'slots', label: '时段槽位' },
+    { id: 'keys', label: '调度密钥' },
+    { id: 'ban', label: '封号分析' },
+  ];
+
+  return (
+    <div className="p-4 md:p-6 space-y-6 max-w-4xl mx-auto">
+      <div>
+        <h1 className="text-2xl font-semibold text-ink">设置</h1>
+        <p className="text-xs text-muted mt-1">管理我的时段槽位、调度密钥与封号分析</p>
+      </div>
+
+      <div className="flex gap-2 border-b border-line">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={[
+              'px-4 py-2 text-sm font-medium transition border-b-2 -mb-px',
+              tab === t.id ? 'border-accent text-accent' : 'border-transparent text-muted hover:text-ink',
+            ].join(' ')}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'slots' && <TenantSlotsSection />}
+      {tab === 'keys' && <TenantKeysSection />}
+      {tab === 'ban' && <TenantBanSection />}
     </div>
   );
 }

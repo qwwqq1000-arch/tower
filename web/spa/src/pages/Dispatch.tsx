@@ -5,6 +5,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { getDispatchStatus, listFallbackChannels, listAccounts, getServerStatus } from '../api';
 import type { DispatchStatus, DispatchAccountSnapshot, DispatchEvent, DispatchFallbackChannel, ServerStatus } from '../types';
+import { useAuth } from '../auth';
+import { TenantDispatch } from './tenant';
 
 // ------------------------------------------------------------------
 // Badge
@@ -214,7 +216,7 @@ const FALLBACK_REASON_CN: Record<string, string> = {
 
 interface EventLabel { label: string; cls: string; }
 
-function getEventLabel(type: string): EventLabel {
+export function getEventLabel(type: string): EventLabel {
   switch (type) {
     case 'dispatch_ok':   return { label: '派单成功',    cls: 'bg-green-500/20 text-green-400 border-green-500/40' };
     case 'ban':           return { label: '封控',        cls: 'bg-red-500/20 text-red-400 border-red-500/40' };
@@ -239,7 +241,7 @@ const SESSION_EXILE_SUFFIX_CN: Record<string, string> = {
 };
 
 // Returns the extra detail text shown next to the badge (does NOT repeat the badge label).
-function renderEventDetail(
+export function renderEventDetail(
   type: string,
   target: string,
   fallbackNames?: Map<string, string>,
@@ -305,7 +307,7 @@ function renderEventDetail(
 // ------------------------------------------------------------------
 // Events timeline
 // ------------------------------------------------------------------
-function EventTimeline({
+export function EventTimeline({
   events,
   fallbackNames,
   accountNames,
@@ -402,6 +404,12 @@ function ServerStatusCard({ status }: { status: ServerStatus | null }) {
 // Main page
 // ------------------------------------------------------------------
 export default function Dispatch() {
+  const { isTenant } = useAuth();
+  if (isTenant) return <TenantDispatch />;
+  return <AdminDispatch />;
+}
+
+function AdminDispatch() {
   const [data, setData] = useState<DispatchStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<'sse' | 'poll'>('sse');
