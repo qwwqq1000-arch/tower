@@ -325,7 +325,6 @@ function ProvisionWizard({ onSuccess }: ProvisionWizardProps) {
   const [host, setHost] = useState('');
   const [user, setUser] = useState('root');
   const [password, setPassword] = useState('');
-  const [name, setName] = useState('');
   const [ownerId, setOwnerId] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -359,7 +358,6 @@ function ProvisionWizard({ onSuccess }: ProvisionWizardProps) {
     setHost('');
     setUser('root');
     setPassword('');
-    setName('');
     setOwnerId('');
     setSubmitting(false);
     setErr(null);
@@ -371,7 +369,7 @@ function ProvisionWizard({ onSuccess }: ProvisionWizardProps) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!host.trim() || !password.trim() || !name.trim()) return;
+    if (!host.trim() || !password.trim()) return;
     setSubmitting(true);
     setErr(null);
     setJobStatus('pending');
@@ -383,7 +381,6 @@ function ProvisionWizard({ onSuccess }: ProvisionWizardProps) {
         host: host.trim(),
         user: user.trim() || 'root',
         password: password,
-        name: name.trim(),
         ...(ownerId.trim() ? { ownerId: ownerId.trim() } : {}),
       });
       const jobId = res.jobId;
@@ -468,15 +465,6 @@ function ProvisionWizard({ onSuccess }: ProvisionWizardProps) {
                 />
                 <input
                   type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="节点名称 *"
-                  required
-                  className="flex-1 bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink
-                             placeholder:text-muted focus:outline-none focus:border-accent transition"
-                />
-                <input
-                  type="text"
                   value={ownerId}
                   onChange={(e) => setOwnerId(e.target.value)}
                   placeholder="归属用户 ID（选填）"
@@ -487,7 +475,7 @@ function ProvisionWizard({ onSuccess }: ProvisionWizardProps) {
               <div className="flex gap-2">
                 <button
                   type="submit"
-                  disabled={!host.trim() || !password.trim() || !name.trim()}
+                  disabled={!host.trim() || !password.trim()}
                   className="px-4 py-2 text-sm font-medium bg-accent text-white rounded-lg
                              hover:bg-accent/80 disabled:opacity-50 disabled:cursor-not-allowed transition"
                 >

@@ -37,13 +37,14 @@ function StatsBar({ data }: { data: DispatchStatus }) {
 
   const stats = [
     { label: '节点 (启用/总)', value: `${nodes.enabled} / ${nodes.total}` },
-    { label: '今日请求', value: traffic.total.toLocaleString() },
+    { label: '总请求', value: traffic.total.toLocaleString() },
     { label: '成功率', value: traffic.total > 0 ? `${rate}%` : '—' },
     { label: '并发中', value: inflight.toString() },
+    { label: 'RPM', value: traffic.rpm != null ? traffic.rpm.toString() : '—' },
   ];
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+    <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 mb-6">
       {stats.map((s) => (
         <div key={s.label} className="bg-surface border border-line rounded-xl p-4">
           <p className="text-xs text-muted mb-1">{s.label}</p>

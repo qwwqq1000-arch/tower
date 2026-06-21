@@ -402,6 +402,7 @@ export interface DispatchAccountSnapshot {
 
 export interface DispatchTraffic {
   total: number;
+  rpm?: number;
   ok: number;
   error: number;
   tokensIn: number;
@@ -425,6 +426,7 @@ export interface DispatchFallbackChannel {
   todayCostUsd: number;
   inflight?: number;
   available?: number;
+  balanceUsd?: number;
 }
 
 export interface DispatchStatus {

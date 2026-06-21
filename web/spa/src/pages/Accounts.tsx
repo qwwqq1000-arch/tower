@@ -366,7 +366,7 @@ function AccountEditModal({
               className="bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink
                          focus:outline-none focus:border-accent transition"
             >
-              <option value="">共享（无租户）</option>
+              <option value="">超级管理员（默认）</option>
               {users.filter((u) => u.role !== 'superadmin' && u.role !== 'admin').map((u) => (
                 <option key={u.id} value={u.id}>{u.username} ({u.role})</option>
               ))}
@@ -425,7 +425,7 @@ function AccountTableRow({
   const [toggling, setToggling] = useState(false);
 
   const ownerName = useMemo(() => {
-    if (!account.ownerId) return '共享';
+    if (!account.ownerId) return '超级管理员';
     const u = users.find((u) => u.id === account.ownerId);
     return u ? u.username : account.ownerId;
   }, [account.ownerId, users]);
@@ -538,7 +538,7 @@ function AccountMobileCard({
   const [toggling, setToggling] = useState(false);
 
   const ownerName = useMemo(() => {
-    if (!account.ownerId) return '共享';
+    if (!account.ownerId) return '超级管理员';
     const u = users.find((u) => u.id === account.ownerId);
     return u ? u.username : account.ownerId;
   }, [account.ownerId, users]);
@@ -722,7 +722,7 @@ function AdminAccounts() {
             (a.email || '').toLowerCase().includes(q) ||
             (a.nodeName || '').toLowerCase().includes(q) ||
             (() => {
-              if (!a.ownerId) return '共享'.includes(q);
+              if (!a.ownerId) return '超级管理员'.includes(q);
               const u = users.find((u) => u.id === a.ownerId);
               return (u ? u.username : a.ownerId).toLowerCase().includes(q);
             })(),
