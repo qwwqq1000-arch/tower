@@ -3,7 +3,7 @@
 // SSE primary; polling fallback on error
 // ============================================================
 import { useEffect, useRef, useState } from 'react';
-import { getDispatchStatus, listFallbackChannels, getServerStatus } from '../api';
+import { getDispatchStatus, listFallbackChannels, listAccounts, getServerStatus } from '../api';
 import type { DispatchStatus, DispatchAccountSnapshot, DispatchEvent, DispatchFallbackChannel, ServerStatus } from '../types';
 
 // ------------------------------------------------------------------
@@ -210,37 +210,50 @@ function getEventLabel(type: string): EventLabel {
   }
 }
 
-function renderEventDetail(type: string, target: string, fallbackNames?: Map<string, string>): string {
+// Returns the extra detail text shown next to the badge (does NOT repeat the badge label).
+function renderEventDetail(
+  type: string,
+  target: string,
+  fallbackNames?: Map<string, string>,
+  accountNames?: Map<string, string>,
+): string {
+  if (type === 'dispatch_ok') {
+    const email = accountNames?.get(target);
+    // show email; fall back to suppressed raw id → empty
+    return email ?? (target && !target.startsWith('n_') && !target.startsWith('fc_') ? target : '');
+  }
+  if (type === 'ban') {
+    const email = accountNames?.get(target);
+    return email ?? (target && !target.startsWith('n_') && !target.startsWith('fc_') ? target : '');
+  }
   if (type === 'fallback') {
     const cn = FALLBACK_REASON_CN[target] ?? target;
-    return cn ? `保底触发 · ${cn}` : '保底触发';
+    return cn || '';
   }
   if (type === 'scale_up' || type === 'scale_down') {
     return target || '';
-  }
-  if (type === 'ban' || type === 'dispatch_ok' || type === 'recover') {
-    // suppress raw ids
-    if (!target || target.startsWith('n_') || target.startsWith('fc_') || target.startsWith('fb:')) return '';
-    if (target.startsWith('fallback:')) {
-      const id = target.slice('fallback:'.length);
-      const name = fallbackNames?.get(id);
-      return name !== undefined ? `保底: ${name}` : '保底';
-    }
-    return target;
   }
   if (target.startsWith('fallback:')) {
     const id = target.slice('fallback:'.length);
     const name = fallbackNames?.get(id);
     return name !== undefined ? `保底: ${name}` : '保底';
   }
-  if (target.startsWith('n_') || target.startsWith('fc_') || target.startsWith('fb:')) return '节点';
+  if (target.startsWith('n_') || target.startsWith('fc_') || target.startsWith('fb:')) return '';
   return target || '';
 }
 
 // ------------------------------------------------------------------
 // Events timeline
 // ------------------------------------------------------------------
-function EventTimeline({ events, fallbackNames }: { events: DispatchEvent[]; fallbackNames: Map<string, string> }) {
+function EventTimeline({
+  events,
+  fallbackNames,
+  accountNames,
+}: {
+  events: DispatchEvent[];
+  fallbackNames: Map<string, string>;
+  accountNames: Map<string, string>;
+}) {
   function formatTs(ts: number | undefined): string {
     if (ts == null || ts === 0) return '—';
     try {
@@ -259,7 +272,7 @@ function EventTimeline({ events, fallbackNames }: { events: DispatchEvent[]; fal
       <ul className="divide-y divide-line/50 max-h-80 overflow-y-auto">
         {events.map((e, idx) => {
           const { label, cls } = getEventLabel(e.type);
-          const detail = renderEventDetail(e.type, e.target, fallbackNames);
+          const detail = renderEventDetail(e.type, e.target, fallbackNames, accountNames);
           return (
             <li key={idx} className="flex items-center gap-3 px-4 py-2.5 hover:bg-line/30 transition">
               <span className="text-xs text-muted tabular-nums shrink-0 w-20">
@@ -333,6 +346,7 @@ export default function Dispatch() {
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<'sse' | 'poll'>('sse');
   const [fallbackNames, setFallbackNames] = useState<Map<string, string>>(new Map());
+  const [accountNames, setAccountNames] = useState<Map<string, string>>(new Map());
   const [serverStatus, setServerStatus] = useState<ServerStatus | null>(null);
   const esRef = useRef<EventSource | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -372,6 +386,18 @@ export default function Dispatch() {
         setFallbackNames(m);
       })
       .catch(() => { /* non-fatal: show raw target on failure */ });
+
+    // Fetch account email map for display (best-effort)
+    listAccounts()
+      .then((accounts) => {
+        const m = new Map<string, string>();
+        for (const a of accounts) {
+          const key = `${a.nodeId}:${a.profileId}`;
+          if (a.email) m.set(key, a.email);
+        }
+        setAccountNames(m);
+      })
+      .catch(() => { /* non-fatal */ });
 
     // Fetch server status
     const fetchServerStatus = () => {
@@ -446,7 +472,7 @@ export default function Dispatch() {
               <FallbackChannelsPanel channels={data.fallbackChannels ?? []} />
               <TrafficPanel data={data} />
             </div>
-            <EventTimeline events={data.events} fallbackNames={fallbackNames} />
+            <EventTimeline events={data.events} fallbackNames={fallbackNames} accountNames={accountNames} />
           </div>
         </>
       )}

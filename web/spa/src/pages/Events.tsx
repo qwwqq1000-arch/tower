@@ -3,7 +3,7 @@
 // GET /api/admin/events → timeline (time / type / target)
 // ============================================================
 import { useEffect, useState, useCallback } from 'react';
-import { getEvents } from '../api';
+import { getEvents, listAccounts, listFallbackChannels } from '../api';
 import type { EventRecord } from '../types';
 
 // ---- helpers ----
@@ -47,13 +47,41 @@ function getStyle(type: string) {
   );
 }
 
-function renderTargetText(type: string, target: string): string {
+function parseDetail(detail: Record<string, unknown> | string | undefined): Record<string, unknown> {
+  if (!detail) return {};
+  if (typeof detail === 'string') {
+    try { return JSON.parse(detail) as Record<string, unknown>; } catch { return {}; }
+  }
+  return detail;
+}
+
+function renderTargetText(
+  type: string,
+  target: string,
+  detail: Record<string, unknown>,
+  accountMap: Map<string, string>,
+  channelMap: Map<string, string>,
+): string {
+  if (type === 'dispatch_ok') {
+    const email = accountMap.get(target);
+    return email ? `派单成功 · ${email}` : `派单成功 · ${target || '节点'}`;
+  }
+  if (type === 'ban') {
+    const email = accountMap.get(target);
+    return email ? `封号 · ${email}` : `封号 · ${target || '节点'}`;
+  }
   if (type === 'fallback') {
     const cn = FALLBACK_REASON_CN[target] ?? target;
-    return cn ? `保底触发 · ${cn}` : '保底触发';
+    const channelId = typeof detail['channel'] === 'string' ? detail['channel'] : '';
+    const channelName = channelId ? channelMap.get(channelId) : undefined;
+    const base = cn ? `保底触发 · ${cn}` : '保底触发';
+    return channelName ? `${base} · ${channelName}` : base;
   }
-  if (type === 'scale_up' || type === 'scale_down') {
-    return target || '';
+  if (type === 'scale_up') {
+    return `弹性扩容 · ${target || ''}`.trimEnd().replace(/ · $/, '');
+  }
+  if (type === 'scale_down') {
+    return `弹性缩容 · ${target || ''}`.trimEnd().replace(/ · $/, '');
   }
   // suppress raw internal ids
   if (!target || target.startsWith('n_') || target.startsWith('fc_') || target.startsWith('fb:')) return '';
@@ -61,11 +89,22 @@ function renderTargetText(type: string, target: string): string {
 }
 
 // ---- Timeline item ----
-function EventItem({ row }: { row: EventRecord }) {
+function EventItem({
+  row,
+  accountMap,
+  channelMap,
+}: {
+  row: EventRecord;
+  accountMap: Map<string, string>;
+  channelMap: Map<string, string>;
+}) {
   const style = getStyle(row.type);
   const { dot, badge } = style;
   const label = style.label ?? row.type;
-  const targetText = renderTargetText(row.type, row.target ?? '');
+  const detail = parseDetail(row.detail as Record<string, unknown> | string | undefined);
+  const targetText = renderTargetText(row.type, row.target ?? '', detail, accountMap, channelMap);
+  // For fallback, don't re-render detail separately since we've woven it into the label
+  const showDetail = row.detail && Object.keys(row.detail).length > 0 && row.type !== 'fallback';
   return (
     <div className="flex gap-4">
       {/* Timeline track */}
@@ -84,7 +123,7 @@ function EventItem({ row }: { row: EventRecord }) {
         {targetText && (
           <p className="text-sm text-ink mt-1 truncate" title={targetText}>{targetText}</p>
         )}
-        {row.detail && Object.keys(row.detail).length > 0 && (
+        {showDetail && (
           <pre className="mt-1.5 text-xs text-muted bg-bg border border-line rounded-lg px-3 py-2 overflow-x-auto max-w-full">
             {JSON.stringify(row.detail, null, 2)}
           </pre>
@@ -100,6 +139,8 @@ export default function Events() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [accountMap, setAccountMap] = useState<Map<string, string>>(new Map());
+  const [channelMap, setChannelMap] = useState<Map<string, string>>(new Map());
 
   const fetchEvents = useCallback(async () => {
     setLoading(true);
@@ -115,6 +156,27 @@ export default function Events() {
   }, []);
 
   useEffect(() => { void fetchEvents(); }, [fetchEvents]);
+
+  useEffect(() => {
+    // Fetch resolver maps once on mount (best-effort, resilient to failure)
+    listAccounts()
+      .then((accounts) => {
+        const m = new Map<string, string>();
+        for (const a of accounts) {
+          const key = `${a.nodeId}:${a.profileId}`;
+          if (a.email) m.set(key, a.email);
+        }
+        setAccountMap(m);
+      })
+      .catch(() => { /* non-fatal */ });
+    listFallbackChannels()
+      .then((channels) => {
+        const m = new Map<string, string>();
+        for (const ch of channels) m.set(ch.id, ch.name);
+        setChannelMap(m);
+      })
+      .catch(() => { /* non-fatal */ });
+  }, []);
 
   const q = query.trim().toLowerCase();
   const filtered = q
@@ -178,7 +240,9 @@ export default function Events() {
       {/* Timeline */}
       {!loading && !error && filtered.length > 0 && (
         <div className="bg-surface border border-line rounded-xl px-5 pt-5 pb-0">
-          {filtered.map((row, i) => <EventItem key={i} row={row} />)}
+          {filtered.map((row, i) => (
+            <EventItem key={i} row={row} accountMap={accountMap} channelMap={channelMap} />
+          ))}
         </div>
       )}
 
