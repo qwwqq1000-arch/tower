@@ -180,6 +180,17 @@ func (s *Store) SetDisabled(key string, capacity int, disabled bool) {
 	s.ensureLocked(key, capacity).Disabled = disabled
 }
 
+// SetCapacity updates the slot capacity for an existing account (no-op if absent).
+func (s *Store) SetCapacity(key string, cap int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.accts[key]
+	if !ok {
+		return
+	}
+	a.Slots.SetCapacity(cap)
+}
+
 // SetWarmupCap sets the warmup concurrency cap for an existing account (no-op if absent).
 // cap=0 disables warmup limiting.
 func (s *Store) SetWarmupCap(key string, cap int) {

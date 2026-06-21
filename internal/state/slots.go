@@ -56,3 +56,10 @@ func (s *Slots) Release(now, cooldownMs int64) {
 
 // InUse returns the number of currently held slots.
 func (s *Slots) InUse() int { return s.inUse }
+
+// SetCapacity updates the slot capacity; ignored if c < 0.
+func (s *Slots) SetCapacity(c int) {
+	if c >= 0 {
+		s.capacity = c
+	}
+}

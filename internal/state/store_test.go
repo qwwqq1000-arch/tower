@@ -51,6 +51,26 @@ func TestStore_SetWarmupCap_NoopIfAbsent(t *testing.T) {
 	s.SetWarmupCap("missing", 1)
 }
 
+func TestStore_SetCapacity(t *testing.T) {
+	s := NewStore(fixedClock(0), minRand)
+	s.Ensure("k", 3)
+	// Before resize: only 3 slots available.
+	if got := s.Ensure("k", 3).Slots.Available(0); got != 3 {
+		t.Fatalf("available=%d, want 3 before SetCapacity", got)
+	}
+	s.SetCapacity("k", 5)
+	// After resize: 5 slots should be available.
+	if got := s.Ensure("k", 3).Slots.Available(0); got != 5 {
+		t.Fatalf("available=%d, want 5 after SetCapacity(5)", got)
+	}
+}
+
+func TestStore_SetCapacity_NoopIfAbsent(t *testing.T) {
+	s := NewStore(fixedClock(0), minRand)
+	// Should not panic on a missing key.
+	s.SetCapacity("missing", 5)
+}
+
 func TestStore_ConcurrentDispatchComplete(t *testing.T) {
 	s := NewStore(fixedClock(0), minRand)
 	c := BreakerCfg{PersistStreak: 3, BaseMs: 1000, MaxMs: 9999, Mult: 2}

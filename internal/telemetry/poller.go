@@ -24,6 +24,7 @@ type Poller struct {
 // PollOnce refreshes every enabled node's accounts once.
 func (p *Poller) PollOnce(ctx context.Context) error {
 	thresh := p.threshold(ctx)
+	mc := p.maxConcurrent(ctx)
 	nodes, err := p.Q.ListNodes(ctx)
 	if err != nil {
 		return err
@@ -56,9 +57,11 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 			key := n.ID + ":" + a.ProfileID
 			if offline {
 				p.Store.SetOffline(key, p.Capacity, true)
+				p.Store.SetCapacity(key, mc)
 				continue
 			}
 			p.Store.SetOffline(key, p.Capacity, false)
+			p.Store.SetCapacity(key, mc)
 			if pq, ok := findProfile(quota, a.ProfileID); ok {
 				p.Store.SetLimited(key, p.Capacity, LimitsFromQuota(pq, thresh, now, p.DefaultTTLMs))
 			}
@@ -95,6 +98,27 @@ func (p *Poller) threshold(ctx context.Context) float64 {
 		}
 	}
 	return p.Threshold
+}
+
+// maxConcurrent reads the global policy row and returns the effective MaxConcurrent.
+// Falls back to p.Capacity when the policy row is absent or does not override it.
+func (p *Poller) maxConcurrent(ctx context.Context) int {
+	rows, err := p.Q.ListPolicies(ctx)
+	if err != nil {
+		return p.Capacity
+	}
+	for _, row := range rows {
+		if row.ScopeType == "global" {
+			var patch policy.Patch
+			if json.Unmarshal(row.Params, &patch) == nil {
+				if patch.MaxConcurrent != nil && *patch.MaxConcurrent > 0 {
+					return *patch.MaxConcurrent
+				}
+			}
+			break
+		}
+	}
+	return p.Capacity
 }
 
 func findProfile(q nodeclient.QuotaAll, id string) (nodeclient.ProfileQuota, bool) {
