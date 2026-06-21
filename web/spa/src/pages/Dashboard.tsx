@@ -5,6 +5,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { getDashboard } from '../api';
 import type { DashboardData, DashboardNodeItem, DashboardByModel, DashboardHostingRow } from '../types';
+import { useAuth } from '../auth';
+import { TenantDashboard } from './tenant';
 
 // ------------------------------------------------------------------
 // Formatters
@@ -125,6 +127,12 @@ function HostingRow({ row }: { row: DashboardHostingRow }) {
 const REFRESH_INTERVAL_MS = 30_000;
 
 export default function Dashboard() {
+  const { isTenant } = useAuth();
+  if (isTenant) return <TenantDashboard />;
+  return <AdminDashboard />;
+}
+
+function AdminDashboard() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

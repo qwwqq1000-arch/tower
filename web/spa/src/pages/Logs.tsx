@@ -3,8 +3,12 @@
 // Tabs: DispatchLogsTab | AuditTab | EventsTab
 // ============================================================
 import { useEffect, useState, useCallback } from 'react';
-import { getLogs, getAudit, getEvents, listFallbackChannels, listAccounts } from '../api';
+import {
+  getLogs, getAudit, getEvents, listFallbackChannels, listAccounts,
+  getMeLogs, getMeEvents, listMeFallback, getMeAccounts,
+} from '../api';
 import type { LogEntry, AuditRecord, EventRecord } from '../types';
+import { useAuth } from '../auth';
 
 // ============================================================
 // Shared helpers
@@ -119,7 +123,7 @@ function LogCard({ row, channelMap, accountMap }: { row: LogEntry; channelMap: M
   );
 }
 
-function DispatchLogsTab() {
+function DispatchLogsTab({ isTenant }: { isTenant: boolean }) {
   const [rows, setRows] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -128,7 +132,7 @@ function DispatchLogsTab() {
   const [accountMap, setAccountMap] = useState<Map<string, string>>(new Map());
 
   useEffect(() => {
-    listFallbackChannels()
+    (isTenant ? listMeFallback() : listFallbackChannels())
       .then((channels) => {
         const m = new Map<string, string>();
         for (const ch of channels) m.set(ch.id, ch.name);
@@ -136,19 +140,34 @@ function DispatchLogsTab() {
       })
       .catch(() => {});
 
-    listAccounts()
-      .then((accounts) => {
-        const m = new Map<string, string>();
-        for (const a of accounts) m.set(`${a.nodeId}:${a.profileId}`, a.email);
-        setAccountMap(m);
-      })
-      .catch(() => {});
-  }, []);
+    if (isTenant) {
+      getMeAccounts()
+        .then((accounts) => {
+          const m = new Map<string, string>();
+          for (const a of accounts) {
+            if (a.email) {
+              m.set(a.accountId, a.email);
+              m.set(a.profileId, a.email);
+            }
+          }
+          setAccountMap(m);
+        })
+        .catch(() => {});
+    } else {
+      listAccounts()
+        .then((accounts) => {
+          const m = new Map<string, string>();
+          for (const a of accounts) m.set(`${a.nodeId}:${a.profileId}`, a.email);
+          setAccountMap(m);
+        })
+        .catch(() => {});
+    }
+  }, [isTenant]);
 
   const fetchLogs = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await getLogs({ limit: '200' });
+      const data = isTenant ? await getMeLogs(200) : await getLogs({ limit: '200' });
       setRows(Array.isArray(data) ? data : []);
       setError(null);
     } catch (e) {
@@ -156,7 +175,7 @@ function DispatchLogsTab() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isTenant]);
 
   useEffect(() => { void fetchLogs(); }, [fetchLogs]);
 
@@ -533,7 +552,7 @@ function EventItem({
   );
 }
 
-function EventsTab() {
+function EventsTab({ isTenant }: { isTenant: boolean }) {
   const [rows, setRows] = useState<EventRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -544,7 +563,7 @@ function EventsTab() {
   const fetchEvents = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await getEvents({ limit: '200' });
+      const data = isTenant ? await getMeEvents(200) : await getEvents({ limit: '200' });
       setRows(Array.isArray(data) ? data : []);
       setError(null);
     } catch (e) {
@@ -552,29 +571,44 @@ function EventsTab() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isTenant]);
 
   useEffect(() => { void fetchEvents(); }, [fetchEvents]);
 
   useEffect(() => {
-    listAccounts()
-      .then((accounts) => {
-        const m = new Map<string, string>();
-        for (const a of accounts) {
-          const key = `${a.nodeId}:${a.profileId}`;
-          if (a.email) m.set(key, a.email);
-        }
-        setAccountMap(m);
-      })
-      .catch(() => {});
-    listFallbackChannels()
+    if (isTenant) {
+      getMeAccounts()
+        .then((accounts) => {
+          const m = new Map<string, string>();
+          for (const a of accounts) {
+            if (a.email) {
+              m.set(a.accountId, a.email);
+              m.set(a.profileId, a.email);
+            }
+          }
+          setAccountMap(m);
+        })
+        .catch(() => {});
+    } else {
+      listAccounts()
+        .then((accounts) => {
+          const m = new Map<string, string>();
+          for (const a of accounts) {
+            const key = `${a.nodeId}:${a.profileId}`;
+            if (a.email) m.set(key, a.email);
+          }
+          setAccountMap(m);
+        })
+        .catch(() => {});
+    }
+    (isTenant ? listMeFallback() : listFallbackChannels())
       .then((channels) => {
         const m = new Map<string, string>();
         for (const ch of channels) m.set(ch.id, ch.name);
         setChannelMap(m);
       })
       .catch(() => {});
-  }, []);
+  }, [isTenant]);
 
   const q = query.trim().toLowerCase();
   const filtered = q
@@ -645,14 +679,19 @@ function EventsTab() {
 // ============================================================
 type Tab = 'dispatch' | 'audit' | 'events';
 
-const TABS: { key: Tab; label: string }[] = [
+const ALL_TABS: { key: Tab; label: string }[] = [
   { key: 'dispatch', label: '调度日志' },
   { key: 'audit',    label: '审计日志' },
   { key: 'events',   label: '事件' },
 ];
 
 export default function Logs() {
+  const { isTenant } = useAuth();
   const [tab, setTab] = useState<Tab>('dispatch');
+
+  // Tenants don't see the 审计 (audit) tab.
+  const tabs = isTenant ? ALL_TABS.filter((t) => t.key !== 'audit') : ALL_TABS;
+  const activeTab: Tab = isTenant && tab === 'audit' ? 'dispatch' : tab;
 
   return (
     <div className="p-4 md:p-6 space-y-4">
@@ -661,13 +700,13 @@ export default function Logs() {
 
       {/* Tab switcher */}
       <div className="flex gap-1 border-b border-line">
-        {TABS.map(({ key, label }) => (
+        {tabs.map(({ key, label }) => (
           <button
             key={key}
             onClick={() => setTab(key)}
             className={[
               'px-4 py-2 text-sm font-medium border-b-2 -mb-px transition',
-              tab === key
+              activeTab === key
                 ? 'border-accent text-accent'
                 : 'border-transparent text-muted hover:text-ink',
             ].join(' ')}
@@ -678,9 +717,9 @@ export default function Logs() {
       </div>
 
       {/* Tab panels */}
-      {tab === 'dispatch' && <DispatchLogsTab />}
-      {tab === 'audit'    && <AuditTab />}
-      {tab === 'events'   && <EventsTab />}
+      {activeTab === 'dispatch' && <DispatchLogsTab isTenant={isTenant} />}
+      {activeTab === 'audit'    && !isTenant && <AuditTab />}
+      {activeTab === 'events'   && <EventsTab isTenant={isTenant} />}
     </div>
   );
 }

@@ -7,6 +7,8 @@ import { useState, useCallback, useEffect } from 'react';
 import { settle, getLedger, listUsers } from '../api';
 import type { SettleResult, LedgerEntry } from '../types';
 import type { UserRow } from '../types';
+import { useAuth } from '../auth';
+import { TenantBilling } from './tenant';
 
 // ---- helpers ----
 function fmtTime(ms: number): string {
@@ -129,6 +131,12 @@ function TenantSelector({ tenants, value, onChange, fallback }: TenantSelectorPr
 
 // ---- Page ----
 export default function Billing() {
+  const { isTenant } = useAuth();
+  if (isTenant) return <TenantBilling />;
+  return <AdminBilling />;
+}
+
+function AdminBilling() {
   const [tenantId, setTenantId] = useState('');
   const [settling, setSettling] = useState(false);
   const [invoice, setInvoice] = useState<SettleResult | null>(null);

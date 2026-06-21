@@ -14,6 +14,8 @@ import {
   listUsers,
 } from '../api';
 import type { AccountRow, QuotaAll, Slot, UserRow } from '../types';
+import { useAuth } from '../auth';
+import { TenantAccounts } from './tenant';
 
 // ------------------------------------------------------------------
 // Small toast helper
@@ -650,6 +652,12 @@ function SortIcon({ active, dir }: { active: boolean; dir: 'asc' | 'desc' }) {
 const PAGE_SIZE = 12;
 
 export default function Accounts() {
+  const { isTenant } = useAuth();
+  if (isTenant) return <TenantAccounts />;
+  return <AdminAccounts />;
+}
+
+function AdminAccounts() {
   const [accounts, setAccounts] = useState<AccountRow[]>([]);
   const [quotaMap, setQuotaMap] = useState<Map<string, QuotaAll>>(new Map());
   const [users, setUsers] = useState<UserRow[]>([]);

@@ -151,6 +151,15 @@ const NAV_ITEMS: NavItem[] = [
   { path: '/settings',  label: '设置',     icon: '⚙', adminOnly: true },
 ];
 
+// Tenant nav: limited self-service set (own data only)
+const TENANT_NAV: NavItem[] = [
+  { path: '/',         label: '看板',     icon: '◈' },
+  { path: '/accounts', label: '号库',     icon: '⚿' },
+  { path: '/fallback', label: '保底渠道', icon: '⤵' },
+  { path: '/logs',     label: '日志',     icon: '≡' },
+  { path: '/billing',  label: '计费',     icon: '₿' },
+];
+
 // Settings sub-pages — not in primary sidebar, but searchable via palette
 const SETTINGS_ITEMS: NavItem[] = [
   { path: '/policies',    label: '封控策略', icon: '⛨', adminOnly: true },
@@ -242,20 +251,25 @@ function Palette({ items, onClose }: PaletteProps) {
 // Shell
 // ------------------------------------------------------------------
 export function Shell({ children }: { children: ReactNode }) {
-  const { role, logout } = useAuth();
+  const { role, isTenant, logout } = useAuth();
   const { theme, toggle } = useTheme();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [changePwOpen, setChangePwOpen] = useState(false);
 
   // Filter nav by role (superadmin/admin/operator all see admin-only items)
   const isAdmin = role === 'admin' || role === 'superadmin' || role === 'operator';
-  const items = NAV_ITEMS.filter((i) => !i.adminOnly || isAdmin);
+  // Tenants get a limited self-service nav; everyone else gets the admin app.
+  const items = isTenant
+    ? TENANT_NAV
+    : NAV_ITEMS.filter((i) => !i.adminOnly || isAdmin);
   const mobileItems = items.slice(0, 5);
   // Palette: primary nav + settings sub-pages (so moved pages remain searchable)
-  const paletteItems = [
-    ...items,
-    ...SETTINGS_ITEMS.filter((i) => !i.adminOnly || isAdmin),
-  ];
+  const paletteItems = isTenant
+    ? items
+    : [
+        ...items,
+        ...SETTINGS_ITEMS.filter((i) => !i.adminOnly || isAdmin),
+      ];
 
   // ⌘K / Ctrl+K global shortcut
   useEffect(() => {

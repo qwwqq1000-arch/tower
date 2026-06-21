@@ -30,6 +30,8 @@ import type {
   QuotaAll,
   ServerStatus,
   Slot,
+  MeAccountRow,
+  MeDashboard,
 } from './types';
 
 // ------------------------------------------------------------------
@@ -330,3 +332,63 @@ export const deleteSlot = (id: string) =>
 
 export const setSlotEnabled = (id: string, enabled: boolean) =>
   api<void>('PATCH', `/api/admin/slots/${id}/enabled`, { enabled });
+
+// ------------------------------------------------------------------
+// Tenant self-service (/api/me/*) — owner-scoped to the caller
+// ------------------------------------------------------------------
+export const getMeAccounts = () =>
+  api<MeAccountRow[]>('GET', '/api/me/accounts');
+
+export const pauseMeAccount = (accountId: string, enabled: boolean) =>
+  api<{ ok: string }>('POST', `/api/me/accounts/${accountId}/pause`, { enabled });
+
+export const getMeDashboard = () =>
+  api<MeDashboard>('GET', '/api/me/dashboard');
+
+export const getMeLogs = (limit = 200) =>
+  api<LogEntry[]>('GET', `/api/me/logs?limit=${limit}`);
+
+export const getMeEvents = (limit = 200) =>
+  api<EventRecord[]>('GET', `/api/me/events?limit=${limit}`);
+
+export const getMeLedger = () =>
+  api<LedgerEntry[]>('GET', '/api/me/ledger');
+
+export const listMeFallback = () =>
+  api<FallbackChannel[]>('GET', '/api/me/fallback-channels');
+
+export const createMeFallback = (body: {
+  name: string;
+  baseUrl: string;
+  apiKey?: string;
+  priority?: number;
+  weight?: number;
+  maxConcurrent?: number;
+  cooldownMs?: number;
+  priceThreshold?: number;
+  modelAllowlist?: string;
+  balanceToken?: string;
+  balanceUserId?: string;
+  balanceAlertUsd?: number;
+}) => api<FallbackChannel>('POST', '/api/me/fallback-channels', body);
+
+export const updateMeFallback = (id: string, body: Partial<{
+  name: string;
+  baseUrl: string;
+  apiKey: string;
+  priority: number;
+  weight: number;
+  maxConcurrent: number;
+  cooldownMs: number;
+  priceThreshold: number;
+  modelAllowlist: string;
+  balanceToken: string;
+  balanceUserId: string;
+  balanceAlertUsd: number;
+}>) => api<FallbackChannel>('PATCH', `/api/me/fallback-channels/${id}`, body);
+
+export const deleteMeFallback = (id: string) =>
+  api<void>('DELETE', `/api/me/fallback-channels/${id}`);
+
+export const setMeFallbackEnabled = (id: string, enabled: boolean) =>
+  api<void>('PATCH', `/api/me/fallback-channels/${id}/enabled`, { enabled });

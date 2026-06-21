@@ -4,7 +4,7 @@
 
 export interface User {
   sub: string;
-  role: 'admin' | 'viewer';
+  role: string; // superadmin | admin | operator | tenant | viewer
   perms: string[];
 }
 
@@ -443,6 +443,30 @@ export interface Slot {
   startMin: number;
   endMin: number;
   enabled: boolean;
+}
+
+// --- Tenant mode (/api/me/*) ---
+export interface MeAccountRow {
+  nodeName: string;
+  accountId: string;
+  profileId: string;
+  email: string;
+  enabled: boolean;
+  weight: number;
+  role: string;
+  expiresAt?: number;        // unix ms
+  subscriptionType?: string;
+  todayCostUsd?: number;
+  totalCostUsd?: number;
+}
+
+export interface MeDashboard {
+  accounts: { total: number; active: number };
+  today: { requests: number; costUsd: number };
+  consumptionUsd: number;
+  hostingRate: number;
+  unsettledUsd: number;
+  accumulatedUsd: number;
 }
 
 export interface ServerStatus {

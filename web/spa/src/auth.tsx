@@ -18,6 +18,7 @@ import type { User } from './types';
 interface AuthCtx {
   user: User | null;
   role: string | null;
+  isTenant: boolean;
   perms: string[];
   loading: boolean;
   refresh: () => Promise<void>;
@@ -61,6 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value: AuthCtx = {
     user,
     role: user?.role ?? null,
+    isTenant: user?.role === 'tenant',
     perms: user?.perms ?? [],
     loading,
     refresh,

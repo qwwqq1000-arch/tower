@@ -13,8 +13,14 @@ import {
   setFallbackEnabled,
   deleteFallbackChannel,
   refreshFallbackBalance,
+  listMeFallback,
+  createMeFallback,
+  updateMeFallback,
+  setMeFallbackEnabled,
+  deleteMeFallback,
 } from '../api';
 import type { FallbackChannel } from '../types';
+import { useAuth } from '../auth';
 
 // ------------------------------------------------------------------
 // Helpers
@@ -319,15 +325,16 @@ interface EnableToggleProps {
   id: string;
   enabled: boolean;
   onChange: (id: string, enabled: boolean) => void;
+  setEnabledFn: (id: string, enabled: boolean) => Promise<void>;
 }
 
-function EnableToggle({ id, enabled, onChange }: EnableToggleProps) {
+function EnableToggle({ id, enabled, onChange, setEnabledFn }: EnableToggleProps) {
   const [busy, setBusy] = useState(false);
 
   async function toggle() {
     setBusy(true);
     try {
-      await setFallbackEnabled(id, !enabled);
+      await setEnabledFn(id, !enabled);
       onChange(id, !enabled);
     } finally {
       setBusy(false);
@@ -359,6 +366,14 @@ function EnableToggle({ id, enabled, onChange }: EnableToggleProps) {
 // Main page
 // ------------------------------------------------------------------
 export default function Fallback() {
+  const { isTenant } = useAuth();
+  // Choose owner-scoped (/api/me) or admin endpoints based on role.
+  const listFn = isTenant ? listMeFallback : listFallbackChannels;
+  const createFn = isTenant ? createMeFallback : createFallbackChannel;
+  const updateFn = isTenant ? updateMeFallback : updateFallbackChannel;
+  const setEnabledFn = isTenant ? setMeFallbackEnabled : setFallbackEnabled;
+  const deleteFn = isTenant ? deleteMeFallback : deleteFallbackChannel;
+
   const [channels, setChannels] = useState<FallbackChannel[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -375,7 +390,7 @@ export default function Fallback() {
   const fetchChannels = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await listFallbackChannels();
+      const data = await listFn();
       setChannels(data);
       setError(null);
     } catch (e) {
@@ -383,7 +398,7 @@ export default function Fallback() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [listFn]);
 
   useEffect(() => { void fetchChannels(); }, [fetchChannels]);
 
@@ -392,7 +407,7 @@ export default function Fallback() {
     setCreating(true);
     setCreateErr(null);
     try {
-      const ch = await createFallbackChannel({
+      const ch = await createFn({
         name: f.name,
         baseUrl: f.baseUrl,
         ...(f.apiKey ? { apiKey: f.apiKey } : {}),
@@ -416,7 +431,7 @@ export default function Fallback() {
 
   // ---- edit ----
   async function handleEdit(id: string, f: FormState) {
-    const updated = await updateFallbackChannel(id, {
+    const updated = await updateFn(id, {
       name: f.name,
       baseUrl: f.baseUrl,
       ...(f.apiKey ? { apiKey: f.apiKey } : {}),
@@ -442,7 +457,7 @@ export default function Fallback() {
   async function handleDelete(id: string) {
     setDeleteBusy(true);
     try {
-      await deleteFallbackChannel(id);
+      await deleteFn(id);
       setChannels((prev) => prev.filter((c) => c.id !== id));
       setDeleteId(null);
     } finally {
@@ -596,7 +611,7 @@ export default function Fallback() {
                           )}
                         </td>
                         <td className="px-4 py-3">
-                          <EnableToggle id={c.id} enabled={c.enabled} onChange={handleToggle} />
+                          <EnableToggle id={c.id} enabled={c.enabled} onChange={handleToggle} setEnabledFn={setEnabledFn} />
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
@@ -634,7 +649,7 @@ export default function Fallback() {
                         </div>
                         <p className="text-xs text-muted font-mono truncate mt-0.5">{c.baseUrl}</p>
                       </div>
-                      <EnableToggle id={c.id} enabled={c.enabled} onChange={handleToggle} />
+                      <EnableToggle id={c.id} enabled={c.enabled} onChange={handleToggle} setEnabledFn={setEnabledFn} />
                     </div>
                     <div className="grid grid-cols-4 gap-2 text-xs">
                       <div>
