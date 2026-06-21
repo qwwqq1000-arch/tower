@@ -94,6 +94,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 	if cfg.FallbackEnabled && len(channels) > 0 {
 		return s.viaChannel(ctx, ownerID, model, body, channels[0], "exhausted")
 	}
+	s.logErr(ctx, ownerID, model, 503, "no_nodes")
 	return Outcome{Status: 503, Body: `{"error":"no nodes available"}`, Target: "none", Reason: ""}
 }
 
