@@ -200,25 +200,43 @@ func listProfilesHandler(q *sqlc.Queries) http.HandlerFunc {
 
 func listAccountsHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		rows, err := q.ListNodeAccountsAll(r.Context())
+		ctx := r.Context()
+		rows, err := q.ListNodeAccountsAll(ctx)
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		// Build today cost map: target -> cost
+		todayCostMap := map[string]float64{}
+		if todayRows, err := q.CostByTargetSince(ctx, startOfTodayMs()); err == nil {
+			for _, r := range todayRows {
+				todayCostMap[r.Target] = r.Cost
+			}
+		}
+		// Build total cost map: target -> cost
+		totalCostMap := map[string]float64{}
+		if totalRows, err := q.CostByTargetTotal(ctx); err == nil {
+			for _, r := range totalRows {
+				totalCostMap[r.Target] = r.Cost
+			}
+		}
 		out := make([]map[string]any, 0, len(rows))
 		for _, a := range rows {
+			key := a.NodeID + ":" + a.ProfileID
 			out = append(out, map[string]any{
-				"nodeId":     a.NodeID,
-				"nodeName":   a.NodeName,
-				"baseUrl":    a.BaseUrl,
-				"accountId":  a.AccountID,
-				"profileId":  a.ProfileID,
-				"enabled":    a.Enabled,
-				"weight":     a.Weight,
-				"role":       a.Role,
-				"egress":     a.Egress,
-				"email":      a.Email,
-				"status":     a.AcctStatus,
+				"nodeId":       a.NodeID,
+				"nodeName":     a.NodeName,
+				"baseUrl":      a.BaseUrl,
+				"accountId":    a.AccountID,
+				"profileId":    a.ProfileID,
+				"enabled":      a.Enabled,
+				"weight":       a.Weight,
+				"role":         a.Role,
+				"egress":       a.Egress,
+				"email":        a.Email,
+				"status":       a.AcctStatus,
+				"todayCostUsd": todayCostMap[key],
+				"totalCostUsd": totalCostMap[key],
 			})
 		}
 		writeJSON(w, 200, out)

@@ -9,6 +9,68 @@ import (
 	"context"
 )
 
+const costByTargetSince = `-- name: CostByTargetSince :many
+SELECT target, coalesce(sum(cost_usd),0)::float8 AS cost, count(*)::bigint AS requests
+FROM dispatch_logs WHERE ts >= $1 AND status='ok' GROUP BY target
+`
+
+type CostByTargetSinceRow struct {
+	Target   string  `json:"target"`
+	Cost     float64 `json:"cost"`
+	Requests int64   `json:"requests"`
+}
+
+func (q *Queries) CostByTargetSince(ctx context.Context, ts int64) ([]CostByTargetSinceRow, error) {
+	rows, err := q.db.Query(ctx, costByTargetSince, ts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CostByTargetSinceRow
+	for rows.Next() {
+		var i CostByTargetSinceRow
+		if err := rows.Scan(&i.Target, &i.Cost, &i.Requests); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const costByTargetTotal = `-- name: CostByTargetTotal :many
+SELECT target, coalesce(sum(cost_usd),0)::float8 AS cost, count(*)::bigint AS requests
+FROM dispatch_logs WHERE status='ok' GROUP BY target
+`
+
+type CostByTargetTotalRow struct {
+	Target   string  `json:"target"`
+	Cost     float64 `json:"cost"`
+	Requests int64   `json:"requests"`
+}
+
+func (q *Queries) CostByTargetTotal(ctx context.Context) ([]CostByTargetTotalRow, error) {
+	rows, err := q.db.Query(ctx, costByTargetTotal)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CostByTargetTotalRow
+	for rows.Next() {
+		var i CostByTargetTotalRow
+		if err := rows.Scan(&i.Target, &i.Cost, &i.Requests); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getHostingRate = `-- name: GetHostingRate :one
 SELECT rate FROM hosting_rates WHERE tenant_id = $1 ORDER BY effective_from DESC LIMIT 1
 `

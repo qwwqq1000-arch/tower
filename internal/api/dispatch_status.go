@@ -23,13 +23,34 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 			labels[a.NodeID+":"+a.ProfileID] = label
 		}
 	}
+	// Build today/total cost maps for accounts
+	todayCostMap := map[string]float64{}
+	if todayRows, err := q.CostByTargetSince(ctx, startOfTodayMs()); err == nil {
+		for _, r := range todayRows {
+			todayCostMap[r.Target] = r.Cost
+		}
+	}
+	totalCostMap := map[string]float64{}
+	if totalRows, err := q.CostByTargetTotal(ctx); err == nil {
+		for _, r := range totalRows {
+			totalCostMap[r.Target] = r.Cost
+		}
+	}
 	accounts := []map[string]any{}
 	if svc != nil && svc.Store != nil {
 		for _, s := range svc.Store.Snapshot(now) {
 			if strings.HasPrefix(s.Key, "fb:") {
 				continue
 			}
-			accounts = append(accounts, map[string]any{"key": s.Key, "label": labels[s.Key], "status": s.Status, "inflight": s.Inflight, "available": s.Available})
+			accounts = append(accounts, map[string]any{
+				"key":          s.Key,
+				"label":        labels[s.Key],
+				"status":       s.Status,
+				"inflight":     s.Inflight,
+				"available":    s.Available,
+				"todayCostUsd": todayCostMap[s.Key],
+				"totalCostUsd": totalCostMap[s.Key],
+			})
 		}
 	}
 	traffic := map[string]any{"total": 0, "ok": 0, "error": 0, "tokensIn": int64(0), "tokensOut": int64(0)}
