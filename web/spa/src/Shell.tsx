@@ -34,6 +34,7 @@ const NAV_ITEMS: NavItem[] = [
   { path: '/audit',      label: '审计',     icon: '◎', adminOnly: true },
   { path: '/events',     label: '事件',     icon: '⚡' },
   { path: '/ban-analysis', label: '封号分析', icon: '⚠', adminOnly: true },
+  { path: '/fallback',     label: '保底渠道', icon: '⤵', adminOnly: true },
 ];
 
 // ------------------------------------------------------------------

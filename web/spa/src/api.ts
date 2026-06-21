@@ -24,6 +24,7 @@ import type {
   OAuthStartResult,
   OAuthExchangeResult,
   DispatchStatus,
+  FallbackChannel,
 } from './types';
 
 // ------------------------------------------------------------------
@@ -191,6 +192,42 @@ export const refreshNode = (id: string) =>
 
 export const setNodeEnabled = (id: string, enabled: boolean) =>
   api<void>('PATCH', `/api/admin/nodes/${id}/enabled`, { enabled });
+
+// ------------------------------------------------------------------
+// Fallback Channels (保底渠道)
+// ------------------------------------------------------------------
+export const listFallbackChannels = () =>
+  api<FallbackChannel[]>('GET', '/api/admin/fallback-channels');
+
+export const createFallbackChannel = (body: {
+  name: string;
+  baseUrl: string;
+  apiKey?: string;
+  priority?: number;
+  weight?: number;
+  maxConcurrent?: number;
+  cooldownMs?: number;
+  priceThreshold?: number;
+  modelAllowlist?: string[];
+}) => api<FallbackChannel>('POST', '/api/admin/fallback-channels', body);
+
+export const updateFallbackChannel = (id: string, body: Partial<{
+  name: string;
+  baseUrl: string;
+  apiKey: string;
+  priority: number;
+  weight: number;
+  maxConcurrent: number;
+  cooldownMs: number;
+  priceThreshold: number;
+  modelAllowlist: string[];
+}>) => api<FallbackChannel>('PATCH', `/api/admin/fallback-channels/${id}`, body);
+
+export const setFallbackEnabled = (id: string, enabled: boolean) =>
+  api<void>('PATCH', `/api/admin/fallback-channels/${id}/enabled`, { enabled });
+
+export const deleteFallbackChannel = (id: string) =>
+  api<void>('DELETE', `/api/admin/fallback-channels/${id}`);
 
 // ------------------------------------------------------------------
 // Ban analysis (封号分析)

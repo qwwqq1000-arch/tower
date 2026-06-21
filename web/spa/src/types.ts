@@ -204,6 +204,22 @@ export interface OAuthExchangeResult {
   accountId: string;
 }
 
+// --- Fallback Channels (保底渠道) ---
+export interface FallbackChannel {
+  id: string;
+  name: string;
+  baseUrl: string;
+  hasKey: boolean;
+  priority: number;
+  weight: number;
+  maxConcurrent: number;
+  cooldownMs: number;
+  priceThreshold: number;
+  modelAllowlist: string[];
+  enabled: boolean;
+  ownerId: string;
+}
+
 // --- Dispatch Status ---
 export interface DispatchAccountSnapshot {
   key: string;
