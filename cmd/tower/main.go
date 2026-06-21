@@ -16,6 +16,7 @@ import (
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 	"github.com/qwwqq1000-arch/tower/internal/dispatch"
 	"github.com/qwwqq1000-arch/tower/internal/policy"
+	"github.com/qwwqq1000-arch/tower/internal/reconcile"
 	"github.com/qwwqq1000-arch/tower/internal/state"
 	"github.com/qwwqq1000-arch/tower/internal/telemetry"
 )
@@ -60,6 +61,8 @@ func main() {
 
 	poller := &telemetry.Poller{Q: q, Store: store, Threshold: 0.95, DefaultTTLMs: 3600000, Capacity: base.MaxConcurrent, Now: nowMs}
 	go poller.Run(context.Background(), 60*time.Second)
+
+	go (&reconcile.Reconciler{Q: q}).Run(context.Background(), 120*time.Second)
 
 	log.Printf("tower listening on %s", cfg.HTTPAddr)
 	if err := http.ListenAndServe(cfg.HTTPAddr, api.NewRouter(pool, cfg.SessionSecret, svc, q)); err != nil {

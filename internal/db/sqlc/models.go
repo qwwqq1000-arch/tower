@@ -74,6 +74,12 @@ type CostRollup struct {
 	CostUsd   float64 `json:"cost_usd"`
 }
 
+type DesiredFeature struct {
+	ID        int32  `json:"id"`
+	Features  []byte `json:"features"`
+	UpdatedAt int64  `json:"updated_at"`
+}
+
 type DispatchEvent struct {
 	ID      int64  `json:"id"`
 	Ts      int64  `json:"ts"`
