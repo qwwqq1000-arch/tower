@@ -1,0 +1,34 @@
+services:
+  postgres:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tower
+      POSTGRES_USER: tower
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-towerpw}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tower"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  tower:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${TOWER_PORT:-8080}:8080"
+    environment:
+      TOWER_HTTP_ADDR: ":8080"
+      TOWER_DATABASE_URL: "postgres://tower:${POSTGRES_PASSWORD:-towerpw}@postgres:5432/tower"
+      TOWER_MASTER_KEY: ${TOWER_MASTER_KEY}
+      TOWER_SESSION_SECRET: ${TOWER_SESSION_SECRET}
+      TOWER_ADMIN_USER: ${TOWER_ADMIN_USER:-admin}
+      TOWER_ADMIN_PASSWORD: ${TOWER_ADMIN_PASSWORD}
+
+volumes:
+  pgdata:
