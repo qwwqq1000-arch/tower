@@ -83,7 +83,11 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 
 	// Our nodes.
 	if len(order) > 0 {
-		orch := &Orchestrator{Store: s.Store, Cfg: breaker, CooldownMin: cfg.SlotCooldownMinMs, CooldownMax: cfg.SlotCooldownMaxMs, MaxAttempts: 50, OnBan: s.recordBan}
+		maxFailover := cfg.MaxFailover
+		if maxFailover <= 0 {
+			maxFailover = 50
+		}
+		orch := &Orchestrator{Store: s.Store, Cfg: breaker, CooldownMin: cfg.SlotCooldownMinMs, CooldownMax: cfg.SlotCooldownMaxMs, MaxAttempts: maxFailover, OnBan: s.recordBan}
 		np := &NodeProxy{Body: body, Resolve: resolver, BanSignals: cfg.BanSignals, BanKeywords: cfg.BanKeywords}
 		res, ok := orch.Dispatch(ctx, model, order, np)
 		if ok {
@@ -313,9 +317,13 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 	}
 	order, resolver := s.buildCandidates(ctx, ownerID, cfg.MaxConcurrent)
 
+	maxFailover := cfg.MaxFailover
+	if maxFailover <= 0 {
+		maxFailover = 50
+	}
 	attempts := 0
 	for _, key := range order {
-		if attempts >= 50 {
+		if attempts >= maxFailover {
 			break
 		}
 		attempts++

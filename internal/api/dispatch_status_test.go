@@ -42,7 +42,7 @@ func TestDispatchStatusJSON(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("status=%d %s", rec.Code, rec.Body)
 	}
-	for _, k := range []string{"accounts", "traffic", "events", "nodes"} {
+	for _, k := range []string{"accounts", "traffic", "events", "nodes", "fallbackChannels"} {
 		if !strings.Contains(rec.Body.String(), k) {
 			t.Fatalf("missing %s in %s", k, rec.Body)
 		}

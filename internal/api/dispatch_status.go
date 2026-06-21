@@ -58,10 +58,28 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 			}
 		}
 	}
+	fallbackChannels := []map[string]any{}
+	if chs, err := q.ListAllFallbackChannels(ctx); err == nil {
+		today := todayDayStr()
+		for _, ch := range chs {
+			var todayReq int64
+			var todayCost float64
+			if spend, serr := q.GetFallbackSpendToday(ctx, sqlc.GetFallbackSpendTodayParams{ChannelID: ch.ID, Day: today}); serr == nil {
+				todayReq = spend.Requests
+				todayCost = spend.Cost
+			}
+			fallbackChannels = append(fallbackChannels, map[string]any{
+				"id": ch.ID, "name": ch.Name, "enabled": ch.Enabled,
+				"priority": ch.Priority, "weight": ch.Weight,
+				"todayRequests": todayReq, "todayCostUsd": todayCost,
+			})
+		}
+	}
 	return map[string]any{
 		"accounts": accounts, "traffic": traffic, "events": events,
-		"nodes": map[string]any{"total": nodesTotal, "enabled": nodesEnabled},
-		"asOf":  now,
+		"nodes":            map[string]any{"total": nodesTotal, "enabled": nodesEnabled},
+		"fallbackChannels": fallbackChannels,
+		"asOf":             now,
 	}
 }
 

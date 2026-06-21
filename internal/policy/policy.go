@@ -22,6 +22,7 @@ type Config struct {
 	BanSignals                []int
 	BanKeywords               []string
 	QuotaRotateThreshold      float64
+	MaxFailover               int
 }
 
 // Defaults returns sane baseline configuration.
@@ -43,6 +44,7 @@ func Defaults() Config {
 		BanSignals:                []int{401, 403},
 		BanKeywords:               []string{"authentication_error", "account_disabled", "account_suspended"},
 		QuotaRotateThreshold:      0.95,
+		MaxFailover:               50,
 	}
 }
 
@@ -64,6 +66,7 @@ type Patch struct {
 	BanSignals                *[]int
 	BanKeywords               *[]string
 	QuotaRotateThreshold      *float64
+	MaxFailover               *int
 }
 
 func apply(c *Config, p Patch) {
@@ -119,6 +122,9 @@ func apply(c *Config, p Patch) {
 			c.QuotaRotateThreshold = 0.95
 		}
 	}
+	if p.MaxFailover != nil {
+		c.MaxFailover = *p.MaxFailover
+	}
 }
 
 // Resolve applies patches in order onto base (later patches win).
@@ -163,5 +169,6 @@ func DryRun(base Config, patches ...Patch) (Config, []Diff) {
 	add("BanSignals", base.BanSignals, final.BanSignals)
 	add("BanKeywords", base.BanKeywords, final.BanKeywords)
 	add("QuotaRotateThreshold", base.QuotaRotateThreshold, final.QuotaRotateThreshold)
+	add("MaxFailover", base.MaxFailover, final.MaxFailover)
 	return final, diffs
 }

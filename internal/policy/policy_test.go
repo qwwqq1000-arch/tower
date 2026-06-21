@@ -100,6 +100,29 @@ func TestResolve_QuotaRotateThreshold(t *testing.T) {
 	}
 }
 
+func TestResolve_MaxFailover(t *testing.T) {
+	base := Defaults() // default 50
+
+	// Custom value applies.
+	got := Resolve(base, Patch{MaxFailover: ptrI(10)})
+	if got.MaxFailover != 10 {
+		t.Fatalf("MaxFailover=%d, want 10", got.MaxFailover)
+	}
+
+	// DryRun reports the changed field.
+	_, diffs := DryRun(base, Patch{MaxFailover: ptrI(20)})
+	seen := map[string]Diff{}
+	for _, d := range diffs {
+		seen[d.Field] = d
+	}
+	if _, ok := seen["MaxFailover"]; !ok {
+		t.Fatal("DryRun missing diff for MaxFailover")
+	}
+	if d := seen["MaxFailover"]; d.To != "20" {
+		t.Fatalf("MaxFailover diff To=%q, want 20", d.To)
+	}
+}
+
 func TestResolve_FallbackStrategyTriggers(t *testing.T) {
 	base := Defaults()
 	patch := Patch{
