@@ -5,11 +5,12 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/qwwqq1000-arch/tower/internal/billing"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 )
 
-func settleHandler(q *sqlc.Queries) http.HandlerFunc {
+func settleHandler(pool *pgxpool.Pool, q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			TenantId    string `json:"tenantId"`
@@ -21,7 +22,7 @@ func settleHandler(q *sqlc.Queries) http.HandlerFunc {
 			return
 		}
 		now := time.Now().UnixMilli()
-		st, err := billing.Settle(r.Context(), q, body.TenantId, body.PeriodStart, body.PeriodEnd, now, randHex("s_"))
+		st, err := billing.Settle(r.Context(), pool, body.TenantId, body.PeriodStart, body.PeriodEnd, now, randHex("s_"))
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
@@ -33,6 +34,10 @@ func settleHandler(q *sqlc.Queries) http.HandlerFunc {
 func ledgerHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tenant := r.URL.Query().Get("tenantId")
+		if tenant == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenantId required"})
+			return
+		}
 		rows, err := q.ListLedgerByTenant(r.Context(), tenant)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})

@@ -22,12 +22,14 @@ func ReconcileNode(ctx context.Context, api NodeAPI, desired map[string]map[stri
 		return 0, err
 	}
 	patches := Diff(desired, actual)
+	patched := 0
 	for adapter, patch := range patches {
 		if err := api.PatchFeatures(ctx, adapter, patch); err != nil {
-			return 0, err
+			return patched, err
 		}
+		patched++
 	}
-	return len(patches), nil
+	return patched, nil
 }
 
 // Reconciler periodically enforces desired features across all enabled nodes.

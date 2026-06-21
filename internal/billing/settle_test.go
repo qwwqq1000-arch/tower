@@ -40,7 +40,7 @@ func TestSettle(t *testing.T) {
 	_ = q.AddCostRollup(ctx, sqlc.AddCostRollupParams{ScopeType: "owner", ScopeID: tenant, Day: "2026-06-21", Model: "opus", Requests: 1, CostUsd: 1.25})
 	_ = q.AddCostRollup(ctx, sqlc.AddCostRollupParams{ScopeType: "owner", ScopeID: tenant, Day: "2026-06-22", Model: "sonnet", Requests: 1, CostUsd: 0.75})
 
-	st, err := Settle(ctx, q, tenant, 0, 100, 1, "s_"+s)
+	st, err := Settle(ctx, pool, tenant, 0, 100, 1, "s_"+s)
 	if err != nil {
 		t.Fatalf("settle: %v", err)
 	}
