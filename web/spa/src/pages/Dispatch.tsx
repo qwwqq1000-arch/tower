@@ -215,6 +215,7 @@ function getEventLabel(type: string): EventLabel {
     case 'session_exile': return { label: '会话连错放逐', cls: 'bg-orange-500/20 text-orange-400 border-orange-500/40' };
     case 'scale_up':      return { label: '弹性扩容',    cls: 'bg-blue-500/20 text-blue-400 border-blue-500/40' };
     case 'scale_down':    return { label: '弹性缩容',    cls: 'bg-gray-500/20 text-gray-400 border-gray-500/40' };
+    case 'balance_low':   return { label: '余额不足',    cls: 'bg-red-500/20 text-red-400 border-red-500/40' };
     default:
       if (type === 'dispatch_err' || type.endsWith('_err') || type === 'error') {
         return { label: type, cls: 'bg-orange-500/20 text-orange-400 border-orange-500/40' };
@@ -267,6 +268,18 @@ function renderEventDetail(
   if (type === 'session_exile') {
     const suffix = SESSION_EXILE_SUFFIX_CN[target] ?? target;
     return suffix ? `会话连错放逐 · ${suffix}` : '会话连错放逐';
+  }
+  if (type === 'balance_low') {
+    const channelName = fallbackNames?.get(target) ?? target;
+    try {
+      const d: any = typeof detail === 'string' ? JSON.parse(detail) : detail;
+      if (d && d.balance != null && d.alert != null) {
+        const bal = typeof d.balance === 'number' ? `$${(d.balance as number).toFixed(2)}` : String(d.balance);
+        const alert = typeof d.alert === 'number' ? `$${(d.alert as number).toFixed(2)}` : String(d.alert);
+        return `余额不足 · ${channelName} · ${bal}/${alert}`;
+      }
+    } catch { /* ignore */ }
+    return `余额不足 · ${channelName}`;
   }
   if (type === 'scale_up' || type === 'scale_down') {
     return target || '';

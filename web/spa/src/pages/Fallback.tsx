@@ -12,6 +12,7 @@ import {
   updateFallbackChannel,
   setFallbackEnabled,
   deleteFallbackChannel,
+  refreshFallbackBalance,
 } from '../api';
 import type { FallbackChannel } from '../types';
 
@@ -36,6 +37,9 @@ function emptyForm() {
     cooldownMs: 0,
     priceThreshold: 0,
     modelAllowlist: '',
+    balanceToken: '',
+    balanceUserId: '',
+    balanceAlertUsd: 0,
   };
 }
 
@@ -179,6 +183,44 @@ function ChannelForm({ initial, submitLabel, submitting, onSubmit, onCancel }: C
         />
       </div>
 
+      {/* Row 6: balance fields */}
+      <div className="border-t border-line pt-3">
+        <p className="text-xs text-muted mb-2 font-medium">余额监控（可选）</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs text-muted mb-1">余额访问令牌（留空表示不更改）</label>
+            <input
+              type="password"
+              value={f.balanceToken}
+              onChange={(e) => set('balanceToken', e.target.value)}
+              placeholder="token..."
+              autoComplete="new-password"
+              className={inputCls}
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-muted mb-1">余额用户ID</label>
+            <input
+              value={f.balanceUserId}
+              onChange={(e) => set('balanceUserId', e.target.value)}
+              placeholder="user_xxx"
+              className={inputCls}
+            />
+          </div>
+        </div>
+        <div className="mt-3">
+          <label className="block text-xs text-muted mb-1">余额提醒阈值 $ (0 = 不提醒)</label>
+          <input
+            type="number"
+            value={f.balanceAlertUsd}
+            onChange={(e) => set('balanceAlertUsd', Number(e.target.value))}
+            min={0}
+            step={1}
+            className={inputCls}
+          />
+        </div>
+      </div>
+
       {/* Actions */}
       <div className="flex gap-2 pt-1">
         <button
@@ -227,6 +269,9 @@ function EditModal({ channel, onSave, onClose }: EditModalProps) {
     cooldownMs: channel.cooldownMs,
     priceThreshold: channel.priceThreshold,
     modelAllowlist: channel.modelAllowlist,
+    balanceToken: '',
+    balanceUserId: channel.balanceUserId ?? '',
+    balanceAlertUsd: channel.balanceAlertUsd ?? 0,
   };
 
   async function handleSubmit(f: FormState) {
@@ -324,6 +369,7 @@ export default function Fallback() {
   const [editTarget, setEditTarget] = useState<FallbackChannel | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [balanceBusy, setBalanceBusy] = useState<string | null>(null); // channel id being refreshed
 
   // ---- fetch ----
   const fetchChannels = useCallback(async () => {
@@ -356,6 +402,9 @@ export default function Fallback() {
         cooldownMs: f.cooldownMs,
         priceThreshold: f.priceThreshold,
         modelAllowlist: f.modelAllowlist,
+        ...(f.balanceToken ? { balanceToken: f.balanceToken } : {}),
+        ...(f.balanceUserId ? { balanceUserId: f.balanceUserId } : {}),
+        ...(f.balanceAlertUsd > 0 ? { balanceAlertUsd: f.balanceAlertUsd } : {}),
       });
       setChannels((prev) => [...prev, ch]);
     } catch (e) {
@@ -377,6 +426,9 @@ export default function Fallback() {
       cooldownMs: f.cooldownMs,
       priceThreshold: f.priceThreshold,
       modelAllowlist: f.modelAllowlist,
+      ...(f.balanceToken ? { balanceToken: f.balanceToken } : {}),
+      balanceUserId: f.balanceUserId,
+      balanceAlertUsd: f.balanceAlertUsd,
     });
     setChannels((prev) => prev.map((c) => (c.id === id ? updated : c)));
   }
@@ -395,6 +447,36 @@ export default function Fallback() {
       setDeleteId(null);
     } finally {
       setDeleteBusy(false);
+    }
+  }
+
+  // ---- refresh balance ----
+  async function handleRefreshBalance(id: string) {
+    setBalanceBusy(id);
+    try {
+      const result = await refreshFallbackBalance(id);
+      setChannels((prev) =>
+        prev.map((c) =>
+          c.id === id
+            ? {
+                ...c,
+                balanceUsd: result.balanceUsd,
+                balanceError: result.error,
+                balanceCheckedAt: Date.now(),
+              }
+            : c,
+        ),
+      );
+    } catch (e) {
+      setChannels((prev) =>
+        prev.map((c) =>
+          c.id === id
+            ? { ...c, balanceError: e instanceof Error ? e.message : '获取失败', balanceCheckedAt: Date.now() }
+            : c,
+        ),
+      );
+    } finally {
+      setBalanceBusy(null);
     }
   }
 
@@ -489,7 +571,30 @@ export default function Fallback() {
                             <span className="block text-[10px] text-muted">({c.totalRequests} 次)</span>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-right text-muted text-xs" title="未接入，中转站余额需对接其余额 API">—</td>
+                        <td className="px-4 py-3 text-right tabular-nums">
+                          {c.balanceError ? (
+                            <span className="text-err text-xs" title={c.balanceError}>错误</span>
+                          ) : c.balanceUsd !== undefined ? (
+                            <span className={
+                              c.balanceAlertUsd && c.balanceAlertUsd > 0 && c.balanceUsd < c.balanceAlertUsd
+                                ? 'text-err font-medium'
+                                : 'text-ink'
+                            }>
+                              {c.balanceUsd < 0.01 ? `$${c.balanceUsd.toFixed(4)}` : `$${c.balanceUsd.toFixed(2)}`}
+                            </span>
+                          ) : (
+                            <span className="text-muted text-xs">—</span>
+                          )}
+                          {c.hasBalanceToken && (
+                            <button
+                              onClick={() => { void handleRefreshBalance(c.id); }}
+                              disabled={balanceBusy === c.id}
+                              className="block text-[10px] text-muted hover:text-accent transition mt-0.5 disabled:opacity-50"
+                            >
+                              {balanceBusy === c.id ? '获取中…' : '获取余额'}
+                            </button>
+                          )}
+                        </td>
                         <td className="px-4 py-3">
                           <EnableToggle id={c.id} enabled={c.enabled} onChange={handleToggle} />
                         </td>
@@ -568,7 +673,29 @@ export default function Fallback() {
                       </div>
                       <div>
                         <p className="text-muted">余额</p>
-                        <p className="text-muted tabular-nums" title="未接入，中转站余额需对接其余额 API">—</p>
+                        {c.balanceError ? (
+                          <p className="text-err text-xs font-medium" title={c.balanceError}>错误</p>
+                        ) : c.balanceUsd !== undefined ? (
+                          <p className={[
+                            'tabular-nums font-medium',
+                            c.balanceAlertUsd && c.balanceAlertUsd > 0 && c.balanceUsd < c.balanceAlertUsd
+                              ? 'text-err'
+                              : 'text-ink',
+                          ].join(' ')}>
+                            {c.balanceUsd < 0.01 ? `$${c.balanceUsd.toFixed(4)}` : `$${c.balanceUsd.toFixed(2)}`}
+                          </p>
+                        ) : (
+                          <p className="text-muted tabular-nums">—</p>
+                        )}
+                        {c.hasBalanceToken && (
+                          <button
+                            onClick={() => { void handleRefreshBalance(c.id); }}
+                            disabled={balanceBusy === c.id}
+                            className="text-[10px] text-muted hover:text-accent transition mt-0.5 disabled:opacity-50"
+                          >
+                            {balanceBusy === c.id ? '获取中…' : '获取余额'}
+                          </button>
+                        )}
                       </div>
                     </div>
                     {c.modelAllowlist && (

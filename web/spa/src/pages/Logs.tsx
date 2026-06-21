@@ -408,6 +408,7 @@ const TYPE_STYLES: Record<string, { dot: string; badge: string; label?: string }
   session_exile:  { dot: 'bg-warn',   badge: 'bg-warn/10 text-warn border-warn/30',  label: '会话连错放逐' },
   scale_up:       { dot: 'bg-accent', badge: 'bg-accent/10 text-accent border-accent/30', label: '弹性扩容' },
   scale_down:     { dot: 'bg-muted',  badge: 'bg-surface text-muted border-line',    label: '弹性缩容' },
+  balance_low:    { dot: 'bg-err',    badge: 'bg-err/10 text-err border-err/30',      label: '余额不足' },
   provision:      { dot: 'bg-accent', badge: 'bg-accent/10 text-accent border-accent/30' },
   settle:         { dot: 'bg-accent', badge: 'bg-accent/10 text-accent border-accent/30' },
 };
@@ -480,6 +481,13 @@ function renderTargetText(
   if (type === 'scale_down') {
     return `弹性缩容 · ${target || ''}`.trimEnd().replace(/ · $/, '');
   }
+  if (type === 'balance_low') {
+    const channelName = channelMap.get(target) ?? target;
+    const balance = typeof detail['balance'] === 'number' ? `$${(detail['balance'] as number).toFixed(2)}` : undefined;
+    const alert = typeof detail['alert'] === 'number' ? `$${(detail['alert'] as number).toFixed(2)}` : undefined;
+    const base = `余额不足 · ${channelName}`;
+    return balance && alert ? `${base} · ${balance}/${alert}` : base;
+  }
   if (!target || target.startsWith('n_') || target.startsWith('fc_') || target.startsWith('fb:')) return '';
   return target;
 }
@@ -498,7 +506,7 @@ function EventItem({
   const label = style.label ?? row.type;
   const detail = parseDetail(row.detail as Record<string, unknown> | string | undefined);
   const targetText = renderTargetText(row.type, row.target ?? '', detail, accountMap, channelMap);
-  const showDetail = row.detail && Object.keys(row.detail).length > 0 && row.type !== 'fallback';
+  const showDetail = row.detail && Object.keys(row.detail).length > 0 && row.type !== 'fallback' && row.type !== 'balance_low';
   return (
     <div className="flex gap-4">
       <div className="flex flex-col items-center">

@@ -236,6 +236,9 @@ export const createFallbackChannel = (body: {
   cooldownMs?: number;
   priceThreshold?: number;
   modelAllowlist?: string;
+  balanceToken?: string;
+  balanceUserId?: string;
+  balanceAlertUsd?: number;
 }) => api<FallbackChannel>('POST', '/api/admin/fallback-channels', body);
 
 export const updateFallbackChannel = (id: string, body: Partial<{
@@ -248,7 +251,13 @@ export const updateFallbackChannel = (id: string, body: Partial<{
   cooldownMs: number;
   priceThreshold: number;
   modelAllowlist: string;
+  balanceToken: string;
+  balanceUserId: string;
+  balanceAlertUsd: number;
 }>) => api<FallbackChannel>('PATCH', `/api/admin/fallback-channels/${id}`, body);
+
+export const refreshFallbackBalance = (id: string) =>
+  api<{ balanceUsd: number; error?: string }>('POST', `/api/admin/fallback-channels/${id}/balance`);
 
 export const setFallbackEnabled = (id: string, enabled: boolean) =>
   api<void>('PATCH', `/api/admin/fallback-channels/${id}/enabled`, { enabled });

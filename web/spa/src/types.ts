@@ -330,6 +330,12 @@ export interface FallbackChannel {
   todayCostUsd?: number;
   totalRequests?: number;
   totalCostUsd?: number;
+  balanceUsd?: number;
+  balanceAlertUsd?: number;
+  hasBalanceToken?: boolean;
+  balanceUserId?: string;
+  balanceCheckedAt?: number;
+  balanceError?: string;
 }
 
 // --- Users ---
