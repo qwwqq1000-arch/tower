@@ -147,7 +147,9 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 			// Response exile: if the response body contains a safety-refusal keyword,
 			// exile this conversation and re-serve via fallback if possible.
 			if cfg.ResponseExileEnabled && matchesAny(res.Body, cfg.ResponseExileKeywords) {
-				s.sess.ForceExile(conv, int64(cfg.SessionCooldownSec)*1000, nowMs)
+				if justExiled := s.sess.ForceExile(conv, int64(cfg.SessionCooldownSec)*1000, nowMs); justExiled {
+					_ = events.Record(ctx, s.Q, nowMs, events.Event{Type: "session_exile", Target: "cyber", OwnerID: ownerID})
+				}
 				if len(channels) > 0 {
 					return s.viaChannel(ctx, ownerID, model, body, channels[0], "cyber", time.Since(start).Milliseconds())
 				}
@@ -160,7 +162,9 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 			return Outcome{Status: res.Status, Body: res.Body, Target: winKey, Reason: ""}
 		}
 		// our pool failed → record error for session tracking
-		s.sess.RecordError(conv, int64(cfg.SessionErrorThreshold), int64(cfg.SessionCooldownSec)*1000, nowMs)
+		if justExiled := s.sess.RecordError(conv, int64(cfg.SessionErrorThreshold), int64(cfg.SessionCooldownSec)*1000, nowMs); justExiled {
+			_ = events.Record(ctx, s.Q, nowMs, events.Event{Type: "session_exile", Target: "session", OwnerID: ownerID})
+		}
 		// fallback backstop
 		if cfg.FallbackEnabled && len(channels) > 0 {
 			return s.viaChannel(ctx, ownerID, model, body, channels[0], "exhausted", time.Since(start).Milliseconds())
@@ -468,7 +472,6 @@ func (s *Service) logOK(ctx context.Context, ownerID, model string, res ProxyRes
 			Requests: 1, TokensIn: in, TokensOut: out, CostUsd: cost,
 		})
 	}
-	_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: "dispatch_ok", Target: key, OwnerID: ownerID})
 }
 
 func (s *Service) logErr(ctx context.Context, ownerID, model string, status int, latencyMs int64, reason string) {
@@ -584,9 +587,6 @@ func (s *Service) logStream(ctx context.Context, ownerID, model, key string, sta
 			Requests: 1, TokensIn: in, TokensOut: out, CostUsd: cost,
 		})
 	}
-	if httpStatus == "ok" {
-		_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: "dispatch_ok", Target: key, OwnerID: ownerID})
-	}
 }
 
 // flushCopy streams src→dst, flushing after each chunk so SSE reaches the client live.
@@ -662,7 +662,9 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 		if committed {
 			// Response exile: scan body for safety-refusal keywords.
 			if cfg.ResponseExileEnabled && matchesAny(sseBody, cfg.ResponseExileKeywords) {
-				s.sess.ForceExile(conv, int64(cfg.SessionCooldownSec)*1000, nowMs)
+				if justExiled := s.sess.ForceExile(conv, int64(cfg.SessionCooldownSec)*1000, nowMs); justExiled {
+					_ = events.Record(ctx, s.Q, nowMs, events.Event{Type: "session_exile", Target: "cyber", OwnerID: ownerID})
+				}
 				// Cannot re-serve mid-stream — exile only affects future requests.
 			} else {
 				s.sess.RecordSuccess(conv)
@@ -671,7 +673,9 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 		}
 		// not committed → failed before first byte → log per-attempt error + failover
 		s.logAttemptErr(ctx, ownerID, model, key, out.Status)
-		s.sess.RecordError(conv, int64(cfg.SessionErrorThreshold), int64(cfg.SessionCooldownSec)*1000, nowMs)
+		if justExiled := s.sess.RecordError(conv, int64(cfg.SessionErrorThreshold), int64(cfg.SessionCooldownSec)*1000, nowMs); justExiled {
+			_ = events.Record(ctx, s.Q, nowMs, events.Event{Type: "session_exile", Target: "session", OwnerID: ownerID})
+		}
 	}
 
 	// exhausted → fallback channel stream, else 503

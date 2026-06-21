@@ -3,9 +3,11 @@ package telemetry
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"time"
 
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
+	"github.com/qwwqq1000-arch/tower/internal/events"
 	"github.com/qwwqq1000-arch/tower/internal/nodeclient"
 	"github.com/qwwqq1000-arch/tower/internal/policy"
 	"github.com/qwwqq1000-arch/tower/internal/state"
@@ -19,6 +21,11 @@ type Poller struct {
 	DefaultTTLMs int64
 	Capacity     int
 	Now          func() int64
+
+	// limitedMu guards lastLimited — the per-key last-known limited state used
+	// to detect false→true transitions and emit quota_limited events exactly once.
+	limitedMu   sync.Mutex
+	lastLimited map[string]bool
 }
 
 // PollOnce refreshes every enabled node's accounts once.
@@ -63,7 +70,27 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 			p.Store.SetOffline(key, p.Capacity, false)
 			p.Store.SetCapacity(key, mc)
 			if pq, ok := findProfile(quota, a.ProfileID); ok {
-				p.Store.SetLimited(key, p.Capacity, LimitsFromQuota(pq, thresh, now, p.DefaultTTLMs))
+				wasLimited := p.Store.IsLimited(key, now)
+				limits := LimitsFromQuota(pq, thresh, now, p.DefaultTTLMs)
+				p.Store.SetLimited(key, p.Capacity, limits)
+				isLimited := p.Store.IsLimited(key, now)
+
+				p.limitedMu.Lock()
+				if p.lastLimited == nil {
+					p.lastLimited = make(map[string]bool)
+				}
+				prev := p.lastLimited[key]
+				if isLimited {
+					p.lastLimited[key] = true
+				} else {
+					delete(p.lastLimited, key)
+				}
+				p.limitedMu.Unlock()
+
+				// Record event only on false→true transition.
+				if !wasLimited && isLimited && !prev {
+					_ = events.Record(ctx, p.Q, now, events.Event{Type: "quota_limited", Target: key, OwnerID: ""})
+				}
 			}
 		}
 	}

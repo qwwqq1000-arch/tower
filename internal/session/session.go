@@ -115,9 +115,10 @@ func (s *Store) Exiled(conv string, now int64) bool {
 
 // RecordError increments the error counter for conv and triggers exile if
 // the error count reaches threshold (threshold=0 means disabled).
-func (s *Store) RecordError(conv string, threshold, cooldownMs, now int64) {
+// Returns justExiled=true only on the call that crosses the threshold and sets exile.
+func (s *Store) RecordError(conv string, threshold, cooldownMs, now int64) (justExiled bool) {
 	if conv == "" {
-		return
+		return false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -126,7 +127,9 @@ func (s *Store) RecordError(conv string, threshold, cooldownMs, now int64) {
 	if threshold > 0 && int64(st.errs) >= threshold {
 		st.exiledUntil = now + cooldownMs
 		st.errs = 0
+		return true
 	}
+	return false
 }
 
 // RecordSuccess resets the error counter and clears any exile window.
@@ -142,12 +145,15 @@ func (s *Store) RecordSuccess(conv string) {
 }
 
 // ForceExile immediately exiles the conversation for cooldownMs milliseconds.
-func (s *Store) ForceExile(conv string, cooldownMs, now int64) {
+// Returns justExiled=true only when the conversation was not already exiled.
+func (s *Store) ForceExile(conv string, cooldownMs, now int64) (justExiled bool) {
 	if conv == "" {
-		return
+		return false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st := s.get(conv)
+	wasExiled := now < st.exiledUntil
 	st.exiledUntil = now + cooldownMs
+	return !wasExiled
 }

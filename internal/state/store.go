@@ -169,6 +169,22 @@ func (s *Store) SetLimited(key string, capacity int, limits map[string]int64) {
 	a.LimitedUntil = limits
 }
 
+// IsLimited reports whether the account has any active rate-limit entry at now.
+func (s *Store) IsLimited(key string, now int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.accts[key]
+	if !ok {
+		return false
+	}
+	for _, until := range a.LimitedUntil {
+		if now < until {
+			return true
+		}
+	}
+	return false
+}
+
 // SetOffline marks an account online/offline.
 func (s *Store) SetOffline(key string, capacity int, offline bool) {
 	s.mu.Lock()
