@@ -16,6 +16,7 @@ import (
 	"github.com/qwwqq1000-arch/tower/internal/db"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 	"github.com/qwwqq1000-arch/tower/internal/dispatch"
+	"github.com/qwwqq1000-arch/tower/internal/events"
 	"github.com/qwwqq1000-arch/tower/internal/policy"
 	"github.com/qwwqq1000-arch/tower/internal/reconcile"
 	"github.com/qwwqq1000-arch/tower/internal/state"
@@ -75,6 +76,66 @@ func main() {
 	go poller.Run(context.Background(), 60*time.Second)
 
 	go (&reconcile.Reconciler{Q: q}).Run(context.Background(), 120*time.Second)
+
+	// Every 60s: poll balance for all channels that have balance credentials.
+	go func() {
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			channels, err := q.ListAllFallbackChannels(context.Background())
+			if err != nil {
+				log.Printf("balance poll: list channels: %v", err)
+				continue
+			}
+			for _, ch := range channels {
+				if ch.BalanceToken == "" || ch.BalanceUserID == "" {
+					continue
+				}
+				usd, fetchErr := dispatch.FetchChannelBalance(context.Background(), ch.BaseUrl, ch.BalanceToken, ch.BalanceUserID)
+				errStr := ""
+				if fetchErr != nil {
+					errStr = fetchErr.Error()
+					log.Printf("balance poll: channel %s: %v", ch.ID, fetchErr)
+				}
+				if err := q.SetFallbackBalance(context.Background(), sqlc.SetFallbackBalanceParams{
+					ID:               ch.ID,
+					BalanceUsd:       usd,
+					BalanceCheckedAt: time.Now().UnixMilli(),
+					BalanceError:     errStr,
+				}); err != nil {
+					log.Printf("balance poll: set balance channel %s: %v", ch.ID, err)
+				}
+			}
+		}
+	}()
+
+	// Every 10s: fire balance_low events for channels below their alert threshold.
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			channels, err := q.ListAllFallbackChannels(context.Background())
+			if err != nil {
+				log.Printf("balance alert: list channels: %v", err)
+				continue
+			}
+			for _, ch := range channels {
+				if ch.BalanceAlertUsd <= 0 || ch.BalanceCheckedAt == 0 {
+					continue
+				}
+				if ch.BalanceUsd < ch.BalanceAlertUsd {
+					_ = events.Record(context.Background(), q, time.Now().UnixMilli(), events.Event{
+						Type:   "balance_low",
+						Target: ch.ID,
+						Detail: map[string]any{
+							"balance": ch.BalanceUsd,
+							"alert":   ch.BalanceAlertUsd,
+						},
+					})
+				}
+			}
+		}
+	}()
 
 	log.Printf("tower listening on %s", cfg.HTTPAddr)
 	if err := http.ListenAndServe(cfg.HTTPAddr, api.NewRouter(pool, cfg.SessionSecret, svc, q)); err != nil {

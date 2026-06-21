@@ -1,6 +1,6 @@
 -- name: CreateFallbackChannel :one
-INSERT INTO fallback_channels (id, owner_id, group_id, name, base_url, api_key, priority, weight, max_concurrent, cooldown_ms, price_threshold, model_allowlist)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+INSERT INTO fallback_channels (id, owner_id, group_id, name, base_url, api_key, priority, weight, max_concurrent, cooldown_ms, price_threshold, model_allowlist, balance_token, balance_user_id, balance_alert_usd)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 RETURNING *;
 
 -- name: ListFallbackChannelsByOwner :many
@@ -14,11 +14,18 @@ SELECT * FROM fallback_channels ORDER BY priority, created_at;
 
 -- name: UpdateFallbackChannel :exec
 UPDATE fallback_channels SET name=$2, base_url=$3, api_key=$4, priority=$5, weight=$6,
-  max_concurrent=$7, cooldown_ms=$8, price_threshold=$9, model_allowlist=$10
+  max_concurrent=$7, cooldown_ms=$8, price_threshold=$9, model_allowlist=$10,
+  balance_token=$11, balance_user_id=$12, balance_alert_usd=$13
 WHERE id=$1;
+
+-- name: SetFallbackBalance :exec
+UPDATE fallback_channels SET balance_usd=$2, balance_checked_at=$3, balance_error=$4 WHERE id=$1;
 
 -- name: SetFallbackChannelEnabled :exec
 UPDATE fallback_channels SET enabled=$2 WHERE id=$1;
+
+-- name: GetFallbackChannel :one
+SELECT * FROM fallback_channels WHERE id=$1;
 
 -- name: DeleteFallbackChannel :exec
 DELETE FROM fallback_channels WHERE id=$1;

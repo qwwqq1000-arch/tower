@@ -120,20 +120,26 @@ type DispatchLog struct {
 }
 
 type FallbackChannel struct {
-	ID             string             `json:"id"`
-	OwnerID        string             `json:"owner_id"`
-	GroupID        string             `json:"group_id"`
-	Name           string             `json:"name"`
-	BaseUrl        string             `json:"base_url"`
-	ApiKey         string             `json:"api_key"`
-	Priority       int32              `json:"priority"`
-	Weight         int32              `json:"weight"`
-	MaxConcurrent  int32              `json:"max_concurrent"`
-	CooldownMs     int64              `json:"cooldown_ms"`
-	PriceThreshold float64            `json:"price_threshold"`
-	ModelAllowlist string             `json:"model_allowlist"`
-	Enabled        bool               `json:"enabled"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	ID               string             `json:"id"`
+	OwnerID          string             `json:"owner_id"`
+	GroupID          string             `json:"group_id"`
+	Name             string             `json:"name"`
+	BaseUrl          string             `json:"base_url"`
+	ApiKey           string             `json:"api_key"`
+	Priority         int32              `json:"priority"`
+	Weight           int32              `json:"weight"`
+	MaxConcurrent    int32              `json:"max_concurrent"`
+	CooldownMs       int64              `json:"cooldown_ms"`
+	PriceThreshold   float64            `json:"price_threshold"`
+	ModelAllowlist   string             `json:"model_allowlist"`
+	Enabled          bool               `json:"enabled"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	BalanceToken     string             `json:"balance_token"`
+	BalanceUserID    string             `json:"balance_user_id"`
+	BalanceAlertUsd  float64            `json:"balance_alert_usd"`
+	BalanceUsd       float64            `json:"balance_usd"`
+	BalanceCheckedAt int64              `json:"balance_checked_at"`
+	BalanceError     string             `json:"balance_error"`
 }
 
 type FallbackSpend struct {

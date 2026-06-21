@@ -10,24 +10,27 @@ import (
 )
 
 const createFallbackChannel = `-- name: CreateFallbackChannel :one
-INSERT INTO fallback_channels (id, owner_id, group_id, name, base_url, api_key, priority, weight, max_concurrent, cooldown_ms, price_threshold, model_allowlist)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-RETURNING id, owner_id, group_id, name, base_url, api_key, priority, weight, max_concurrent, cooldown_ms, price_threshold, model_allowlist, enabled, created_at
+INSERT INTO fallback_channels (id, owner_id, group_id, name, base_url, api_key, priority, weight, max_concurrent, cooldown_ms, price_threshold, model_allowlist, balance_token, balance_user_id, balance_alert_usd)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+RETURNING id, owner_id, group_id, name, base_url, api_key, priority, weight, max_concurrent, cooldown_ms, price_threshold, model_allowlist, enabled, created_at, balance_token, balance_user_id, balance_alert_usd, balance_usd, balance_checked_at, balance_error
 `
 
 type CreateFallbackChannelParams struct {
-	ID             string  `json:"id"`
-	OwnerID        string  `json:"owner_id"`
-	GroupID        string  `json:"group_id"`
-	Name           string  `json:"name"`
-	BaseUrl        string  `json:"base_url"`
-	ApiKey         string  `json:"api_key"`
-	Priority       int32   `json:"priority"`
-	Weight         int32   `json:"weight"`
-	MaxConcurrent  int32   `json:"max_concurrent"`
-	CooldownMs     int64   `json:"cooldown_ms"`
-	PriceThreshold float64 `json:"price_threshold"`
-	ModelAllowlist string  `json:"model_allowlist"`
+	ID              string  `json:"id"`
+	OwnerID         string  `json:"owner_id"`
+	GroupID         string  `json:"group_id"`
+	Name            string  `json:"name"`
+	BaseUrl         string  `json:"base_url"`
+	ApiKey          string  `json:"api_key"`
+	Priority        int32   `json:"priority"`
+	Weight          int32   `json:"weight"`
+	MaxConcurrent   int32   `json:"max_concurrent"`
+	CooldownMs      int64   `json:"cooldown_ms"`
+	PriceThreshold  float64 `json:"price_threshold"`
+	ModelAllowlist  string  `json:"model_allowlist"`
+	BalanceToken    string  `json:"balance_token"`
+	BalanceUserID   string  `json:"balance_user_id"`
+	BalanceAlertUsd float64 `json:"balance_alert_usd"`
 }
 
 func (q *Queries) CreateFallbackChannel(ctx context.Context, arg CreateFallbackChannelParams) (FallbackChannel, error) {
@@ -44,6 +47,9 @@ func (q *Queries) CreateFallbackChannel(ctx context.Context, arg CreateFallbackC
 		arg.CooldownMs,
 		arg.PriceThreshold,
 		arg.ModelAllowlist,
+		arg.BalanceToken,
+		arg.BalanceUserID,
+		arg.BalanceAlertUsd,
 	)
 	var i FallbackChannel
 	err := row.Scan(
@@ -61,6 +67,12 @@ func (q *Queries) CreateFallbackChannel(ctx context.Context, arg CreateFallbackC
 		&i.ModelAllowlist,
 		&i.Enabled,
 		&i.CreatedAt,
+		&i.BalanceToken,
+		&i.BalanceUserID,
+		&i.BalanceAlertUsd,
+		&i.BalanceUsd,
+		&i.BalanceCheckedAt,
+		&i.BalanceError,
 	)
 	return i, err
 }
@@ -72,6 +84,38 @@ DELETE FROM fallback_channels WHERE id=$1
 func (q *Queries) DeleteFallbackChannel(ctx context.Context, id string) error {
 	_, err := q.db.Exec(ctx, deleteFallbackChannel, id)
 	return err
+}
+
+const getFallbackChannel = `-- name: GetFallbackChannel :one
+SELECT id, owner_id, group_id, name, base_url, api_key, priority, weight, max_concurrent, cooldown_ms, price_threshold, model_allowlist, enabled, created_at, balance_token, balance_user_id, balance_alert_usd, balance_usd, balance_checked_at, balance_error FROM fallback_channels WHERE id=$1
+`
+
+func (q *Queries) GetFallbackChannel(ctx context.Context, id string) (FallbackChannel, error) {
+	row := q.db.QueryRow(ctx, getFallbackChannel, id)
+	var i FallbackChannel
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.GroupID,
+		&i.Name,
+		&i.BaseUrl,
+		&i.ApiKey,
+		&i.Priority,
+		&i.Weight,
+		&i.MaxConcurrent,
+		&i.CooldownMs,
+		&i.PriceThreshold,
+		&i.ModelAllowlist,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.BalanceToken,
+		&i.BalanceUserID,
+		&i.BalanceAlertUsd,
+		&i.BalanceUsd,
+		&i.BalanceCheckedAt,
+		&i.BalanceError,
+	)
+	return i, err
 }
 
 const getFallbackSpendToday = `-- name: GetFallbackSpendToday :one
@@ -114,7 +158,7 @@ func (q *Queries) GetFallbackSpendTotal(ctx context.Context, channelID string) (
 }
 
 const listAllFallbackChannels = `-- name: ListAllFallbackChannels :many
-SELECT id, owner_id, group_id, name, base_url, api_key, priority, weight, max_concurrent, cooldown_ms, price_threshold, model_allowlist, enabled, created_at FROM fallback_channels ORDER BY priority, created_at
+SELECT id, owner_id, group_id, name, base_url, api_key, priority, weight, max_concurrent, cooldown_ms, price_threshold, model_allowlist, enabled, created_at, balance_token, balance_user_id, balance_alert_usd, balance_usd, balance_checked_at, balance_error FROM fallback_channels ORDER BY priority, created_at
 `
 
 func (q *Queries) ListAllFallbackChannels(ctx context.Context) ([]FallbackChannel, error) {
@@ -141,6 +185,12 @@ func (q *Queries) ListAllFallbackChannels(ctx context.Context) ([]FallbackChanne
 			&i.ModelAllowlist,
 			&i.Enabled,
 			&i.CreatedAt,
+			&i.BalanceToken,
+			&i.BalanceUserID,
+			&i.BalanceAlertUsd,
+			&i.BalanceUsd,
+			&i.BalanceCheckedAt,
+			&i.BalanceError,
 		); err != nil {
 			return nil, err
 		}
@@ -153,7 +203,7 @@ func (q *Queries) ListAllFallbackChannels(ctx context.Context) ([]FallbackChanne
 }
 
 const listEnabledFallbackChannels = `-- name: ListEnabledFallbackChannels :many
-SELECT id, owner_id, group_id, name, base_url, api_key, priority, weight, max_concurrent, cooldown_ms, price_threshold, model_allowlist, enabled, created_at FROM fallback_channels WHERE enabled = TRUE ORDER BY priority, created_at
+SELECT id, owner_id, group_id, name, base_url, api_key, priority, weight, max_concurrent, cooldown_ms, price_threshold, model_allowlist, enabled, created_at, balance_token, balance_user_id, balance_alert_usd, balance_usd, balance_checked_at, balance_error FROM fallback_channels WHERE enabled = TRUE ORDER BY priority, created_at
 `
 
 func (q *Queries) ListEnabledFallbackChannels(ctx context.Context) ([]FallbackChannel, error) {
@@ -180,6 +230,12 @@ func (q *Queries) ListEnabledFallbackChannels(ctx context.Context) ([]FallbackCh
 			&i.ModelAllowlist,
 			&i.Enabled,
 			&i.CreatedAt,
+			&i.BalanceToken,
+			&i.BalanceUserID,
+			&i.BalanceAlertUsd,
+			&i.BalanceUsd,
+			&i.BalanceCheckedAt,
+			&i.BalanceError,
 		); err != nil {
 			return nil, err
 		}
@@ -192,7 +248,7 @@ func (q *Queries) ListEnabledFallbackChannels(ctx context.Context) ([]FallbackCh
 }
 
 const listFallbackChannelsByOwner = `-- name: ListFallbackChannelsByOwner :many
-SELECT id, owner_id, group_id, name, base_url, api_key, priority, weight, max_concurrent, cooldown_ms, price_threshold, model_allowlist, enabled, created_at FROM fallback_channels WHERE owner_id = $1 ORDER BY priority, created_at
+SELECT id, owner_id, group_id, name, base_url, api_key, priority, weight, max_concurrent, cooldown_ms, price_threshold, model_allowlist, enabled, created_at, balance_token, balance_user_id, balance_alert_usd, balance_usd, balance_checked_at, balance_error FROM fallback_channels WHERE owner_id = $1 ORDER BY priority, created_at
 `
 
 func (q *Queries) ListFallbackChannelsByOwner(ctx context.Context, ownerID string) ([]FallbackChannel, error) {
@@ -219,6 +275,12 @@ func (q *Queries) ListFallbackChannelsByOwner(ctx context.Context, ownerID strin
 			&i.ModelAllowlist,
 			&i.Enabled,
 			&i.CreatedAt,
+			&i.BalanceToken,
+			&i.BalanceUserID,
+			&i.BalanceAlertUsd,
+			&i.BalanceUsd,
+			&i.BalanceCheckedAt,
+			&i.BalanceError,
 		); err != nil {
 			return nil, err
 		}
@@ -228,6 +290,27 @@ func (q *Queries) ListFallbackChannelsByOwner(ctx context.Context, ownerID strin
 		return nil, err
 	}
 	return items, nil
+}
+
+const setFallbackBalance = `-- name: SetFallbackBalance :exec
+UPDATE fallback_channels SET balance_usd=$2, balance_checked_at=$3, balance_error=$4 WHERE id=$1
+`
+
+type SetFallbackBalanceParams struct {
+	ID               string  `json:"id"`
+	BalanceUsd       float64 `json:"balance_usd"`
+	BalanceCheckedAt int64   `json:"balance_checked_at"`
+	BalanceError     string  `json:"balance_error"`
+}
+
+func (q *Queries) SetFallbackBalance(ctx context.Context, arg SetFallbackBalanceParams) error {
+	_, err := q.db.Exec(ctx, setFallbackBalance,
+		arg.ID,
+		arg.BalanceUsd,
+		arg.BalanceCheckedAt,
+		arg.BalanceError,
+	)
+	return err
 }
 
 const setFallbackChannelEnabled = `-- name: SetFallbackChannelEnabled :exec
@@ -246,21 +329,25 @@ func (q *Queries) SetFallbackChannelEnabled(ctx context.Context, arg SetFallback
 
 const updateFallbackChannel = `-- name: UpdateFallbackChannel :exec
 UPDATE fallback_channels SET name=$2, base_url=$3, api_key=$4, priority=$5, weight=$6,
-  max_concurrent=$7, cooldown_ms=$8, price_threshold=$9, model_allowlist=$10
+  max_concurrent=$7, cooldown_ms=$8, price_threshold=$9, model_allowlist=$10,
+  balance_token=$11, balance_user_id=$12, balance_alert_usd=$13
 WHERE id=$1
 `
 
 type UpdateFallbackChannelParams struct {
-	ID             string  `json:"id"`
-	Name           string  `json:"name"`
-	BaseUrl        string  `json:"base_url"`
-	ApiKey         string  `json:"api_key"`
-	Priority       int32   `json:"priority"`
-	Weight         int32   `json:"weight"`
-	MaxConcurrent  int32   `json:"max_concurrent"`
-	CooldownMs     int64   `json:"cooldown_ms"`
-	PriceThreshold float64 `json:"price_threshold"`
-	ModelAllowlist string  `json:"model_allowlist"`
+	ID              string  `json:"id"`
+	Name            string  `json:"name"`
+	BaseUrl         string  `json:"base_url"`
+	ApiKey          string  `json:"api_key"`
+	Priority        int32   `json:"priority"`
+	Weight          int32   `json:"weight"`
+	MaxConcurrent   int32   `json:"max_concurrent"`
+	CooldownMs      int64   `json:"cooldown_ms"`
+	PriceThreshold  float64 `json:"price_threshold"`
+	ModelAllowlist  string  `json:"model_allowlist"`
+	BalanceToken    string  `json:"balance_token"`
+	BalanceUserID   string  `json:"balance_user_id"`
+	BalanceAlertUsd float64 `json:"balance_alert_usd"`
 }
 
 func (q *Queries) UpdateFallbackChannel(ctx context.Context, arg UpdateFallbackChannelParams) error {
@@ -275,6 +362,9 @@ func (q *Queries) UpdateFallbackChannel(ctx context.Context, arg UpdateFallbackC
 		arg.CooldownMs,
 		arg.PriceThreshold,
 		arg.ModelAllowlist,
+		arg.BalanceToken,
+		arg.BalanceUserID,
+		arg.BalanceAlertUsd,
 	)
 	return err
 }

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
+	"github.com/qwwqq1000-arch/tower/internal/dispatch"
 )
 
 func todayDayStr() string {
@@ -21,6 +22,9 @@ type fallbackBody struct {
 	Priority, Weight, MaxConcurrent                         int32
 	CooldownMs                                              int64
 	PriceThreshold                                          float64
+	BalanceToken                                            string
+	BalanceUserId                                           string
+	BalanceAlertUsd                                         float64
 }
 
 func listFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
@@ -36,22 +40,28 @@ func listFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 			todaySpend, _ := q.GetFallbackSpendToday(r.Context(), sqlc.GetFallbackSpendTodayParams{ChannelID: c.ID, Day: today})
 			totalSpend, _ := q.GetFallbackSpendTotal(r.Context(), c.ID)
 			out = append(out, map[string]any{
-				"id":             c.ID,
-				"name":           c.Name,
-				"baseUrl":        c.BaseUrl,
-				"hasKey":         c.ApiKey != "",
-				"priority":       c.Priority,
-				"weight":         c.Weight,
-				"maxConcurrent":  c.MaxConcurrent,
-				"cooldownMs":     c.CooldownMs,
-				"priceThreshold": c.PriceThreshold,
-				"modelAllowlist": c.ModelAllowlist,
-				"enabled":        c.Enabled,
-				"ownerId":        c.OwnerID,
-				"todayCostUsd":   todaySpend.Cost,
-				"todayRequests":  todaySpend.Requests,
-				"totalCostUsd":   totalSpend.Cost,
-				"totalRequests":  totalSpend.Requests,
+				"id":               c.ID,
+				"name":             c.Name,
+				"baseUrl":          c.BaseUrl,
+				"hasKey":           c.ApiKey != "",
+				"priority":         c.Priority,
+				"weight":           c.Weight,
+				"maxConcurrent":    c.MaxConcurrent,
+				"cooldownMs":       c.CooldownMs,
+				"priceThreshold":   c.PriceThreshold,
+				"modelAllowlist":   c.ModelAllowlist,
+				"enabled":          c.Enabled,
+				"ownerId":          c.OwnerID,
+				"todayCostUsd":     todaySpend.Cost,
+				"todayRequests":    todaySpend.Requests,
+				"totalCostUsd":     totalSpend.Cost,
+				"totalRequests":    totalSpend.Requests,
+				"balanceUsd":       c.BalanceUsd,
+				"balanceAlertUsd":  c.BalanceAlertUsd,
+				"hasBalanceToken":  c.BalanceToken != "",
+				"balanceUserId":    c.BalanceUserID,
+				"balanceCheckedAt": c.BalanceCheckedAt,
+				"balanceError":     c.BalanceError,
 			})
 		}
 		writeJSON(w, 200, out)
@@ -66,18 +76,21 @@ func createFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 			return
 		}
 		c, err := q.CreateFallbackChannel(r.Context(), sqlc.CreateFallbackChannelParams{
-			ID:             randHex("fc_"),
-			OwnerID:        b.OwnerId,
-			GroupID:        b.GroupId,
-			Name:           b.Name,
-			BaseUrl:        b.BaseUrl,
-			ApiKey:         b.ApiKey,
-			Priority:       b.Priority,
-			Weight:         b.Weight,
-			MaxConcurrent:  b.MaxConcurrent,
-			CooldownMs:     b.CooldownMs,
-			PriceThreshold: b.PriceThreshold,
-			ModelAllowlist: b.ModelAllowlist,
+			ID:              randHex("fc_"),
+			OwnerID:         b.OwnerId,
+			GroupID:         b.GroupId,
+			Name:            b.Name,
+			BaseUrl:         b.BaseUrl,
+			ApiKey:          b.ApiKey,
+			Priority:        b.Priority,
+			Weight:          b.Weight,
+			MaxConcurrent:   b.MaxConcurrent,
+			CooldownMs:      b.CooldownMs,
+			PriceThreshold:  b.PriceThreshold,
+			ModelAllowlist:  b.ModelAllowlist,
+			BalanceToken:    b.BalanceToken,
+			BalanceUserID:   b.BalanceUserId,
+			BalanceAlertUsd: b.BalanceAlertUsd,
 		})
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
@@ -95,16 +108,19 @@ func updateFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 			return
 		}
 		if err := q.UpdateFallbackChannel(r.Context(), sqlc.UpdateFallbackChannelParams{
-			ID:             r.PathValue("id"),
-			Name:           b.Name,
-			BaseUrl:        b.BaseUrl,
-			ApiKey:         b.ApiKey,
-			Priority:       b.Priority,
-			Weight:         b.Weight,
-			MaxConcurrent:  b.MaxConcurrent,
-			CooldownMs:     b.CooldownMs,
-			PriceThreshold: b.PriceThreshold,
-			ModelAllowlist: b.ModelAllowlist,
+			ID:              r.PathValue("id"),
+			Name:            b.Name,
+			BaseUrl:         b.BaseUrl,
+			ApiKey:          b.ApiKey,
+			Priority:        b.Priority,
+			Weight:          b.Weight,
+			MaxConcurrent:   b.MaxConcurrent,
+			CooldownMs:      b.CooldownMs,
+			PriceThreshold:  b.PriceThreshold,
+			ModelAllowlist:  b.ModelAllowlist,
+			BalanceToken:    b.BalanceToken,
+			BalanceUserID:   b.BalanceUserId,
+			BalanceAlertUsd: b.BalanceAlertUsd,
 		}); err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
@@ -138,5 +154,36 @@ func deleteFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, 200, map[string]string{"ok": "true"})
+	}
+}
+
+func fetchFallbackBalanceHandler(q *sqlc.Queries) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		ch, err := q.GetFallbackChannel(r.Context(), id)
+		if err != nil {
+			writeJSON(w, 404, map[string]string{"error": "channel not found"})
+			return
+		}
+
+		now := time.Now().UnixMilli()
+		usd, fetchErr := dispatch.FetchChannelBalance(r.Context(), ch.BaseUrl, ch.BalanceToken, ch.BalanceUserID)
+
+		errStr := ""
+		if fetchErr != nil {
+			errStr = fetchErr.Error()
+		}
+
+		_ = q.SetFallbackBalance(r.Context(), sqlc.SetFallbackBalanceParams{
+			ID:               id,
+			BalanceUsd:       usd,
+			BalanceCheckedAt: now,
+			BalanceError:     errStr,
+		})
+
+		writeJSON(w, 200, map[string]any{
+			"balanceUsd": usd,
+			"error":      errStr,
+		})
 	}
 }
