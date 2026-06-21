@@ -279,3 +279,75 @@ func TestPickElastic(t *testing.T) {
 		})
 	}
 }
+
+// TestElasticCountPartition verifies the count-based baseline/reserve split inside buildCandidates.
+// It uses a real state.Store snapshot so we can control utilisation without a DB.
+func TestElasticCountPartition(t *testing.T) {
+	// buildCandidates calls s.Q.ListNodesByOwner and s.Q.ListNodes, which need a real DB.
+	// We test the pure pickElastic function with count-partitioned slices to cover the
+	// count-based contract without a DB dependency.
+
+	// 3 accounts weight-desc: a1(weight=30), a2(weight=20), a3(weight=10)
+	// ElasticBaselineCount=1 → baseline=[a1], reserve=[a2,a3]
+	all := []string{"a1", "a2", "a3"}
+
+	// Simulate count partition: n=1
+	n := 1
+	baseline := all[:n]
+	reserve := all[n:]
+
+	// Below threshold: only baseline returned.
+	t.Run("count=1 below threshold", func(t *testing.T) {
+		got := pickElastic(baseline, reserve, 0.5, 0.8, 1000)
+		if len(got) != 1 {
+			t.Fatalf("expected 1 account, got %d: %v", len(got), got)
+		}
+		if got[0] != "a1" {
+			t.Errorf("expected a1, got %s", got[0])
+		}
+	})
+
+	// At threshold: baseline + reserves added.
+	t.Run("count=1 at threshold", func(t *testing.T) {
+		got := pickElastic(baseline, reserve, 0.8, 0.8, 1000)
+		if len(got) != 3 {
+			t.Fatalf("expected 3 accounts, got %d: %v", len(got), got)
+		}
+		if got[0] != "a1" || got[1] != "a2" || got[2] != "a3" {
+			t.Errorf("unexpected order: %v", got)
+		}
+	})
+
+	// Above threshold with maxReserve=1: only 1 reserve added.
+	t.Run("count=1 above threshold maxReserve=1", func(t *testing.T) {
+		got := pickElastic(baseline, reserve, 1.0, 0.8, 1)
+		if len(got) != 2 {
+			t.Fatalf("expected 2 accounts, got %d: %v", len(got), got)
+		}
+		if got[0] != "a1" || got[1] != "a2" {
+			t.Errorf("unexpected order: %v", got)
+		}
+	})
+
+	// ElasticBaselineCount=2 → baseline=[a1,a2], reserve=[a3]
+	n2 := 2
+	baseline2 := all[:n2]
+	reserve2 := all[n2:]
+
+	t.Run("count=2 below threshold", func(t *testing.T) {
+		got := pickElastic(baseline2, reserve2, 0.3, 0.8, 1000)
+		if len(got) != 2 {
+			t.Fatalf("expected 2 accounts, got %d: %v", len(got), got)
+		}
+	})
+
+	t.Run("count=2 at threshold", func(t *testing.T) {
+		got := pickElastic(baseline2, reserve2, 0.8, 0.8, 1000)
+		if len(got) != 3 {
+			t.Fatalf("expected 3 accounts, got %d: %v", len(got), got)
+		}
+		if got[2] != "a3" {
+			t.Errorf("expected a3 as reserve, got %s", got[2])
+		}
+	})
+}

@@ -31,9 +31,10 @@ type Config struct {
 	WarmupBlockOpus     bool
 
 	// Elastic scaling: activate reserve accounts when baseline is saturated.
-	ElasticEnabled      bool
-	ElasticScaleUpUtil  float64 // utilisation threshold to activate reserves (0.0–1.0); default 0.8
-	ElasticMaxReserve   int     // cap on reserve accounts added per evaluation; default 1000
+	ElasticEnabled        bool
+	ElasticBaselineCount  int     // number of accounts that form the active baseline; default 1
+	ElasticScaleUpUtil    float64 // utilisation threshold to activate reserves (0.0–1.0); default 0.8
+	ElasticMaxReserve     int     // cap on reserve accounts added per evaluation; default 1000
 
 	// Session exile: route a conversation to fallback after this many consecutive
 	// errors from our nodes. 0 = disabled.
@@ -72,6 +73,7 @@ func Defaults() Config {
 		WarmupMaxConcurrent:       1,
 		WarmupBlockOpus:           true,
 		ElasticEnabled:            false,
+		ElasticBaselineCount:      1,
 		ElasticScaleUpUtil:        0.8,
 		ElasticMaxReserve:         1000,
 		SessionErrorThreshold:     0,
@@ -103,9 +105,10 @@ type Patch struct {
 	WarmupHours         *int
 	WarmupMaxConcurrent *int
 	WarmupBlockOpus     *bool
-	ElasticEnabled     *bool
-	ElasticScaleUpUtil *float64
-	ElasticMaxReserve  *int
+	ElasticEnabled       *bool
+	ElasticBaselineCount *int
+	ElasticScaleUpUtil   *float64
+	ElasticMaxReserve    *int
 	SessionErrorThreshold     *int
 	SessionCooldownSec        *int
 	ResponseExileEnabled      *bool
@@ -180,6 +183,9 @@ func apply(c *Config, p Patch) {
 	if p.ElasticEnabled != nil {
 		c.ElasticEnabled = *p.ElasticEnabled
 	}
+	if p.ElasticBaselineCount != nil {
+		c.ElasticBaselineCount = *p.ElasticBaselineCount
+	}
 	if p.ElasticScaleUpUtil != nil {
 		c.ElasticScaleUpUtil = *p.ElasticScaleUpUtil
 	}
@@ -247,6 +253,7 @@ func DryRun(base Config, patches ...Patch) (Config, []Diff) {
 	add("WarmupMaxConcurrent", base.WarmupMaxConcurrent, final.WarmupMaxConcurrent)
 	add("WarmupBlockOpus", base.WarmupBlockOpus, final.WarmupBlockOpus)
 	add("ElasticEnabled", base.ElasticEnabled, final.ElasticEnabled)
+	add("ElasticBaselineCount", base.ElasticBaselineCount, final.ElasticBaselineCount)
 	add("ElasticScaleUpUtil", base.ElasticScaleUpUtil, final.ElasticScaleUpUtil)
 	add("ElasticMaxReserve", base.ElasticMaxReserve, final.ElasticMaxReserve)
 	add("SessionErrorThreshold", base.SessionErrorThreshold, final.SessionErrorThreshold)

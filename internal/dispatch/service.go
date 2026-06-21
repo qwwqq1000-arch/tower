@@ -315,14 +315,21 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 		return order, resolver
 	}
 
-	// Elastic path: partition into baseline and reserve pools.
-	var baseline, reserve []string
-	for _, c := range cands {
-		if c.reserve {
-			reserve = append(reserve, c.key)
-		} else {
-			baseline = append(baseline, c.key)
-		}
+	// Elastic path: partition by count — first N (weight-desc) are baseline; the rest are reserve.
+	n := cfg.ElasticBaselineCount
+	if n < 1 {
+		n = 1
+	}
+	if n > len(cands) {
+		n = len(cands)
+	}
+	baseline := make([]string, n)
+	for i := 0; i < n; i++ {
+		baseline[i] = cands[i].key
+	}
+	var reserve []string
+	for i := n; i < len(cands); i++ {
+		reserve = append(reserve, cands[i].key)
 	}
 
 	// Compute baseline utilisation from the store snapshot.
@@ -391,6 +398,7 @@ func (s *Service) enabledChannels(ctx context.Context, _ string) []sqlc.Fallback
 func fbSlotKey(id string) string { return "fb:" + id }
 
 func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []byte, ch sqlc.FallbackChannel, reason string, latencyMs int64) Outcome {
+	_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: "fallback", Target: reason, OwnerID: ownerID})
 	cap := int(ch.MaxConcurrent)
 	if cap <= 0 {
 		cap = 1000
@@ -796,6 +804,7 @@ func lastUserText(body []byte) string {
 
 // streamChannel attempts a fallback channel stream. committed=true means we wrote to the client.
 func (s *Service) streamChannel(ctx context.Context, w http.ResponseWriter, ch sqlc.FallbackChannel, body []byte, ownerID, model, reason string) (Outcome, bool) {
+	_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: "fallback", Target: reason, OwnerID: ownerID})
 	cap := int(ch.MaxConcurrent)
 	if cap <= 0 {
 		cap = 1000
