@@ -74,6 +74,45 @@ func (q *Queries) DeleteFallbackChannel(ctx context.Context, id string) error {
 	return err
 }
 
+const getFallbackSpendToday = `-- name: GetFallbackSpendToday :one
+SELECT coalesce(sum(requests),0)::bigint AS requests, coalesce(sum(est_cost_usd),0)::float8 AS cost
+FROM fallback_spend WHERE channel_id=$1 AND day=$2
+`
+
+type GetFallbackSpendTodayParams struct {
+	ChannelID string `json:"channel_id"`
+	Day       string `json:"day"`
+}
+
+type GetFallbackSpendTodayRow struct {
+	Requests int64   `json:"requests"`
+	Cost     float64 `json:"cost"`
+}
+
+func (q *Queries) GetFallbackSpendToday(ctx context.Context, arg GetFallbackSpendTodayParams) (GetFallbackSpendTodayRow, error) {
+	row := q.db.QueryRow(ctx, getFallbackSpendToday, arg.ChannelID, arg.Day)
+	var i GetFallbackSpendTodayRow
+	err := row.Scan(&i.Requests, &i.Cost)
+	return i, err
+}
+
+const getFallbackSpendTotal = `-- name: GetFallbackSpendTotal :one
+SELECT coalesce(sum(requests),0)::bigint AS requests, coalesce(sum(est_cost_usd),0)::float8 AS cost
+FROM fallback_spend WHERE channel_id=$1
+`
+
+type GetFallbackSpendTotalRow struct {
+	Requests int64   `json:"requests"`
+	Cost     float64 `json:"cost"`
+}
+
+func (q *Queries) GetFallbackSpendTotal(ctx context.Context, channelID string) (GetFallbackSpendTotalRow, error) {
+	row := q.db.QueryRow(ctx, getFallbackSpendTotal, channelID)
+	var i GetFallbackSpendTotalRow
+	err := row.Scan(&i.Requests, &i.Cost)
+	return i, err
+}
+
 const listAllFallbackChannels = `-- name: ListAllFallbackChannels :many
 SELECT id, owner_id, group_id, name, base_url, api_key, priority, weight, max_concurrent, cooldown_ms, price_threshold, model_allowlist, enabled, created_at FROM fallback_channels ORDER BY priority, created_at
 `

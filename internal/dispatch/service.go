@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/qwwqq1000-arch/tower/internal/billing"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
@@ -175,6 +176,11 @@ func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []
 	if res.Status < 200 || res.Status >= 300 {
 		status = "error"
 	}
+	if status == "ok" {
+		in, out := parseUsage(res.Body)
+		cost := billing.CostUsd(model, in, out, 0, 0)
+		_ = s.Q.UpsertFallbackSpend(ctx, sqlc.UpsertFallbackSpendParams{ChannelID: ch.ID, Day: todayDayStr(), Requests: 1, EstCostUsd: cost, BalanceObserved: 0})
+	}
 	_ = s.Q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{
 		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: "fallback:" + ch.ID,
 		ProfileID: "", Status: status, HttpStatus: int32(res.Status), FallbackReason: reason,
@@ -333,6 +339,11 @@ func splitKey(key string) (node, profile string, ok bool) {
 	return key[:i], key[i+1:], true
 }
 
+func todayDayStr() string {
+	loc, _ := time.LoadLocation("Asia/Shanghai")
+	return time.Now().In(loc).Format("2006-01-02")
+}
+
 // streamChannel attempts a fallback channel stream. committed=true means we wrote to the client.
 func (s *Service) streamChannel(ctx context.Context, w http.ResponseWriter, ch sqlc.FallbackChannel, body []byte, ownerID, model, reason string) (Outcome, bool) {
 	cp := &ChannelProxy{Body: body, Ch: ChannelRef{BaseURL: ch.BaseUrl, APIKey: ch.ApiKey}}
@@ -348,6 +359,7 @@ func (s *Service) streamChannel(ctx context.Context, w http.ResponseWriter, ch s
 	w.WriteHeader(st.Status)
 	flushCopy(w, st.Body)
 	_ = st.Body.Close()
+	_ = s.Q.UpsertFallbackSpend(ctx, sqlc.UpsertFallbackSpendParams{ChannelID: ch.ID, Day: todayDayStr(), Requests: 1, EstCostUsd: 0, BalanceObserved: 0})
 	_ = s.Q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{
 		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: "fallback:" + ch.ID,
 		Status: "ok", HttpStatus: int32(st.Status), FallbackReason: reason,

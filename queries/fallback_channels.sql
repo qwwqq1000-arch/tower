@@ -22,3 +22,11 @@ UPDATE fallback_channels SET enabled=$2 WHERE id=$1;
 
 -- name: DeleteFallbackChannel :exec
 DELETE FROM fallback_channels WHERE id=$1;
+
+-- name: GetFallbackSpendToday :one
+SELECT coalesce(sum(requests),0)::bigint AS requests, coalesce(sum(est_cost_usd),0)::float8 AS cost
+FROM fallback_spend WHERE channel_id=$1 AND day=$2;
+
+-- name: GetFallbackSpendTotal :one
+SELECT coalesce(sum(requests),0)::bigint AS requests, coalesce(sum(est_cost_usd),0)::float8 AS cost
+FROM fallback_spend WHERE channel_id=$1;

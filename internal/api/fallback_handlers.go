@@ -3,9 +3,15 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 )
+
+func todayDayStr() string {
+	loc, _ := time.LoadLocation("Asia/Shanghai")
+	return time.Now().In(loc).Format("2006-01-02")
+}
 
 type fallbackBody struct {
 	Name, BaseUrl, ApiKey, ModelAllowlist, OwnerId, GroupId string
@@ -21,8 +27,11 @@ func listFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		today := todayDayStr()
 		out := make([]map[string]any, 0, len(rows))
 		for _, c := range rows {
+			todaySpend, _ := q.GetFallbackSpendToday(r.Context(), sqlc.GetFallbackSpendTodayParams{ChannelID: c.ID, Day: today})
+			totalSpend, _ := q.GetFallbackSpendTotal(r.Context(), c.ID)
 			out = append(out, map[string]any{
 				"id":             c.ID,
 				"name":           c.Name,
@@ -36,6 +45,10 @@ func listFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 				"modelAllowlist": c.ModelAllowlist,
 				"enabled":        c.Enabled,
 				"ownerId":        c.OwnerID,
+				"todayCostUsd":   todaySpend.Cost,
+				"todayRequests":  todaySpend.Requests,
+				"totalCostUsd":   totalSpend.Cost,
+				"totalRequests":  totalSpend.Requests,
 			})
 		}
 		writeJSON(w, 200, out)
