@@ -268,12 +268,16 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 // (success) and the caller must not fail over.
 func (s *Service) streamOne(ctx context.Context, w http.ResponseWriter, key string, trial bool, resolver Resolver, breaker state.BreakerCfg, body []byte, cfg policy.Config, ownerID, model string) (Outcome, bool) {
 	settled := false
+	sendReturned := false
 	settle := func(success bool) {
 		if settled {
 			return
 		}
 		settled = true
 		s.Store.Complete(key, cfg.SlotCooldownMinMs, cfg.SlotCooldownMaxMs)
+		if !success && !sendReturned {
+			return // panic before upstream responded → release slot only, no ban
+		}
 		if trial {
 			s.Store.OnTrialResult(key, breaker, success)
 		} else if success {
@@ -286,10 +290,11 @@ func (s *Service) streamOne(ctx context.Context, w http.ResponseWriter, key stri
 
 	np := &NodeProxy{Body: body, Resolve: resolver, BanSignals: cfg.BanSignals}
 	st, err := np.OpenStream(ctx, key)
+	sendReturned = true
 	if err != nil {
 		return Outcome{}, false // connection error → failover
 	}
-	if st.Banned || st.Status >= 400 {
+	if st.Banned || st.Status < 200 || st.Status >= 300 {
 		_ = st.Body.Close()
 		return Outcome{}, false // bad status before first byte → settle(false) via defer, failover
 	}
