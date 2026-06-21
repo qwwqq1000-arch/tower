@@ -149,6 +149,7 @@ export default function Policies() {
   const cooldownMult = useField<number>(2);
   const fallbackPriceThresholdUsd = useField<number>(0.005);
   const quotaRotateThreshold = useField<number>(0.95);
+  const maxFailover = useField<number>(50);
   // Boolean
   const fallbackEnabled = useField<boolean>(false);
   const fallbackProbeEnabled = useField<boolean>(false);
@@ -195,6 +196,7 @@ export default function Policies() {
         .filter(Boolean);
     }
     if (quotaRotateThreshold.enabled) patch.QuotaRotateThreshold = quotaRotateThreshold.value;
+    if (maxFailover.enabled) patch.MaxFailover = maxFailover.value;
     return patch;
   }
 
@@ -231,7 +233,7 @@ export default function Policies() {
     maxConcurrent, slotCooldownMinMs, slotCooldownMaxMs, banPersistStreak,
     cooldownBaseMs, cooldownMaxMs, cooldownMult, affinityTTLSec,
     fallbackEnabled, fallbackPriceThresholdUsd, fallbackKeywords, fallbackModels, fallbackProbeEnabled, banSignals, banKeywords,
-    quotaRotateThreshold,
+    quotaRotateThreshold, maxFailover,
   ].some((f) => f.enabled);
 
   return (
@@ -545,6 +547,22 @@ export default function Policies() {
             min={0}
             max={1}
             step={0.01}
+          />
+        </FieldRow>
+
+        <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2 pt-4">故障转移</h2>
+
+        <FieldRow
+          label="最大故障转移次数(失败换号尝试上限)"
+          desc="单次请求最多尝试换号的次数上限（故障转移 / 重试上限）"
+          enabled={maxFailover.enabled}
+          onToggle={maxFailover.toggle}
+        >
+          <NumInput
+            value={maxFailover.value}
+            onChange={maxFailover.set}
+            disabled={!maxFailover.enabled}
+            min={1}
           />
         </FieldRow>
       </div>

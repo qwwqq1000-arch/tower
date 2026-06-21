@@ -4,7 +4,7 @@
 // ============================================================
 import { useEffect, useRef, useState } from 'react';
 import { getDispatchStatus, listFallbackChannels } from '../api';
-import type { DispatchStatus, DispatchAccountSnapshot, DispatchEvent } from '../types';
+import type { DispatchStatus, DispatchAccountSnapshot, DispatchEvent, DispatchFallbackChannel } from '../types';
 
 // ------------------------------------------------------------------
 // Badge
@@ -91,6 +91,60 @@ function ConcurrencyPanel({ accounts }: { accounts: DispatchAccountSnapshot[] })
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------
+// Fallback channels panel
+// ------------------------------------------------------------------
+function FallbackChannelsPanel({ channels }: { channels: DispatchFallbackChannel[] }) {
+  function formatCost(usd: number): string {
+    if (usd >= 1) return `$${usd.toFixed(2)}`;
+    if (usd >= 0.01) return `$${usd.toFixed(4)}`;
+    return `$${usd.toFixed(6)}`;
+  }
+
+  return (
+    <div className="bg-surface border border-line rounded-xl overflow-hidden mb-6">
+      <div className="px-4 py-3 border-b border-line text-sm font-medium text-ink">保底渠道</div>
+      {channels.length === 0 ? (
+        <p className="px-4 py-6 text-center text-muted text-xs">无保底渠道</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-line text-left text-xs text-muted">
+                <th className="px-4 py-2 font-medium">渠道名称</th>
+                <th className="px-4 py-2 font-medium">状态</th>
+                <th className="px-4 py-2 font-medium text-right">优先级</th>
+                <th className="px-4 py-2 font-medium text-right">权重</th>
+                <th className="px-4 py-2 font-medium text-right">今日请求</th>
+                <th className="px-4 py-2 font-medium text-right">今日消费</th>
+              </tr>
+            </thead>
+            <tbody>
+              {channels.map((ch) => (
+                <tr key={ch.id} className="border-b border-line/50 hover:bg-line/30 transition">
+                  <td className="px-4 py-2">
+                    <p className="text-sm text-ink font-medium">{ch.name}</p>
+                    <p className="text-xs font-mono text-muted mt-0.5">{ch.id}</p>
+                  </td>
+                  <td className="px-4 py-2">
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded border text-xs font-mono ${ch.enabled ? 'bg-green-500/20 text-green-400 border-green-500/40' : 'bg-gray-500/10 text-gray-500 border-gray-500/20'}`}>
+                      {ch.enabled ? '启用' : '停用'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2 text-right tabular-nums">{ch.priority}</td>
+                  <td className="px-4 py-2 text-right tabular-nums">{ch.weight}</td>
+                  <td className="px-4 py-2 text-right tabular-nums">{ch.todayRequests.toLocaleString()}</td>
+                  <td className="px-4 py-2 text-right tabular-nums">{formatCost(ch.todayCostUsd)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -295,6 +349,7 @@ export default function Dispatch() {
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
             <div>
               <ConcurrencyPanel accounts={data.accounts} />
+              <FallbackChannelsPanel channels={data.fallbackChannels ?? []} />
               <TrafficPanel data={data} />
             </div>
             <EventTimeline events={data.events} fallbackNames={fallbackNames} />

@@ -141,6 +141,7 @@ export interface PolicyPatch {
   BanSignals?: number[];
   BanKeywords?: string[];
   QuotaRotateThreshold?: number;
+  MaxFailover?: number;
 }
 
 // policy.Config (resolved)
@@ -381,10 +382,21 @@ export interface DispatchEvent {
   target: string;
 }
 
+export interface DispatchFallbackChannel {
+  id: string;
+  name: string;
+  enabled: boolean;
+  priority: number;
+  weight: number;
+  todayRequests: number;
+  todayCostUsd: number;
+}
+
 export interface DispatchStatus {
   accounts: DispatchAccountSnapshot[];
   traffic: DispatchTraffic;
   events: DispatchEvent[];
   nodes: { total: number; enabled: number };
   asOf: number;
+  fallbackChannels?: DispatchFallbackChannel[];
 }
