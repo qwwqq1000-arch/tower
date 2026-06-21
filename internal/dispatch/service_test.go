@@ -84,3 +84,28 @@ func suffixDispatch(t *testing.T) string {
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }
+
+func TestParseUsageSSE(t *testing.T) {
+	body := `event: message_start
+data: {"type":"message_start","message":{"usage":{"input_tokens":150,"output_tokens":0}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","delta":{"text":"Hello"}}
+
+event: message_delta
+data: {"type":"message_delta","usage":{"output_tokens":10}}
+
+event: message_delta
+data: {"type":"message_delta","usage":{"output_tokens":42}}
+
+event: message_stop
+data: {"type":"message_stop"}
+`
+	in, out := parseUsageSSE(body)
+	if in != 150 {
+		t.Errorf("input_tokens: got %d, want 150", in)
+	}
+	if out != 42 {
+		t.Errorf("output_tokens: got %d, want 42", out)
+	}
+}

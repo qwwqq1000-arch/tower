@@ -107,6 +107,7 @@ func listLogsHandler(q *sqlc.Queries) http.HandlerFunc {
 				"status": l.Status, "httpStatus": l.HttpStatus,
 				"latencyMs": l.LatencyMs, "tokensIn": l.TokensIn,
 				"tokensOut": l.TokensOut, "fallbackReason": l.FallbackReason,
+				"ttfbMs": l.TtfbMs,
 			})
 		}
 		writeJSON(w, 200, out)

@@ -3,8 +3,10 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -195,7 +197,7 @@ func (s *Service) logOK(ctx context.Context, ownerID, model string, res ProxyRes
 	_ = s.Q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{
 		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: "node", ProfileID: "",
 		Status: "ok", HttpStatus: int32(res.Status), LatencyMs: latencyMs, TokensIn: in, TokensOut: out,
-		FallbackReason: reason,
+		FallbackReason: reason, TtfbMs: latencyMs,
 	})
 	if in > 0 || out > 0 {
 		_ = s.Q.AddCostRollup(ctx, sqlc.AddCostRollupParams{
@@ -211,6 +213,74 @@ func (s *Service) logErr(ctx context.Context, ownerID, model string, status int,
 		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: "node", ProfileID: "",
 		Status: "error", HttpStatus: int32(status), LatencyMs: latencyMs, FallbackReason: reason,
 	})
+}
+
+// flushCopyCapture streams src→dst flushing each chunk; returns ttfb (ms to
+// first byte, from start) and a bounded copy of the body (for token parsing).
+func flushCopyCapture(dst http.ResponseWriter, src io.Reader, start time.Time) (ttfbMs int64, body string) {
+	fl, _ := dst.(http.Flusher)
+	buf := make([]byte, 16*1024)
+	var sb strings.Builder
+	const bodyCap = 512 * 1024
+	first := true
+	for {
+		n, err := src.Read(buf)
+		if n > 0 {
+			if first {
+				ttfbMs = time.Since(start).Milliseconds()
+				first = false
+			}
+			if _, werr := dst.Write(buf[:n]); werr != nil {
+				return
+			}
+			if fl != nil {
+				fl.Flush()
+			}
+			if sb.Len() < bodyCap {
+				sb.Write(buf[:n])
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+	return ttfbMs, sb.String()
+}
+
+// parseUsageSSE extracts input/output token counts from an Anthropic SSE body.
+// input_tokens appears in message_start; output_tokens last value is in message_delta.
+func parseUsageSSE(body string) (in, out int64) {
+	reIn := regexp.MustCompile(`"input_tokens":\s*(\d+)`)
+	reOut := regexp.MustCompile(`"output_tokens":\s*(\d+)`)
+
+	if m := reIn.FindStringSubmatch(body); len(m) == 2 {
+		fmt.Sscanf(m[1], "%d", &in)
+	}
+	// use last match for output_tokens
+	all := reOut.FindAllStringSubmatch(body, -1)
+	if len(all) > 0 {
+		fmt.Sscanf(all[len(all)-1][1], "%d", &out)
+	}
+	return in, out
+}
+
+// logStream logs a completed streaming dispatch with TTFB and token counts.
+func (s *Service) logStream(ctx context.Context, ownerID, model string, status int, in, out, latencyMs, ttfbMs int64) {
+	httpStatus := "ok"
+	if status < 200 || status >= 300 {
+		httpStatus = "error"
+	}
+	_ = s.Q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{
+		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: "node", ProfileID: "",
+		Status: httpStatus, HttpStatus: int32(status), LatencyMs: latencyMs,
+		TokensIn: in, TokensOut: out, TtfbMs: ttfbMs,
+	})
+	if in > 0 || out > 0 {
+		_ = s.Q.AddCostRollup(ctx, sqlc.AddCostRollupParams{
+			ScopeType: "owner", ScopeID: ownerID, Day: "", Model: model,
+			Requests: 1, TokensIn: in, TokensOut: out, CostUsd: billing.CostUsd(model, in, out, 0, 0),
+		})
+	}
 }
 
 // flushCopy streams src→dst, flushing after each chunk so SSE reaches the client live.
@@ -313,12 +383,15 @@ func (s *Service) streamOne(ctx context.Context, w http.ResponseWriter, key stri
 		return Outcome{}, false // bad status before first byte → settle(false) via defer, failover
 	}
 	// commit: stream to client
+	start := time.Now()
 	CopyForwardableHeaders(w.Header(), st.Header)
 	w.WriteHeader(st.Status)
-	flushCopy(w, st.Body)
+	ttfb, sseBody := flushCopyCapture(w, st.Body, start)
 	_ = st.Body.Close()
 	settle(true)
-	s.logOK(ctx, ownerID, model, ProxyResult{Status: st.Status}, 0, "")
+	in, out := parseUsageSSE(sseBody)
+	total := time.Since(start).Milliseconds()
+	s.logStream(ctx, ownerID, model, st.Status, in, out, total, ttfb)
 	return Outcome{Status: st.Status, Target: "node"}, true
 }
 

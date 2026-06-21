@@ -10,8 +10,8 @@ import (
 )
 
 const insertDispatchLog = `-- name: InsertDispatchLog :exec
-INSERT INTO dispatch_logs (ts, owner_id, model, target, profile_id, status, http_status, latency_ms, tokens_in, tokens_out, fallback_reason)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+INSERT INTO dispatch_logs (ts, owner_id, model, target, profile_id, status, http_status, latency_ms, tokens_in, tokens_out, fallback_reason, ttfb_ms)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 `
 
 type InsertDispatchLogParams struct {
@@ -26,6 +26,7 @@ type InsertDispatchLogParams struct {
 	TokensIn       int64  `json:"tokens_in"`
 	TokensOut      int64  `json:"tokens_out"`
 	FallbackReason string `json:"fallback_reason"`
+	TtfbMs         int64  `json:"ttfb_ms"`
 }
 
 func (q *Queries) InsertDispatchLog(ctx context.Context, arg InsertDispatchLogParams) error {
@@ -41,12 +42,13 @@ func (q *Queries) InsertDispatchLog(ctx context.Context, arg InsertDispatchLogPa
 		arg.TokensIn,
 		arg.TokensOut,
 		arg.FallbackReason,
+		arg.TtfbMs,
 	)
 	return err
 }
 
 const listRecentDispatchLogs = `-- name: ListRecentDispatchLogs :many
-SELECT id, ts, owner_id, model, target, profile_id, status, http_status, latency_ms, tokens_in, tokens_out, fallback_reason, created_at FROM dispatch_logs ORDER BY ts DESC LIMIT $1
+SELECT id, ts, owner_id, model, target, profile_id, status, http_status, latency_ms, tokens_in, tokens_out, fallback_reason, created_at, ttfb_ms FROM dispatch_logs ORDER BY ts DESC LIMIT $1
 `
 
 func (q *Queries) ListRecentDispatchLogs(ctx context.Context, limit int32) ([]DispatchLog, error) {
@@ -72,6 +74,7 @@ func (q *Queries) ListRecentDispatchLogs(ctx context.Context, limit int32) ([]Di
 			&i.TokensOut,
 			&i.FallbackReason,
 			&i.CreatedAt,
+			&i.TtfbMs,
 		); err != nil {
 			return nil, err
 		}

@@ -114,6 +114,7 @@ type DispatchLog struct {
 	TokensOut      int64              `json:"tokens_out"`
 	FallbackReason string             `json:"fallback_reason"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	TtfbMs         int64              `json:"ttfb_ms"`
 }
 
 type FallbackChannel struct {
