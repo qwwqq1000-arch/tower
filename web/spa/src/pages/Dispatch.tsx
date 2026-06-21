@@ -3,8 +3,8 @@
 // SSE primary; polling fallback on error
 // ============================================================
 import { useEffect, useRef, useState } from 'react';
-import { getDispatchStatus, listFallbackChannels } from '../api';
-import type { DispatchStatus, DispatchAccountSnapshot, DispatchEvent, DispatchFallbackChannel } from '../types';
+import { getDispatchStatus, listFallbackChannels, getServerStatus } from '../api';
+import type { DispatchStatus, DispatchAccountSnapshot, DispatchEvent, DispatchFallbackChannel, ServerStatus } from '../types';
 
 // ------------------------------------------------------------------
 // Badge
@@ -121,6 +121,8 @@ function FallbackChannelsPanel({ channels }: { channels: DispatchFallbackChannel
                 <th className="px-4 py-2 font-medium text-right">权重</th>
                 <th className="px-4 py-2 font-medium text-right">今日请求</th>
                 <th className="px-4 py-2 font-medium text-right">今日消费</th>
+                <th className="px-4 py-2 font-medium text-right">并发中</th>
+                <th className="px-4 py-2 font-medium text-right">可用</th>
               </tr>
             </thead>
             <tbody>
@@ -139,6 +141,8 @@ function FallbackChannelsPanel({ channels }: { channels: DispatchFallbackChannel
                   <td className="px-4 py-2 text-right tabular-nums">{ch.weight}</td>
                   <td className="px-4 py-2 text-right tabular-nums">{ch.todayRequests.toLocaleString()}</td>
                   <td className="px-4 py-2 text-right tabular-nums">{formatCost(ch.todayCostUsd)}</td>
+                  <td className="px-4 py-2 text-right tabular-nums">{ch.inflight ?? '—'}</td>
+                  <td className="px-4 py-2 text-right tabular-nums">{ch.available ?? '—'}</td>
                 </tr>
               ))}
             </tbody>
@@ -242,6 +246,45 @@ function EventTimeline({ events, fallbackNames }: { events: DispatchEvent[]; fal
 }
 
 // ------------------------------------------------------------------
+// Server status card
+// ------------------------------------------------------------------
+function ServerStatusCard({ status }: { status: ServerStatus | null }) {
+  if (!status) return null;
+
+  function fmtUptime(sec: number): string {
+    const d = Math.floor(sec / 86400);
+    const h = Math.floor((sec % 86400) / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    if (d > 0) return `${d}d ${h}h ${m}m`;
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
+  }
+
+  const items = [
+    { label: '运行时长', value: fmtUptime(status.uptimeSec) },
+    { label: 'Goroutines', value: status.goroutines.toString() },
+    { label: '内存', value: `${status.memAllocMB.toFixed(1)} / ${status.memSysMB.toFixed(1)} MB` },
+    { label: 'GC 次数', value: status.numGC.toString() },
+    { label: 'CPU 核数', value: status.numCPU.toString() },
+    { label: 'Go 版本', value: status.goVersion },
+  ];
+
+  return (
+    <div className="bg-surface border border-line rounded-xl overflow-hidden mb-6">
+      <div className="px-4 py-3 border-b border-line text-sm font-medium text-ink">调度服务器状态</div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 divide-x divide-line">
+        {items.map((item) => (
+          <div key={item.label} className="px-4 py-3">
+            <p className="text-xs text-muted mb-1">{item.label}</p>
+            <p className="text-sm font-semibold text-ink tabular-nums">{item.value}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------
 // Main page
 // ------------------------------------------------------------------
 export default function Dispatch() {
@@ -249,6 +292,7 @@ export default function Dispatch() {
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<'sse' | 'poll'>('sse');
   const [fallbackNames, setFallbackNames] = useState<Map<string, string>>(new Map());
+  const [serverStatus, setServerStatus] = useState<ServerStatus | null>(null);
   const esRef = useRef<EventSource | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -288,6 +332,13 @@ export default function Dispatch() {
       })
       .catch(() => { /* non-fatal: show raw target on failure */ });
 
+    // Fetch server status
+    const fetchServerStatus = () => {
+      getServerStatus().then(setServerStatus).catch(() => {});
+    };
+    fetchServerStatus();
+    const serverStatusTimer = setInterval(fetchServerStatus, 30000);
+
     // Try SSE first
     const es = new EventSource('/api/admin/dispatch/stream');
     esRef.current = es;
@@ -311,6 +362,7 @@ export default function Dispatch() {
     return () => {
       stopSSE();
       stopPolling();
+      clearInterval(serverStatusTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -345,6 +397,7 @@ export default function Dispatch() {
       {/* Content */}
       {data && (
         <>
+          <ServerStatusCard status={serverStatus} />
           <StatsBar data={data} />
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
             <div>

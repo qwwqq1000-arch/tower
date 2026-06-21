@@ -28,6 +28,7 @@ import type {
   UserRow,
   NodeTelemetry,
   QuotaAll,
+  ServerStatus,
 } from './types';
 
 // ------------------------------------------------------------------
@@ -292,3 +293,9 @@ export interface BanAnalysis {
 }
 export const getBanAnalysis = () =>
   api<BanAnalysis>('GET', '/api/admin/ban-analysis');
+
+// ------------------------------------------------------------------
+// Server status (服务器状态)
+// ------------------------------------------------------------------
+export const getServerStatus = () =>
+  api<ServerStatus>('GET', '/api/admin/server-status');

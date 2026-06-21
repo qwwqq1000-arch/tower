@@ -1,10 +1,10 @@
 // ============================================================
 // Tower SPA — Logs page (调度日志)
 // GET /api/admin/logs?limit=200 → table with client-side search
-// Columns: time / model / target / status / http / latency / ttfb / tokens in+out / fallbackReason
+// Columns: time / model / target / status / http / latency / ttfb / tokens in+out / type / cost / fallbackReason
 // ============================================================
 import { useEffect, useState, useCallback } from 'react';
-import { getLogs, listFallbackChannels } from '../api';
+import { getLogs, listFallbackChannels, listAccounts } from '../api';
 import type { LogEntry } from '../types';
 
 // ---- helpers ----
@@ -32,27 +32,55 @@ function statusBadge(status: string, http: number) {
   );
 }
 
-function renderTarget(target: string, channelMap: Map<string, string>): string {
+function streamBadge(stream?: boolean) {
+  if (stream === undefined) return <span className="text-muted/40">—</span>;
+  return (
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ${
+      stream
+        ? 'bg-blue-500/20 text-blue-400 border-blue-500/40'
+        : 'bg-gray-500/10 text-gray-500 border-gray-500/20'
+    }`}>
+      {stream ? '流' : '非流'}
+    </span>
+  );
+}
+
+function fmtCost(usd?: number): string {
+  if (!usd) return '—';
+  return `$${usd.toFixed(4)}`;
+}
+
+function renderTarget(target: string, channelMap: Map<string, string>, accountMap: Map<string, string>): React.ReactNode {
   if (!target) return '—';
   if (target.startsWith('fallback:')) {
     const id = target.slice('fallback:'.length);
     const name = channelMap.get(id);
     if (name) return `保底: ${name}`;
-    // unknown: show short id
     const shortId = id.length > 8 ? id.slice(0, 8) + '…' : id;
     return `保底: ${shortId}`;
+  }
+  const email = accountMap.get(target);
+  if (email) {
+    return (
+      <>
+        {email}
+        <span className="ml-1 text-muted/60 font-mono text-[10px]">({target})</span>
+      </>
+    );
   }
   return target;
 }
 
 // ---- Desktop table row ----
-function LogRow({ row, channelMap }: { row: LogEntry; channelMap: Map<string, string> }) {
-  const targetLabel = renderTarget(row.target, channelMap);
+function LogRow({ row, channelMap, accountMap }: { row: LogEntry; channelMap: Map<string, string>; accountMap: Map<string, string> }) {
+  const targetLabel = renderTarget(row.target, channelMap, accountMap);
   return (
     <tr className="border-t border-line hover:bg-line/20 transition text-sm">
       <td className="px-3 py-2 text-xs text-muted whitespace-nowrap font-mono">{fmtTime(row.ts)}</td>
       <td className="px-3 py-2 text-ink truncate max-w-[140px]" title={row.model}>{row.model || '—'}</td>
-      <td className="px-3 py-2 text-ink truncate max-w-[120px] font-mono text-xs" title={targetLabel}>{targetLabel}</td>
+      <td className="px-3 py-2 text-ink truncate max-w-[120px] font-mono text-xs" title={row.target}>
+        {targetLabel}
+      </td>
       <td className="px-3 py-2">{statusBadge(row.status, row.httpStatus)}</td>
       <td className="px-3 py-2 text-muted text-xs">{row.httpStatus || '—'}</td>
       <td className="px-3 py-2 text-muted text-xs whitespace-nowrap">{fmtMs(row.latencyMs)}</td>
@@ -60,6 +88,8 @@ function LogRow({ row, channelMap }: { row: LogEntry; channelMap: Map<string, st
       <td className="px-3 py-2 text-muted text-xs whitespace-nowrap">
         {row.tokensIn ? `↑${row.tokensIn}` : '—'} / {row.tokensOut ? `↓${row.tokensOut}` : '—'}
       </td>
+      <td className="px-3 py-2">{streamBadge(row.stream)}</td>
+      <td className="px-3 py-2 text-muted text-xs">{fmtCost(row.costUsd)}</td>
       <td className="px-3 py-2 text-xs text-muted truncate max-w-[120px]" title={row.fallbackReason}>
         {row.fallbackReason || <span className="text-muted/40 italic">—</span>}
       </td>
@@ -68,8 +98,8 @@ function LogRow({ row, channelMap }: { row: LogEntry; channelMap: Map<string, st
 }
 
 // ---- Mobile card ----
-function LogCard({ row, channelMap }: { row: LogEntry; channelMap: Map<string, string> }) {
-  const targetLabel = renderTarget(row.target, channelMap);
+function LogCard({ row, channelMap, accountMap }: { row: LogEntry; channelMap: Map<string, string>; accountMap: Map<string, string> }) {
+  const targetLabel = renderTarget(row.target, channelMap, accountMap);
   return (
     <div className="bg-surface border border-line rounded-xl p-4 space-y-2 text-sm">
       <div className="flex items-start justify-between gap-2">
@@ -85,6 +115,8 @@ function LogCard({ row, channelMap }: { row: LogEntry; channelMap: Map<string, s
         <span>延迟 {fmtMs(row.latencyMs)}</span>
         <span>首字 {fmtMs(row.ttfbMs)}</span>
         <span>↑{row.tokensIn ?? 0} / ↓{row.tokensOut ?? 0}</span>
+        <span>{streamBadge(row.stream)}</span>
+        <span>{fmtCost(row.costUsd) !== '—' ? `费用 ${fmtCost(row.costUsd)}` : ''}</span>
       </div>
       {row.fallbackReason && (
         <p className="text-xs text-warn bg-warn/10 border border-warn/30 rounded px-2 py-1 truncate">
@@ -102,8 +134,9 @@ export default function Logs() {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [channelMap, setChannelMap] = useState<Map<string, string>>(new Map());
+  const [accountMap, setAccountMap] = useState<Map<string, string>>(new Map());
 
-  // Fetch fallback channels once on mount to build id→name map
+  // Fetch fallback channels and accounts once on mount to build lookup maps
   useEffect(() => {
     listFallbackChannels()
       .then((channels) => {
@@ -114,6 +147,14 @@ export default function Logs() {
       .catch(() => {
         // Resilient: if fetch fails, map stays empty and raw target is shown
       });
+
+    listAccounts()
+      .then((accounts) => {
+        const m = new Map<string, string>();
+        for (const a of accounts) m.set(`${a.nodeId}:${a.profileId}`, a.email);
+        setAccountMap(m);
+      })
+      .catch(() => {});
   }, []);
 
   const fetchLogs = useCallback(async () => {
@@ -208,12 +249,14 @@ export default function Logs() {
                   <th className="px-3 py-3 font-medium">延迟</th>
                   <th className="px-3 py-3 font-medium">首字</th>
                   <th className="px-3 py-3 font-medium">Token ↑/↓</th>
+                  <th className="px-3 py-3 font-medium">类型</th>
+                  <th className="px-3 py-3 font-medium">费用</th>
                   <th className="px-3 py-3 font-medium">兜底原因</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((row, i) => (
-                  <LogRow key={i} row={row} channelMap={channelMap} />
+                  <LogRow key={i} row={row} channelMap={channelMap} accountMap={accountMap} />
                 ))}
               </tbody>
             </table>
@@ -221,7 +264,7 @@ export default function Logs() {
 
           {/* Mobile cards */}
           <div className="md:hidden space-y-3">
-            {filtered.map((row, i) => <LogCard key={i} row={row} channelMap={channelMap} />)}
+            {filtered.map((row, i) => <LogCard key={i} row={row} channelMap={channelMap} accountMap={accountMap} />)}
           </div>
 
           <p className="text-xs text-muted text-right">

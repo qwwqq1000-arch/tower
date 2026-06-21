@@ -187,6 +187,8 @@ export interface LogEntry {
   tokensIn: number;
   tokensOut: number;
   fallbackReason: string;
+  stream?: boolean;
+  costUsd?: number;
 }
 
 // --- Events ---
@@ -390,6 +392,8 @@ export interface DispatchFallbackChannel {
   weight: number;
   todayRequests: number;
   todayCostUsd: number;
+  inflight?: number;
+  available?: number;
 }
 
 export interface DispatchStatus {
@@ -399,4 +403,15 @@ export interface DispatchStatus {
   nodes: { total: number; enabled: number };
   asOf: number;
   fallbackChannels?: DispatchFallbackChannel[];
+}
+
+export interface ServerStatus {
+  uptimeSec: number;
+  goroutines: number;
+  memAllocMB: number;
+  memSysMB: number;
+  numGC: number;
+  goVersion: string;
+  numCPU: number;
+  startedAt: string;
 }
