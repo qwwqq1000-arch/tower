@@ -34,6 +34,8 @@ func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc
 		mux.HandleFunc("GET /api/dashboard", requireAdmin(secret, dashboardHandler(q, svc)))
 		mux.HandleFunc("POST /api/admin/provision", requireAdmin(secret, startProvisionHandler(q)))
 		mux.HandleFunc("GET /api/admin/provision/{id}", requireAdmin(secret, getProvisionHandler(q)))
+		mux.HandleFunc("POST /api/admin/settle", requireAdmin(secret, settleHandler(q)))
+		mux.HandleFunc("GET /api/admin/ledger", requireAdmin(secret, ledgerHandler(q)))
 	}
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
