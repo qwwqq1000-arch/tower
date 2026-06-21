@@ -17,6 +17,9 @@ func startProvisionHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "host/password required"})
 			return
 		}
+		if body.Name == "" {
+			body.Name = nextNodeName(r.Context(), q)
+		}
 		now := func() int64 { return time.Now().UnixMilli() }
 		jobID := randHex("job_")
 		if _, err := q.CreateProvisionJob(r.Context(), sqlc.CreateProvisionJobParams{

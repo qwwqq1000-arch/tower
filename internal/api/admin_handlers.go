@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,12 +24,28 @@ func randHex(prefix string) string {
 	return prefix + hex.EncodeToString(b)
 }
 
+// nextNodeName returns the next sequential numeric node name (>=1001).
+func nextNodeName(ctx context.Context, q *sqlc.Queries) string {
+	max := 1000
+	if rows, err := q.ListNodes(ctx); err == nil {
+		for _, n := range rows {
+			if v, err := strconv.Atoi(strings.TrimSpace(n.Name)); err == nil && v > max {
+				max = v
+			}
+		}
+	}
+	return strconv.Itoa(max + 1)
+}
+
 func createNodeHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct{ Name, BaseUrl, ApiKey, OwnerId string }
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Name == "" || body.BaseUrl == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name/baseUrl required"})
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.BaseUrl == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "baseUrl required"})
 			return
+		}
+		if body.Name == "" {
+			body.Name = nextNodeName(r.Context(), q)
 		}
 		n, err := q.CreateNode(r.Context(), sqlc.CreateNodeParams{
 			ID: randHex("n_"), Name: body.Name, BaseUrl: body.BaseUrl, ApiKey: body.ApiKey, OwnerID: body.OwnerId,
