@@ -23,6 +23,7 @@ const (
 type DecideInput struct {
 	Model             string
 	BodyText          string
+	ProbeText         string // extracted last user message text for probe detection
 	EstCostUsd        float64
 	PoolEmpty         bool
 	Keywords          []string
@@ -60,7 +61,7 @@ func Decide(in DecideInput) Trigger {
 	if containsAny(in.Model, in.FallbackModels) {
 		return Model
 	}
-	if in.ProbeEnabled && IsProbe(in.BodyText) {
+	if in.ProbeEnabled && IsProbe(in.ProbeText) {
 		return Probe
 	}
 	if in.PriceThresholdUsd > 0 && in.EstCostUsd < in.PriceThresholdUsd {

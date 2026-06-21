@@ -163,6 +163,53 @@ data: {"type":"message_delta","usage":{"output_tokens":15}}
 	}
 }
 
+func TestLastUserText(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "plain string content",
+			body: `{"model":"claude-3","messages":[{"role":"user","content":"hi"}]}`,
+			want: "hi",
+		},
+		{
+			name: "array content blocks",
+			body: `{"model":"claude-3","messages":[{"role":"user","content":[{"type":"text","text":"hello "},{"type":"text","text":"world"}]}]}`,
+			want: "hello world",
+		},
+		{
+			name: "no user message",
+			body: `{"model":"claude-3","messages":[{"role":"assistant","content":"pong"}]}`,
+			want: "",
+		},
+		{
+			name: "last user message wins",
+			body: `{"model":"claude-3","messages":[{"role":"user","content":"first"},{"role":"assistant","content":"reply"},{"role":"user","content":"second"}]}`,
+			want: "second",
+		},
+		{
+			name: "invalid JSON returns empty",
+			body: `not-json`,
+			want: "",
+		},
+		{
+			name: "empty messages array",
+			body: `{"model":"claude-3","messages":[]}`,
+			want: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := lastUserText([]byte(tc.body))
+			if got != tc.want {
+				t.Errorf("lastUserText(%q) = %q, want %q", tc.body, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestPickElastic(t *testing.T) {
 	b := []string{"b1", "b2"}
 	r := []string{"r1", "r2", "r3"}

@@ -31,10 +31,32 @@ func TestDecide_Model(t *testing.T) {
 
 func TestDecide_Probe(t *testing.T) {
 	in := base()
-	in.BodyText = "hi"
+	in.ProbeText = "hi"
 	in.ProbeEnabled = true
 	if g := Decide(in); g != Probe {
 		t.Fatalf("got %v, want Probe", g)
+	}
+}
+
+func TestDecide_ProbeOnFullJSONBody(t *testing.T) {
+	// Simulates the real scenario: BodyText is the raw request JSON,
+	// ProbeText is the extracted last user message text.
+	fullJSON := `{"model":"claude-opus-4-8","messages":[{"role":"user","content":"hi"}]}`
+	in := base()
+	in.BodyText = fullJSON  // keyword matching still uses raw JSON
+	in.ProbeText = "hi"     // extracted user text triggers probe
+	in.ProbeEnabled = true
+	if g := Decide(in); g != Probe {
+		t.Fatalf("full JSON body with user content 'hi': got %v, want Probe", g)
+	}
+}
+
+func TestDecide_ProbeNotTriggeredOnLongUserMessage(t *testing.T) {
+	in := base()
+	in.ProbeText = "please explain how photosynthesis works in detail"
+	in.ProbeEnabled = true
+	if g := Decide(in); g == Probe {
+		t.Fatalf("long user message should not trigger probe, got Probe")
 	}
 }
 

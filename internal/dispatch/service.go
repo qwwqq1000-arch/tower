@@ -111,8 +111,9 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 	nowMs := s.Now()
 
 	est := billing.CostUsd(model, int64(len(body)/4), 2000, 0, 0)
+	probeText := lastUserText(body)
 	trig := fallback.Decide(fallback.DecideInput{
-		Model: model, BodyText: bodyText, EstCostUsd: est, PoolEmpty: len(order) == 0,
+		Model: model, BodyText: bodyText, ProbeText: probeText, EstCostUsd: est, PoolEmpty: len(order) == 0,
 		Keywords: cfg.FallbackKeywords, FallbackModels: cfg.FallbackModels, PriceThresholdUsd: cfg.FallbackPriceThresholdUsd,
 		ProbeEnabled: cfg.FallbackProbeEnabled,
 	})
@@ -575,6 +576,20 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 	conv := session.ConvID(body)
 	nowMs := s.Now()
 
+	// Probe/keyword/model fallback decision — same logic as non-streaming Dispatch.
+	est := billing.CostUsd(model, int64(len(body)/4), 2000, 0, 0)
+	probeText := lastUserText(body)
+	trig := fallback.Decide(fallback.DecideInput{
+		Model: model, BodyText: string(body), ProbeText: probeText, EstCostUsd: est, PoolEmpty: len(order) == 0,
+		Keywords: cfg.FallbackKeywords, FallbackModels: cfg.FallbackModels, PriceThresholdUsd: cfg.FallbackPriceThresholdUsd,
+		ProbeEnabled: cfg.FallbackProbeEnabled,
+	})
+	if cfg.FallbackEnabled && trig != fallback.None && trig != fallback.Exhausted && len(channels) > 0 {
+		if out, committed := s.streamChannel(ctx, w, channels[0], body, ownerID, model, string(trig)); committed {
+			return out
+		}
+	}
+
 	// PRE-FLIGHT: session exile check — route exiled conversations to fallback.
 	if cfg.SessionErrorThreshold > 0 && s.sess.Exiled(conv, nowMs) && cfg.FallbackEnabled && len(channels) > 0 {
 		if out, committed := s.streamChannel(ctx, w, channels[0], body, ownerID, model, "session"); committed {
@@ -714,6 +729,50 @@ func todayDayStr() string {
 		loc = time.UTC
 	}
 	return time.Now().In(loc).Format("2006-01-02")
+}
+
+// lastUserText extracts the text content of the last user message from a raw
+// Anthropic-format request body. Content may be a plain string or an array of
+// content blocks; in the latter case the "text" fields are concatenated.
+// Returns "" on any parse failure or when no user message is present.
+func lastUserText(body []byte) string {
+	var req struct {
+		Messages []struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return ""
+	}
+	// Walk backwards to find the last user message.
+	for i := len(req.Messages) - 1; i >= 0; i-- {
+		msg := req.Messages[i]
+		if msg.Role != "user" {
+			continue
+		}
+		// Try plain string first.
+		var s string
+		if err := json.Unmarshal(msg.Content, &s); err == nil {
+			return s
+		}
+		// Try array of content blocks.
+		var blocks []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal(msg.Content, &blocks); err == nil {
+			var sb strings.Builder
+			for _, b := range blocks {
+				if b.Type == "text" {
+					sb.WriteString(b.Text)
+				}
+			}
+			return sb.String()
+		}
+		return ""
+	}
+	return ""
 }
 
 // streamChannel attempts a fallback channel stream. committed=true means we wrote to the client.
