@@ -65,6 +65,41 @@ func TestDryRun_NoChangeNoDiffs(t *testing.T) {
 	}
 }
 
+func TestResolve_QuotaRotateThreshold(t *testing.T) {
+	base := Defaults() // default 0.95
+
+	// Valid value applies.
+	got := Resolve(base, Patch{QuotaRotateThreshold: ptrF(0.8)})
+	if got.QuotaRotateThreshold != 0.8 {
+		t.Fatalf("QuotaRotateThreshold=%v, want 0.8", got.QuotaRotateThreshold)
+	}
+
+	// Invalid value (>1) falls back to 0.95.
+	got = Resolve(base, Patch{QuotaRotateThreshold: ptrF(1.5)})
+	if got.QuotaRotateThreshold != 0.95 {
+		t.Fatalf("QuotaRotateThreshold=%v, want 0.95 (out-of-range reset)", got.QuotaRotateThreshold)
+	}
+
+	// Invalid value (<=0) falls back to 0.95.
+	got = Resolve(base, Patch{QuotaRotateThreshold: ptrF(0)})
+	if got.QuotaRotateThreshold != 0.95 {
+		t.Fatalf("QuotaRotateThreshold=%v, want 0.95 (zero reset)", got.QuotaRotateThreshold)
+	}
+
+	// DryRun reports the changed field.
+	_, diffs := DryRun(base, Patch{QuotaRotateThreshold: ptrF(0.7)})
+	seen := map[string]Diff{}
+	for _, d := range diffs {
+		seen[d.Field] = d
+	}
+	if _, ok := seen["QuotaRotateThreshold"]; !ok {
+		t.Fatal("DryRun missing diff for QuotaRotateThreshold")
+	}
+	if d := seen["QuotaRotateThreshold"]; d.To != "0.7" {
+		t.Fatalf("QuotaRotateThreshold diff To=%q, want 0.7", d.To)
+	}
+}
+
 func TestResolve_FallbackStrategyTriggers(t *testing.T) {
 	base := Defaults()
 	patch := Patch{

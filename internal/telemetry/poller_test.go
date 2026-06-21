@@ -21,6 +21,54 @@ func sfx(t *testing.T) string {
 	return hex.EncodeToString(b)
 }
 
+func TestPoller_ThresholdFromPolicy(t *testing.T) {
+	const def = 0.95
+	cases := []struct {
+		name  string
+		json  []byte
+		want  float64
+	}{
+		{
+			name: "valid 0.8",
+			json: []byte(`{"QuotaRotateThreshold":0.8}`),
+			want: 0.8,
+		},
+		{
+			name: "nil pointer in patch (field absent)",
+			json: []byte(`{}`),
+			want: def,
+		},
+		{
+			name: "value 1.5 out of range",
+			json: []byte(`{"QuotaRotateThreshold":1.5}`),
+			want: def,
+		},
+		{
+			name: "value 0 out of range",
+			json: []byte(`{"QuotaRotateThreshold":0}`),
+			want: def,
+		},
+		{
+			name: "empty JSON",
+			json: []byte(``),
+			want: def,
+		},
+		{
+			name: "invalid JSON",
+			json: []byte(`not-json`),
+			want: def,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := pickThreshold(tc.json, def)
+			if got != tc.want {
+				t.Fatalf("pickThreshold(%q, %v) = %v, want %v", tc.json, def, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestPollOnce_SetsLimitedFromQuota(t *testing.T) {
 	url := os.Getenv("TEST_DATABASE_URL")
 	if url == "" {

@@ -21,6 +21,7 @@ type Config struct {
 	FallbackProbeEnabled      bool
 	BanSignals                []int
 	BanKeywords               []string
+	QuotaRotateThreshold      float64
 }
 
 // Defaults returns sane baseline configuration.
@@ -41,6 +42,7 @@ func Defaults() Config {
 		FallbackProbeEnabled:      false,
 		BanSignals:                []int{401, 403},
 		BanKeywords:               []string{"authentication_error", "account_disabled", "account_suspended"},
+		QuotaRotateThreshold:      0.95,
 	}
 }
 
@@ -61,6 +63,7 @@ type Patch struct {
 	FallbackProbeEnabled      *bool
 	BanSignals                *[]int
 	BanKeywords               *[]string
+	QuotaRotateThreshold      *float64
 }
 
 func apply(c *Config, p Patch) {
@@ -109,6 +112,13 @@ func apply(c *Config, p Patch) {
 	if p.BanKeywords != nil {
 		c.BanKeywords = *p.BanKeywords
 	}
+	if p.QuotaRotateThreshold != nil {
+		if v := *p.QuotaRotateThreshold; v > 0 && v <= 1 {
+			c.QuotaRotateThreshold = v
+		} else {
+			c.QuotaRotateThreshold = 0.95
+		}
+	}
 }
 
 // Resolve applies patches in order onto base (later patches win).
@@ -152,5 +162,6 @@ func DryRun(base Config, patches ...Patch) (Config, []Diff) {
 	add("FallbackProbeEnabled", base.FallbackProbeEnabled, final.FallbackProbeEnabled)
 	add("BanSignals", base.BanSignals, final.BanSignals)
 	add("BanKeywords", base.BanKeywords, final.BanKeywords)
+	add("QuotaRotateThreshold", base.QuotaRotateThreshold, final.QuotaRotateThreshold)
 	return final, diffs
 }

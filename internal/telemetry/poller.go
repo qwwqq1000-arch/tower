@@ -2,10 +2,12 @@ package telemetry
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 	"github.com/qwwqq1000-arch/tower/internal/nodeclient"
+	"github.com/qwwqq1000-arch/tower/internal/policy"
 	"github.com/qwwqq1000-arch/tower/internal/state"
 )
 
@@ -21,6 +23,7 @@ type Poller struct {
 
 // PollOnce refreshes every enabled node's accounts once.
 func (p *Poller) PollOnce(ctx context.Context) error {
+	thresh := p.threshold(ctx)
 	nodes, err := p.Q.ListNodes(ctx)
 	if err != nil {
 		return err
@@ -57,11 +60,41 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 			}
 			p.Store.SetOffline(key, p.Capacity, false)
 			if pq, ok := findProfile(quota, a.ProfileID); ok {
-				p.Store.SetLimited(key, p.Capacity, LimitsFromQuota(pq, p.Threshold, now, p.DefaultTTLMs))
+				p.Store.SetLimited(key, p.Capacity, LimitsFromQuota(pq, thresh, now, p.DefaultTTLMs))
 			}
 		}
 	}
 	return nil
+}
+
+// pickThreshold extracts QuotaRotateThreshold from a JSON policy patch.
+// If the patch is absent, unparseable, or contains an invalid value (<=0 or >1),
+// it returns def unchanged.
+func pickThreshold(patchJSON []byte, def float64) float64 {
+	var p policy.Patch
+	if err := json.Unmarshal(patchJSON, &p); err != nil {
+		return def
+	}
+	if p.QuotaRotateThreshold != nil {
+		if v := *p.QuotaRotateThreshold; v > 0 && v <= 1 {
+			return v
+		}
+	}
+	return def
+}
+
+// threshold reads the global policy row and returns the effective QuotaRotateThreshold.
+func (p *Poller) threshold(ctx context.Context) float64 {
+	rows, err := p.Q.ListPolicies(ctx)
+	if err != nil {
+		return p.Threshold
+	}
+	for _, row := range rows {
+		if row.ScopeType == "global" {
+			return pickThreshold(row.Params, p.Threshold)
+		}
+	}
+	return p.Threshold
 }
 
 func findProfile(q nodeclient.QuotaAll, id string) (nodeclient.ProfileQuota, bool) {
