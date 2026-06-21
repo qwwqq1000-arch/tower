@@ -115,7 +115,12 @@ func changePasswordHandler(q *sqlc.Queries) http.HandlerFunc {
 			return
 		}
 		u, err := q.GetTenantByID(r.Context(), p.Sub)
-		if err != nil || !auth.VerifyPassword(b.OldPassword, u.PwHash, u.Salt) {
+		if err != nil {
+			auth.DummyVerify(b.OldPassword) // equalize timing; always false
+			writeJSON(w, 401, map[string]string{"error": "old password incorrect"})
+			return
+		}
+		if !auth.VerifyPassword(b.OldPassword, u.PwHash, u.Salt) {
 			writeJSON(w, 401, map[string]string{"error": "old password incorrect"})
 			return
 		}
