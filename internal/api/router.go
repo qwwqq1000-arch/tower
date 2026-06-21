@@ -91,6 +91,15 @@ func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc
 		mux.HandleFunc("PATCH /api/me/fallback-channels/{id}", requireSession(secret, meUpdateFallbackHandler(q)))
 		mux.HandleFunc("DELETE /api/me/fallback-channels/{id}", requireSession(secret, meDeleteFallbackHandler(q)))
 		mux.HandleFunc("PATCH /api/me/fallback-channels/{id}/enabled", requireSession(secret, meEnableFallbackHandler(q)))
+		mux.HandleFunc("GET /api/me/slots", requireSession(secret, meListSlotsHandler(q)))
+		mux.HandleFunc("POST /api/me/slots", requireSession(secret, meCreateSlotHandler(q)))
+		mux.HandleFunc("DELETE /api/me/slots/{id}", requireSession(secret, meDeleteSlotHandler(q)))
+		mux.HandleFunc("PATCH /api/me/slots/{id}/enabled", requireSession(secret, meSetSlotEnabledHandler(q)))
+		mux.HandleFunc("GET /api/me/dispatch-keys", requireSession(secret, meListDispatchKeysHandler(q)))
+		mux.HandleFunc("POST /api/me/dispatch-keys", requireSession(secret, meCreateDispatchKeyHandler(q)))
+		mux.HandleFunc("DELETE /api/me/dispatch-keys/{id}", requireSession(secret, meDeleteDispatchKeyHandler(q)))
+		mux.HandleFunc("GET /api/me/dispatch/status", requireSession(secret, meDispatchStatusHandler(q, svc)))
+		mux.HandleFunc("GET /api/me/ban-analysis", requireSession(secret, meBanAnalysisHandler(q)))
 	}
 	mux.Handle("/", web.SPAHandler())
 	return mux

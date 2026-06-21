@@ -17,3 +17,9 @@ SELECT count(*) FROM dispatch_logs;
 
 -- name: CountDispatchLogsSince :one
 SELECT count(*) FROM dispatch_logs WHERE ts >= $1;
+
+-- name: CountDispatchLogsByOwner :one
+SELECT count(*) FROM dispatch_logs WHERE owner_id = $1;
+
+-- name: CountDispatchLogsByOwnerSince :one
+SELECT count(*) FROM dispatch_logs WHERE owner_id = $1 AND ts >= $2;

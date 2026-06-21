@@ -242,3 +242,150 @@ func TestMeEndpointsOwnerScoping(t *testing.T) {
 		t.Fatalf("ledger leak: %s", b)
 	}
 }
+
+// TestMeSettingsOwnerScoping verifies strict owner isolation on tenant settings
+// endpoints: slots + dispatch-keys. Owner A creates resources; A lists only A's;
+// A cannot delete B's (403). Reads/writes never cross tenants.
+func TestMeSettingsOwnerScoping(t *testing.T) {
+	url := os.Getenv("TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	if err := db.Migrate(ctx, url); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	pool, err := db.Connect(ctx, url)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	q := sqlc.New(pool)
+	const secret = "test-secret-padding-to-32-chars!"
+	router := NewRouter(pool, secret, nil, q)
+
+	ownerA := randHex("owA_")
+	ownerB := randHex("owB_")
+	ckA := sessionCookie(secret, ownerA, "tenant")
+	ckB := sessionCookie(secret, ownerB, "tenant")
+
+	do := func(ck *http.Cookie, m, p, b string) *httptest.ResponseRecorder {
+		var r *http.Request
+		if b != "" {
+			r = httptest.NewRequest(m, p, strings.NewReader(b))
+		} else {
+			r = httptest.NewRequest(m, p, nil)
+		}
+		r.AddCookie(ck)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, r)
+		return rec
+	}
+
+	// Track created ids for cleanup.
+	var slotIDs, keyIDs []string
+	t.Cleanup(func() {
+		cctx := context.Background()
+		for _, id := range slotIDs {
+			_ = q.DeleteSlot(cctx, id)
+		}
+		for _, id := range keyIDs {
+			_ = q.DisableDispatchKey(cctx, id)
+		}
+	})
+
+	// ---- slots ----
+	// A creates a slot; B creates a slot.
+	recA := do(ckA, "POST", "/api/me/slots", `{"name":"slotA","startMin":0,"endMin":600}`)
+	if recA.Code != 200 {
+		t.Fatalf("A create slot=%d %s", recA.Code, recA.Body)
+	}
+	var sa struct{ ID string }
+	_ = json.Unmarshal(recA.Body.Bytes(), &sa)
+	slotIDs = append(slotIDs, sa.ID)
+
+	recB := do(ckB, "POST", "/api/me/slots", `{"name":"slotB","startMin":0,"endMin":600}`)
+	if recB.Code != 200 {
+		t.Fatalf("B create slot=%d %s", recB.Code, recB.Body)
+	}
+	var sb struct{ ID string }
+	_ = json.Unmarshal(recB.Body.Bytes(), &sb)
+	slotIDs = append(slotIDs, sb.ID)
+
+	// created slot is owned by the creator.
+	if got, _ := q.GetSlot(ctx, sa.ID); got.OwnerID != ownerA {
+		t.Fatalf("slot A owner=%s want %s", got.OwnerID, ownerA)
+	}
+
+	// A lists only A's slot.
+	rec := do(ckA, "GET", "/api/me/slots", "")
+	if b := rec.Body.String(); !strings.Contains(b, sa.ID) || strings.Contains(b, sb.ID) {
+		t.Fatalf("slots leak: %s", b)
+	}
+
+	// A cannot delete B's slot (403); B's slot survives.
+	if rec := do(ckA, "DELETE", "/api/me/slots/"+sb.ID, ""); rec.Code != 403 {
+		t.Fatalf("A delete B slot=%d want 403; body=%s", rec.Code, rec.Body)
+	}
+	if _, err := q.GetSlot(ctx, sb.ID); err != nil {
+		t.Fatalf("B slot deleted by A: %v", err)
+	}
+	// A cannot toggle B's slot (403).
+	if rec := do(ckA, "PATCH", "/api/me/slots/"+sb.ID+"/enabled", `{"enabled":false}`); rec.Code != 403 {
+		t.Fatalf("A toggle B slot=%d want 403", rec.Code)
+	}
+	// A can delete own slot.
+	if rec := do(ckA, "DELETE", "/api/me/slots/"+sa.ID, ""); rec.Code != 200 {
+		t.Fatalf("A delete own slot=%d %s", rec.Code, rec.Body)
+	}
+
+	// ---- dispatch keys ----
+	recA = do(ckA, "POST", "/api/me/dispatch-keys", `{"label":"keyA"}`)
+	if recA.Code != 200 {
+		t.Fatalf("A create key=%d %s", recA.Code, recA.Body)
+	}
+	var ka struct{ ID, Key string }
+	_ = json.Unmarshal(recA.Body.Bytes(), &ka)
+	keyIDs = append(keyIDs, ka.ID)
+	if ka.Key == "" {
+		t.Fatalf("create key returned empty plaintext")
+	}
+
+	recB = do(ckB, "POST", "/api/me/dispatch-keys", `{"label":"keyB"}`)
+	if recB.Code != 200 {
+		t.Fatalf("B create key=%d %s", recB.Code, recB.Body)
+	}
+	var kb struct{ ID string }
+	_ = json.Unmarshal(recB.Body.Bytes(), &kb)
+	keyIDs = append(keyIDs, kb.ID)
+
+	// created key carries the creator's owner_id (dispatch isolation).
+	if rows, _ := q.ListDispatchKeysByOwner(ctx, ownerA); func() bool {
+		for _, k := range rows {
+			if k.ID == ka.ID {
+				return false
+			}
+		}
+		return true
+	}() {
+		t.Fatalf("A's key not owned by A")
+	}
+
+	// A lists only A's key.
+	rec = do(ckA, "GET", "/api/me/dispatch-keys", "")
+	if b := rec.Body.String(); !strings.Contains(b, ka.ID) || strings.Contains(b, kb.ID) {
+		t.Fatalf("keys leak: %s", b)
+	}
+
+	// A cannot delete B's key (403); B's key stays enabled.
+	if rec := do(ckA, "DELETE", "/api/me/dispatch-keys/"+kb.ID, ""); rec.Code != 403 {
+		t.Fatalf("A delete B key=%d want 403; body=%s", rec.Code, rec.Body)
+	}
+	if rows, _ := q.ListDispatchKeysByOwner(ctx, ownerB); len(rows) == 0 || !rows[0].Enabled {
+		t.Fatalf("B key disabled by A: %+v", rows)
+	}
+	// A can delete own key.
+	if rec := do(ckA, "DELETE", "/api/me/dispatch-keys/"+ka.ID, ""); rec.Code != 200 {
+		t.Fatalf("A delete own key=%d %s", rec.Code, rec.Body)
+	}
+}

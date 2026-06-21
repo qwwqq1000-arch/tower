@@ -20,6 +20,33 @@ func (q *Queries) CountDispatchLogs(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const countDispatchLogsByOwner = `-- name: CountDispatchLogsByOwner :one
+SELECT count(*) FROM dispatch_logs WHERE owner_id = $1
+`
+
+func (q *Queries) CountDispatchLogsByOwner(ctx context.Context, ownerID string) (int64, error) {
+	row := q.db.QueryRow(ctx, countDispatchLogsByOwner, ownerID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countDispatchLogsByOwnerSince = `-- name: CountDispatchLogsByOwnerSince :one
+SELECT count(*) FROM dispatch_logs WHERE owner_id = $1 AND ts >= $2
+`
+
+type CountDispatchLogsByOwnerSinceParams struct {
+	OwnerID string `json:"owner_id"`
+	Ts      int64  `json:"ts"`
+}
+
+func (q *Queries) CountDispatchLogsByOwnerSince(ctx context.Context, arg CountDispatchLogsByOwnerSinceParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countDispatchLogsByOwnerSince, arg.OwnerID, arg.Ts)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countDispatchLogsSince = `-- name: CountDispatchLogsSince :one
 SELECT count(*) FROM dispatch_logs WHERE ts >= $1
 `

@@ -241,6 +241,7 @@ type Slot struct {
 	EndMin    int32              `json:"end_min"`
 	Enabled   bool               `json:"enabled"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	OwnerID   string             `json:"owner_id"`
 }
 
 type Tenant struct {

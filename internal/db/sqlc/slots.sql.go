@@ -12,7 +12,7 @@ import (
 const createSlot = `-- name: CreateSlot :one
 INSERT INTO slots (id, name, start_min, end_min)
 VALUES ($1, $2, $3, $4)
-RETURNING id, name, start_min, end_min, enabled, created_at
+RETURNING id, name, start_min, end_min, enabled, created_at, owner_id
 `
 
 type CreateSlotParams struct {
@@ -37,6 +37,42 @@ func (q *Queries) CreateSlot(ctx context.Context, arg CreateSlotParams) (Slot, e
 		&i.EndMin,
 		&i.Enabled,
 		&i.CreatedAt,
+		&i.OwnerID,
+	)
+	return i, err
+}
+
+const createSlotOwned = `-- name: CreateSlotOwned :one
+INSERT INTO slots (id, name, start_min, end_min, owner_id)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, name, start_min, end_min, enabled, created_at, owner_id
+`
+
+type CreateSlotOwnedParams struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	StartMin int32  `json:"start_min"`
+	EndMin   int32  `json:"end_min"`
+	OwnerID  string `json:"owner_id"`
+}
+
+func (q *Queries) CreateSlotOwned(ctx context.Context, arg CreateSlotOwnedParams) (Slot, error) {
+	row := q.db.QueryRow(ctx, createSlotOwned,
+		arg.ID,
+		arg.Name,
+		arg.StartMin,
+		arg.EndMin,
+		arg.OwnerID,
+	)
+	var i Slot
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.StartMin,
+		&i.EndMin,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.OwnerID,
 	)
 	return i, err
 }
@@ -50,8 +86,27 @@ func (q *Queries) DeleteSlot(ctx context.Context, id string) error {
 	return err
 }
 
+const getSlot = `-- name: GetSlot :one
+SELECT id, name, start_min, end_min, enabled, created_at, owner_id FROM slots WHERE id = $1
+`
+
+func (q *Queries) GetSlot(ctx context.Context, id string) (Slot, error) {
+	row := q.db.QueryRow(ctx, getSlot, id)
+	var i Slot
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.StartMin,
+		&i.EndMin,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.OwnerID,
+	)
+	return i, err
+}
+
 const listSlots = `-- name: ListSlots :many
-SELECT id, name, start_min, end_min, enabled, created_at FROM slots ORDER BY name
+SELECT id, name, start_min, end_min, enabled, created_at, owner_id FROM slots ORDER BY name
 `
 
 func (q *Queries) ListSlots(ctx context.Context) ([]Slot, error) {
@@ -70,6 +125,39 @@ func (q *Queries) ListSlots(ctx context.Context) ([]Slot, error) {
 			&i.EndMin,
 			&i.Enabled,
 			&i.CreatedAt,
+			&i.OwnerID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSlotsByOwner = `-- name: ListSlotsByOwner :many
+SELECT id, name, start_min, end_min, enabled, created_at, owner_id FROM slots WHERE owner_id = $1 ORDER BY name
+`
+
+func (q *Queries) ListSlotsByOwner(ctx context.Context, ownerID string) ([]Slot, error) {
+	rows, err := q.db.Query(ctx, listSlotsByOwner, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Slot
+	for rows.Next() {
+		var i Slot
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.StartMin,
+			&i.EndMin,
+			&i.Enabled,
+			&i.CreatedAt,
+			&i.OwnerID,
 		); err != nil {
 			return nil, err
 		}

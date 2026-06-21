@@ -39,6 +39,40 @@ func (q *Queries) BanCountsByHour(ctx context.Context) ([]BanCountsByHourRow, er
 	return items, nil
 }
 
+const banCountsByHourForOwner = `-- name: BanCountsByHourForOwner :many
+SELECT EXTRACT(HOUR FROM to_timestamp(be.banned_at/1000.0))::int AS bucket, count(*)::int AS n
+FROM ban_episodes be
+JOIN node_accounts na ON na.node_id = be.node_id AND na.profile_id = be.profile_id
+JOIN accounts a ON a.id = na.account_id
+WHERE a.owner_id = $1
+GROUP BY bucket ORDER BY bucket
+`
+
+type BanCountsByHourForOwnerRow struct {
+	Bucket int32 `json:"bucket"`
+	N      int32 `json:"n"`
+}
+
+func (q *Queries) BanCountsByHourForOwner(ctx context.Context, ownerID string) ([]BanCountsByHourForOwnerRow, error) {
+	rows, err := q.db.Query(ctx, banCountsByHourForOwner, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BanCountsByHourForOwnerRow
+	for rows.Next() {
+		var i BanCountsByHourForOwnerRow
+		if err := rows.Scan(&i.Bucket, &i.N); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const banCountsByWeekday = `-- name: BanCountsByWeekday :many
 SELECT EXTRACT(DOW FROM to_timestamp(banned_at/1000.0))::int AS bucket, count(*)::int AS n
 FROM ban_episodes GROUP BY bucket ORDER BY bucket
@@ -69,12 +103,60 @@ func (q *Queries) BanCountsByWeekday(ctx context.Context) ([]BanCountsByWeekdayR
 	return items, nil
 }
 
+const banCountsByWeekdayForOwner = `-- name: BanCountsByWeekdayForOwner :many
+SELECT EXTRACT(DOW FROM to_timestamp(be.banned_at/1000.0))::int AS bucket, count(*)::int AS n
+FROM ban_episodes be
+JOIN node_accounts na ON na.node_id = be.node_id AND na.profile_id = be.profile_id
+JOIN accounts a ON a.id = na.account_id
+WHERE a.owner_id = $1
+GROUP BY bucket ORDER BY bucket
+`
+
+type BanCountsByWeekdayForOwnerRow struct {
+	Bucket int32 `json:"bucket"`
+	N      int32 `json:"n"`
+}
+
+func (q *Queries) BanCountsByWeekdayForOwner(ctx context.Context, ownerID string) ([]BanCountsByWeekdayForOwnerRow, error) {
+	rows, err := q.db.Query(ctx, banCountsByWeekdayForOwner, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BanCountsByWeekdayForOwnerRow
+	for rows.Next() {
+		var i BanCountsByWeekdayForOwnerRow
+		if err := rows.Scan(&i.Bucket, &i.N); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const banTotal = `-- name: BanTotal :one
 SELECT count(*) FROM ban_episodes
 `
 
 func (q *Queries) BanTotal(ctx context.Context) (int64, error) {
 	row := q.db.QueryRow(ctx, banTotal)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const banTotalByOwner = `-- name: BanTotalByOwner :one
+SELECT count(*) FROM ban_episodes be
+JOIN node_accounts na ON na.node_id = be.node_id AND na.profile_id = be.profile_id
+JOIN accounts a ON a.id = na.account_id
+WHERE a.owner_id = $1
+`
+
+func (q *Queries) BanTotalByOwner(ctx context.Context, ownerID string) (int64, error) {
+	row := q.db.QueryRow(ctx, banTotalByOwner, ownerID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
