@@ -80,8 +80,7 @@ function ConcurrencyPanel({ accounts }: { accounts: DispatchAccountSnapshot[] })
             {accounts.map((a) => (
               <tr key={a.key} className="border-b border-line/50 hover:bg-line/30 transition">
                 <td className="px-4 py-2">
-                  <p className="text-sm text-ink font-medium">{a.label ?? '—'}</p>
-                  <p className="text-xs font-mono text-muted mt-0.5 truncate max-w-[200px]">{a.key}</p>
+                  <p className="text-sm text-ink font-medium">{a.label || '—'}</p>
                 </td>
                 <td className="px-4 py-2"><StatusBadge status={a.status} /></td>
                 <td className="px-4 py-2 text-right tabular-nums">{a.inflight}</td>
@@ -130,7 +129,6 @@ function FallbackChannelsPanel({ channels }: { channels: DispatchFallbackChannel
                 <tr key={ch.id} className="border-b border-line/50 hover:bg-line/30 transition">
                   <td className="px-4 py-2">
                     <p className="text-sm text-ink font-medium">{ch.name}</p>
-                    <p className="text-xs font-mono text-muted mt-0.5">{ch.id}</p>
                   </td>
                   <td className="px-4 py-2">
                     <span className={`inline-flex items-center px-2 py-0.5 rounded border text-xs font-mono ${ch.enabled ? 'bg-green-500/20 text-green-400 border-green-500/40' : 'bg-gray-500/10 text-gray-500 border-gray-500/20'}`}>
@@ -210,9 +208,13 @@ function EventTimeline({ events, fallbackNames }: { events: DispatchEvent[]; fal
     if (target.startsWith('fallback:')) {
       const id = target.slice('fallback:'.length);
       const name = fallbackNames.get(id);
-      return name !== undefined ? `保底: ${name}` : target;
+      return name !== undefined ? `保底: ${name}` : '保底';
     }
-    return target;
+    // raw node/account keys — never expose them
+    if (target.startsWith('n_') || target.startsWith('fc_') || target.startsWith('fb:')) {
+      return '节点';
+    }
+    return target || '节点';
   }
 
   function formatTs(ts: number | undefined): string {
@@ -260,6 +262,13 @@ function ServerStatusCard({ status }: { status: ServerStatus | null }) {
     return `${m}m`;
   }
 
+  const diskVal = (status.diskUsedGB != null && status.diskTotalGB != null)
+    ? `${status.diskUsedGB.toFixed(1)}/${status.diskTotalGB.toFixed(1)} GB (${(status.diskUsedPct ?? 0).toFixed(0)}%)`
+    : '—';
+  const netVal = (status.netRxMBps != null && status.netTxMBps != null)
+    ? `↓${status.netRxMBps.toFixed(2)} / ↑${status.netTxMBps.toFixed(2)} MB/s`
+    : '—';
+
   const items = [
     { label: '运行时长', value: fmtUptime(status.uptimeSec) },
     { label: 'Goroutines', value: status.goroutines.toString() },
@@ -267,12 +276,14 @@ function ServerStatusCard({ status }: { status: ServerStatus | null }) {
     { label: 'GC 次数', value: status.numGC.toString() },
     { label: 'CPU 核数', value: status.numCPU.toString() },
     { label: 'Go 版本', value: status.goVersion },
+    { label: '磁盘', value: diskVal },
+    { label: '网络', value: netVal },
   ];
 
   return (
     <div className="bg-surface border border-line rounded-xl overflow-hidden mb-6">
       <div className="px-4 py-3 border-b border-line text-sm font-medium text-ink">调度服务器状态</div>
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 divide-x divide-line">
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 divide-x divide-line">
         {items.map((item) => (
           <div key={item.label} className="px-4 py-3">
             <p className="text-xs text-muted mb-1">{item.label}</p>

@@ -388,7 +388,7 @@ function AccountEditModal({
           <h2 className="text-sm font-semibold text-ink">编辑账户</h2>
           <button onClick={onClose} className="text-muted hover:text-ink text-lg leading-none">×</button>
         </div>
-        <p className="text-xs text-muted font-mono truncate">{account.accountId}</p>
+        <p className="text-xs text-muted truncate">{account.email || '—'}</p>
         <form onSubmit={(e) => { void handleSave(e); }} className="space-y-3">
           <div className="flex flex-col gap-1">
             <label className="text-xs text-muted font-medium">权重</label>

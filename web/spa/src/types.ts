@@ -434,4 +434,11 @@ export interface ServerStatus {
   goVersion: string;
   numCPU: number;
   startedAt: string;
+  diskTotalGB?: number;
+  diskUsedGB?: number;
+  diskUsedPct?: number;
+  netRxMBps?: number;
+  netTxMBps?: number;
+  netRxTotalMB?: number;
+  netTxTotalMB?: number;
 }

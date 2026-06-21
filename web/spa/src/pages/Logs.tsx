@@ -55,20 +55,10 @@ function renderTarget(target: string, channelMap: Map<string, string>, accountMa
   if (target.startsWith('fallback:')) {
     const id = target.slice('fallback:'.length);
     const name = channelMap.get(id);
-    if (name) return `保底: ${name}`;
-    const shortId = id.length > 8 ? id.slice(0, 8) + '…' : id;
-    return `保底: ${shortId}`;
+    return name ? `保底: ${name}` : '保底';
   }
   const email = accountMap.get(target);
-  if (email) {
-    return (
-      <>
-        {email}
-        <span className="ml-1 text-muted/60 font-mono text-[10px]">({target})</span>
-      </>
-    );
-  }
-  return target;
+  return email ?? '节点';
 }
 
 // ---- Desktop table row ----
