@@ -10,8 +10,10 @@ import {
   oauthStart,
   oauthExchange,
   updateNodeAccount,
+  listNodeProfiles,
+  importNodeProfile,
 } from '../api';
-import type { NodeRecord, AccountRow } from '../types';
+import type { NodeRecord, AccountRow, NodeProfile } from '../types';
 
 // ------------------------------------------------------------------
 // Small toast helper
@@ -37,9 +39,11 @@ type WizardStep = 'idle' | 'starting' | 'waitcode' | 'exchanging';
 
 function OAuthWizard({
   nodes,
+  accounts,
   onSuccess,
 }: {
   nodes: NodeRecord[];
+  accounts: AccountRow[];
   onSuccess: (msg: string) => void;
 }) {
   const [nodeId, setNodeId] = useState('');
@@ -49,6 +53,42 @@ function OAuthWizard({
   const [oauthState, setOauthState] = useState('');
   const [code, setCode] = useState('');
   const [err, setErr] = useState<string | null>(null);
+
+  // Node profiles
+  const [profiles, setProfiles] = useState<NodeProfile[]>([]);
+  const [profilesLoading, setProfilesLoading] = useState(false);
+  const [profilesErr, setProfilesErr] = useState<string | null>(null);
+  const [importingId, setImportingId] = useState<string | null>(null);
+
+  // Fetch profiles when a node is selected
+  useEffect(() => {
+    if (!nodeId) {
+      setProfiles([]);
+      setProfilesErr(null);
+      return;
+    }
+    setProfilesLoading(true);
+    setProfilesErr(null);
+    listNodeProfiles(nodeId)
+      .then((data) => setProfiles(data))
+      .catch((e) => setProfilesErr(e instanceof Error ? e.message : '加载失败'))
+      .finally(() => setProfilesLoading(false));
+  }, [nodeId]);
+
+  // Profiles already imported (by profileId)
+  const importedProfileIds = new Set(accounts.filter((a) => a.nodeId === nodeId).map((a) => a.profileId));
+
+  async function handleImport(profileId: string) {
+    setImportingId(profileId);
+    try {
+      await importNodeProfile(nodeId, profileId);
+      onSuccess('导入成功！账户已绑定到节点。');
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : '导入失败');
+    } finally {
+      setImportingId(null);
+    }
+  }
 
   async function handleStart() {
     if (!nodeId) return;
@@ -128,6 +168,66 @@ function OAuthWizard({
           >
             {step === 'starting' ? '请求中…' : '开始授权'}
           </button>
+        </div>
+      )}
+
+      {/* Node existing profiles (shown when a node is selected) */}
+      {nodeId && (step === 'idle' || step === 'starting') && (
+        <div className="border border-line rounded-lg p-3 space-y-2">
+          <p className="text-xs font-semibold text-muted uppercase tracking-wide">
+            该节点已有账户（可直接导入）
+          </p>
+          {profilesLoading && (
+            <p className="text-xs text-muted animate-pulse">加载中…</p>
+          )}
+          {profilesErr && (
+            <p className="text-xs text-err">{profilesErr}</p>
+          )}
+          {!profilesLoading && !profilesErr && profiles.length === 0 && (
+            <p className="text-xs text-muted">该节点暂无已登录账户</p>
+          )}
+          {!profilesLoading && !profilesErr && profiles.length > 0 && (
+            <ul className="space-y-2">
+              {profiles.map((p) => {
+                const alreadyImported = importedProfileIds.has(p.id);
+                return (
+                  <li key={p.id} className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <span className="text-xs text-ink font-mono truncate block">
+                        {p.email || p.id}
+                      </span>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        {p.loggedIn ? (
+                          <span className="text-[10px] bg-ok/10 text-ok border border-ok/30 rounded px-1">
+                            已登录
+                          </span>
+                        ) : (
+                          <span className="text-[10px] bg-muted/10 text-muted border border-line rounded px-1">
+                            未登录
+                          </span>
+                        )}
+                        {p.subscriptionType && (
+                          <span className="text-[10px] text-muted">{p.subscriptionType}</span>
+                        )}
+                      </div>
+                    </div>
+                    {alreadyImported ? (
+                      <span className="text-xs text-muted shrink-0">已导入</span>
+                    ) : (
+                      <button
+                        onClick={() => { void handleImport(p.id); }}
+                        disabled={importingId === p.id}
+                        className="shrink-0 text-xs px-2 py-1 bg-accent text-white rounded-lg
+                                   hover:bg-accent/80 disabled:opacity-50 transition"
+                      >
+                        {importingId === p.id ? '导入中…' : '导入'}
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
       )}
 
@@ -503,7 +603,7 @@ export default function Accounts() {
       </div>
 
       {/* OAuth Wizard */}
-      <OAuthWizard nodes={nodes} onSuccess={handleSuccess} />
+      <OAuthWizard nodes={nodes} accounts={accounts} onSuccess={handleSuccess} />
 
       {/* Loading */}
       {loading && (

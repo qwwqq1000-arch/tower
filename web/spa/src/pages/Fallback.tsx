@@ -219,7 +219,7 @@ function EditModal({ channel, onSave, onClose }: EditModalProps) {
     maxConcurrent: channel.maxConcurrent,
     cooldownMs: channel.cooldownMs,
     priceThreshold: channel.priceThreshold,
-    modelAllowlist: channel.modelAllowlist.join(','),
+    modelAllowlist: channel.modelAllowlist,
   };
 
   async function handleSubmit(f: FormState) {
@@ -348,10 +348,7 @@ export default function Fallback() {
         maxConcurrent: f.maxConcurrent,
         cooldownMs: f.cooldownMs,
         priceThreshold: f.priceThreshold,
-        modelAllowlist: f.modelAllowlist
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean),
+        modelAllowlist: f.modelAllowlist,
       });
       setChannels((prev) => [...prev, ch]);
     } catch (e) {
@@ -372,10 +369,7 @@ export default function Fallback() {
       maxConcurrent: f.maxConcurrent,
       cooldownMs: f.cooldownMs,
       priceThreshold: f.priceThreshold,
-      modelAllowlist: f.modelAllowlist
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean),
+      modelAllowlist: f.modelAllowlist,
     });
     setChannels((prev) => prev.map((c) => (c.id === id ? updated : c)));
   }
@@ -534,9 +528,9 @@ export default function Fallback() {
                         </p>
                       </div>
                     </div>
-                    {c.modelAllowlist.length > 0 && (
+                    {c.modelAllowlist && (
                       <p className="text-xs text-muted truncate">
-                        模型: {c.modelAllowlist.join(', ')}
+                        模型: {c.modelAllowlist}
                       </p>
                     )}
                     <div className="flex gap-3 pt-1">

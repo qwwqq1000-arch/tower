@@ -260,6 +260,52 @@ function KeyMobileCard({
 }
 
 // ------------------------------------------------------------------
+// Gateway endpoint panel
+// ------------------------------------------------------------------
+function GatewayPanel() {
+  const [copied, setCopied] = useState(false);
+  const gatewayUrl = `${window.location.origin}/v1/messages`;
+
+  function handleCopy() {
+    void navigator.clipboard.writeText(gatewayUrl).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+
+  return (
+    <div className="bg-surface border border-line rounded-xl p-4 space-y-3">
+      <div>
+        <p className="text-xs font-semibold text-muted uppercase tracking-wide mb-1">
+          网关地址（new-api 渠道地址）
+        </p>
+        <div className="flex gap-2">
+          <input
+            readOnly
+            value={gatewayUrl}
+            className="flex-1 bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink
+                       font-mono focus:outline-none focus:border-accent transition"
+          />
+          <button
+            onClick={handleCopy}
+            className={`px-3 py-2 text-sm font-medium rounded-lg border transition whitespace-nowrap ${
+              copied
+                ? 'bg-ok/10 border-ok/40 text-ok'
+                : 'bg-accent text-white border-accent hover:bg-accent/80'
+            }`}
+          >
+            {copied ? '已复制' : '复制'}
+          </button>
+        </div>
+      </div>
+      <p className="text-xs text-muted">
+        在 new-api 新建 Claude 渠道：地址填上面，密钥填下面新建的 dk_…
+      </p>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------
 // Keys page
 // ------------------------------------------------------------------
 export default function Keys() {
@@ -304,6 +350,9 @@ export default function Keys() {
           {keys.filter((k) => k.enabled).length} / {keys.length} 启用
         </span>
       </div>
+
+      {/* Gateway endpoint */}
+      <GatewayPanel />
 
       {/* Create form */}
       <CreateKeyForm onCreated={handleCreated} />

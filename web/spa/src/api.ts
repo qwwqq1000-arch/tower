@@ -174,6 +174,13 @@ export const unassignAccount = (nodeId: string, accountId: string) =>
 export const listNodeProfiles = (nodeId: string) =>
   api<NodeProfile[]>('GET', `/api/admin/nodes/${nodeId}/profiles`);
 
+export const importNodeProfile = (nodeId: string, profileId: string) =>
+  api<{ ok: boolean; profileId: string; email?: string; reused?: boolean }>(
+    'POST',
+    `/api/admin/nodes/${nodeId}/accounts/import`,
+    { profileId },
+  );
+
 export const oauthStart = (nodeId: string) =>
   api<OAuthStartResult>('POST', `/api/admin/nodes/${nodeId}/oauth/start`);
 
@@ -218,7 +225,7 @@ export const createFallbackChannel = (body: {
   maxConcurrent?: number;
   cooldownMs?: number;
   priceThreshold?: number;
-  modelAllowlist?: string[];
+  modelAllowlist?: string;
 }) => api<FallbackChannel>('POST', '/api/admin/fallback-channels', body);
 
 export const updateFallbackChannel = (id: string, body: Partial<{
@@ -230,7 +237,7 @@ export const updateFallbackChannel = (id: string, body: Partial<{
   maxConcurrent: number;
   cooldownMs: number;
   priceThreshold: number;
-  modelAllowlist: string[];
+  modelAllowlist: string;
 }>) => api<FallbackChannel>('PATCH', `/api/admin/fallback-channels/${id}`, body);
 
 export const setFallbackEnabled = (id: string, enabled: boolean) =>

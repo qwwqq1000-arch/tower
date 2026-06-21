@@ -246,6 +246,9 @@ export interface NodeProfile {
   id: string;
   email?: string;
   name?: string;
+  loggedIn?: boolean;
+  subscriptionType?: string;
+  type?: string;
 }
 
 export interface OAuthStartResult {
@@ -269,7 +272,7 @@ export interface FallbackChannel {
   maxConcurrent: number;
   cooldownMs: number;
   priceThreshold: number;
-  modelAllowlist: string[];
+  modelAllowlist: string;
   enabled: boolean;
   ownerId: string;
 }
