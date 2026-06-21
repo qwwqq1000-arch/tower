@@ -16,6 +16,9 @@ type Config struct {
 	AffinityTTLSec            int
 	FallbackEnabled           bool
 	FallbackPriceThresholdUsd float64
+	FallbackKeywords          []string
+	FallbackModels            []string
+	FallbackProbeEnabled      bool
 	BanSignals                []int
 	BanKeywords               []string
 }
@@ -33,6 +36,9 @@ func Defaults() Config {
 		AffinityTTLSec:            300,
 		FallbackEnabled:           false,
 		FallbackPriceThresholdUsd: 0.005,
+		FallbackKeywords:          nil,
+		FallbackModels:            nil,
+		FallbackProbeEnabled:      false,
 		BanSignals:                []int{401, 403},
 		BanKeywords:               []string{"authentication_error", "account_disabled", "account_suspended"},
 	}
@@ -50,6 +56,9 @@ type Patch struct {
 	AffinityTTLSec            *int
 	FallbackEnabled           *bool
 	FallbackPriceThresholdUsd *float64
+	FallbackKeywords          *[]string
+	FallbackModels            *[]string
+	FallbackProbeEnabled      *bool
 	BanSignals                *[]int
 	BanKeywords               *[]string
 }
@@ -84,6 +93,15 @@ func apply(c *Config, p Patch) {
 	}
 	if p.FallbackPriceThresholdUsd != nil {
 		c.FallbackPriceThresholdUsd = *p.FallbackPriceThresholdUsd
+	}
+	if p.FallbackKeywords != nil {
+		c.FallbackKeywords = *p.FallbackKeywords
+	}
+	if p.FallbackModels != nil {
+		c.FallbackModels = *p.FallbackModels
+	}
+	if p.FallbackProbeEnabled != nil {
+		c.FallbackProbeEnabled = *p.FallbackProbeEnabled
 	}
 	if p.BanSignals != nil {
 		c.BanSignals = *p.BanSignals
@@ -129,6 +147,9 @@ func DryRun(base Config, patches ...Patch) (Config, []Diff) {
 	add("AffinityTTLSec", base.AffinityTTLSec, final.AffinityTTLSec)
 	add("FallbackEnabled", base.FallbackEnabled, final.FallbackEnabled)
 	add("FallbackPriceThresholdUsd", base.FallbackPriceThresholdUsd, final.FallbackPriceThresholdUsd)
+	add("FallbackKeywords", base.FallbackKeywords, final.FallbackKeywords)
+	add("FallbackModels", base.FallbackModels, final.FallbackModels)
+	add("FallbackProbeEnabled", base.FallbackProbeEnabled, final.FallbackProbeEnabled)
 	add("BanSignals", base.BanSignals, final.BanSignals)
 	add("BanKeywords", base.BanKeywords, final.BanKeywords)
 	return final, diffs

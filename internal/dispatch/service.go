@@ -67,8 +67,8 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 	est := billing.CostUsd(model, int64(len(body)/4), 2000, 0, 0)
 	trig := fallback.Decide(fallback.DecideInput{
 		Model: model, BodyText: bodyText, EstCostUsd: est, PoolEmpty: len(order) == 0,
-		Keywords: nil, FallbackModels: nil, PriceThresholdUsd: cfg.FallbackPriceThresholdUsd,
-		ProbeEnabled: false,
+		Keywords: cfg.FallbackKeywords, FallbackModels: cfg.FallbackModels, PriceThresholdUsd: cfg.FallbackPriceThresholdUsd,
+		ProbeEnabled: cfg.FallbackProbeEnabled,
 	})
 
 	// Fallback-first when triggered (and channels exist).

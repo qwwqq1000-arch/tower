@@ -5,9 +5,10 @@ import (
 	"testing"
 )
 
-func ptrI(i int) *int       { return &i }
-func ptrB(b bool) *bool     { return &b }
+func ptrI(i int) *int         { return &i }
+func ptrB(b bool) *bool       { return &b }
 func ptrF(f float64) *float64 { return &f }
+func ptrSS(ss []string) *[]string { return &ss }
 
 func TestResolve_LayeredOverride(t *testing.T) {
 	base := Defaults()
@@ -61,5 +62,38 @@ func TestDryRun_NoChangeNoDiffs(t *testing.T) {
 	_, diffs := DryRun(base, Patch{MaxConcurrent: ptrI(base.MaxConcurrent)})
 	if len(diffs) != 0 {
 		t.Fatalf("setting same value should produce 0 diffs, got %v", diffs)
+	}
+}
+
+func TestResolve_FallbackStrategyTriggers(t *testing.T) {
+	base := Defaults()
+	patch := Patch{
+		FallbackKeywords:     ptrSS([]string{"danger"}),
+		FallbackModels:       ptrSS([]string{"claude-opus-4-7"}),
+		FallbackProbeEnabled: ptrB(true),
+	}
+
+	// Resolve applies all three fields.
+	got := Resolve(base, patch)
+	if !reflect.DeepEqual(got.FallbackKeywords, []string{"danger"}) {
+		t.Fatalf("FallbackKeywords=%v, want [danger]", got.FallbackKeywords)
+	}
+	if !reflect.DeepEqual(got.FallbackModels, []string{"claude-opus-4-7"}) {
+		t.Fatalf("FallbackModels=%v, want [claude-opus-4-7]", got.FallbackModels)
+	}
+	if !got.FallbackProbeEnabled {
+		t.Fatal("FallbackProbeEnabled should be true")
+	}
+
+	// DryRun reports the three changed fields.
+	_, diffs := DryRun(base, patch)
+	seen := map[string]Diff{}
+	for _, d := range diffs {
+		seen[d.Field] = d
+	}
+	for _, field := range []string{"FallbackKeywords", "FallbackModels", "FallbackProbeEnabled"} {
+		if _, ok := seen[field]; !ok {
+			t.Fatalf("DryRun missing diff for %s", field)
+		}
 	}
 }
