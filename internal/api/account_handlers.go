@@ -61,8 +61,16 @@ func oauthExchangeHandler(q *sqlc.Queries) http.HandlerFunc {
 				break
 			}
 		}
+		// Idempotent per (node, profile): reuse existing assignment if present.
+		existing, _ := q.ListNodeAccountsByNode(r.Context(), n.ID)
+		for _, a := range existing {
+			if a.ProfileID == profileID {
+				writeJSON(w, 200, map[string]string{"ok": "true", "profileId": profileID, "email": email, "reused": "true"})
+				return
+			}
+		}
 		accID := randHex("acc_")
-		_, _ = q.CreateAccount(r.Context(), sqlc.CreateAccountParams{
+		if _, err := q.CreateAccount(r.Context(), sqlc.CreateAccountParams{
 			ID:               accID,
 			OwnerID:          n.OwnerID,
 			Email:            email,
@@ -71,8 +79,11 @@ func oauthExchangeHandler(q *sqlc.Queries) http.HandlerFunc {
 			OauthRefreshEnc:  "",
 			ExpiresAt:        0,
 			OnboardedAt:      0,
-		})
-		_, _ = q.AssignAccount(r.Context(), sqlc.AssignAccountParams{
+		}); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if _, err := q.AssignAccount(r.Context(), sqlc.AssignAccountParams{
 			NodeID:    n.ID,
 			AccountID: accID,
 			ProfileID: profileID,
@@ -80,7 +91,10 @@ func oauthExchangeHandler(q *sqlc.Queries) http.HandlerFunc {
 			Weight:    100,
 			Role:      "baseline",
 			SlotID:    "",
-		})
+		}); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
 		writeJSON(w, 200, map[string]string{"ok": "true", "profileId": profileID, "email": email})
 	}
 }

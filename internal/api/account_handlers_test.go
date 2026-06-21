@@ -96,4 +96,13 @@ func TestAccountOAuthFlow(t *testing.T) {
 	if rec := do("GET", "/api/admin/accounts", ""); rec.Code != 200 || !strings.Contains(rec.Body.String(), "default") {
 		t.Fatalf("list accounts=%d %s", rec.Code, rec.Body)
 	}
+
+	// Idempotency: second exchange for the same profile must not create a duplicate.
+	if rec := do("POST", "/api/admin/nodes/"+nodeID+"/oauth/exchange", `{"codeVerifier":"v1","state":"s1","code":"c"}`); rec.Code != 200 {
+		t.Fatalf("exchange2=%d %s", rec.Code, rec.Body)
+	}
+	accs2, _ := q.ListNodeAccountsByNode(ctx, nodeID)
+	if len(accs2) != 1 {
+		t.Fatalf("idempotency failed: expected 1 assignment after second exchange, got %d: %+v", len(accs2), accs2)
+	}
 }
