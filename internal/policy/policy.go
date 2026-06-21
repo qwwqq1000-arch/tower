@@ -23,6 +23,18 @@ type Config struct {
 	BanKeywords               []string
 	QuotaRotateThreshold      float64
 	MaxFailover               int
+
+	// Session exile: route a conversation to fallback after this many consecutive
+	// errors from our nodes. 0 = disabled.
+	SessionErrorThreshold int
+	// SessionCooldownSec is the duration (in seconds) a conversation stays exiled.
+	// Applies to both session-error exile and response-refusal exile. Default 300.
+	SessionCooldownSec int
+	// ResponseExileEnabled enables detection of Claude safety-refusal responses.
+	ResponseExileEnabled bool
+	// ResponseExileKeywords are substrings (case-insensitive) that identify a
+	// safety-refusal body. Matched conversation is force-exiled to fallback.
+	ResponseExileKeywords []string
 }
 
 // Defaults returns sane baseline configuration.
@@ -45,6 +57,10 @@ func Defaults() Config {
 		BanKeywords:               []string{"authentication_error", "account_disabled", "account_suspended"},
 		QuotaRotateThreshold:      0.95,
 		MaxFailover:               50,
+		SessionErrorThreshold:     0,
+		SessionCooldownSec:        300,
+		ResponseExileEnabled:      false,
+		ResponseExileKeywords:     []string{"cyber", "usage policy", "i can't help", "i cannot help"},
 	}
 }
 
@@ -67,6 +83,10 @@ type Patch struct {
 	BanKeywords               *[]string
 	QuotaRotateThreshold      *float64
 	MaxFailover               *int
+	SessionErrorThreshold     *int
+	SessionCooldownSec        *int
+	ResponseExileEnabled      *bool
+	ResponseExileKeywords     *[]string
 }
 
 func apply(c *Config, p Patch) {
@@ -125,6 +145,18 @@ func apply(c *Config, p Patch) {
 	if p.MaxFailover != nil {
 		c.MaxFailover = *p.MaxFailover
 	}
+	if p.SessionErrorThreshold != nil {
+		c.SessionErrorThreshold = *p.SessionErrorThreshold
+	}
+	if p.SessionCooldownSec != nil {
+		c.SessionCooldownSec = *p.SessionCooldownSec
+	}
+	if p.ResponseExileEnabled != nil {
+		c.ResponseExileEnabled = *p.ResponseExileEnabled
+	}
+	if p.ResponseExileKeywords != nil {
+		c.ResponseExileKeywords = *p.ResponseExileKeywords
+	}
 }
 
 // Resolve applies patches in order onto base (later patches win).
@@ -170,5 +202,9 @@ func DryRun(base Config, patches ...Patch) (Config, []Diff) {
 	add("BanKeywords", base.BanKeywords, final.BanKeywords)
 	add("QuotaRotateThreshold", base.QuotaRotateThreshold, final.QuotaRotateThreshold)
 	add("MaxFailover", base.MaxFailover, final.MaxFailover)
+	add("SessionErrorThreshold", base.SessionErrorThreshold, final.SessionErrorThreshold)
+	add("SessionCooldownSec", base.SessionCooldownSec, final.SessionCooldownSec)
+	add("ResponseExileEnabled", base.ResponseExileEnabled, final.ResponseExileEnabled)
+	add("ResponseExileKeywords", base.ResponseExileKeywords, final.ResponseExileKeywords)
 	return final, diffs
 }

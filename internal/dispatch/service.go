@@ -16,6 +16,7 @@ import (
 	"github.com/qwwqq1000-arch/tower/internal/events"
 	"github.com/qwwqq1000-arch/tower/internal/fallback"
 	"github.com/qwwqq1000-arch/tower/internal/policy"
+	"github.com/qwwqq1000-arch/tower/internal/session"
 	"github.com/qwwqq1000-arch/tower/internal/state"
 )
 
@@ -25,11 +26,23 @@ type Service struct {
 	Store *state.Store
 	Base  policy.Config
 	Now   func() int64
+	sess  *session.Store
 }
 
 // NewService builds a dispatch Service.
 func NewService(q *sqlc.Queries, store *state.Store, base policy.Config, now func() int64) *Service {
-	return &Service{Q: q, Store: store, Base: base, Now: now}
+	return &Service{Q: q, Store: store, Base: base, Now: now, sess: session.NewStore()}
+}
+
+// matchesAny reports whether body contains any of kws (case-insensitive).
+func matchesAny(body string, kws []string) bool {
+	lower := strings.ToLower(body)
+	for _, kw := range kws {
+		if strings.Contains(lower, strings.ToLower(kw)) {
+			return true
+		}
+	}
+	return false
 }
 
 // Outcome is the result of a dispatch.
@@ -69,6 +82,9 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 	order, resolver := s.buildCandidates(ctx, ownerID, cfg.MaxConcurrent)
 	channels := s.enabledChannels(ctx, ownerID)
 
+	conv := session.ConvID(body)
+	nowMs := s.Now()
+
 	est := billing.CostUsd(model, int64(len(body)/4), 2000, 0, 0)
 	trig := fallback.Decide(fallback.DecideInput{
 		Model: model, BodyText: bodyText, EstCostUsd: est, PoolEmpty: len(order) == 0,
@@ -81,6 +97,11 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 		return s.viaChannel(ctx, ownerID, model, body, channels[0], string(trig), time.Since(start).Milliseconds())
 	}
 
+	// PRE-FLIGHT: session exile check — route exiled conversations to fallback.
+	if cfg.SessionErrorThreshold > 0 && s.sess.Exiled(conv, nowMs) && cfg.FallbackEnabled && len(channels) > 0 {
+		return s.viaChannel(ctx, ownerID, model, body, channels[0], "session", time.Since(start).Milliseconds())
+	}
+
 	// Our nodes.
 	if len(order) > 0 {
 		maxFailover := cfg.MaxFailover
@@ -91,10 +112,24 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 		np := &NodeProxy{Body: body, Resolve: resolver, BanSignals: cfg.BanSignals, BanKeywords: cfg.BanKeywords}
 		res, ok := orch.Dispatch(ctx, model, order, np)
 		if ok {
+			// Response exile: if the response body contains a safety-refusal keyword,
+			// exile this conversation and re-serve via fallback if possible.
+			if cfg.ResponseExileEnabled && matchesAny(res.Body, cfg.ResponseExileKeywords) {
+				s.sess.ForceExile(conv, int64(cfg.SessionCooldownSec)*1000, nowMs)
+				if len(channels) > 0 {
+					return s.viaChannel(ctx, ownerID, model, body, channels[0], "cyber", time.Since(start).Milliseconds())
+				}
+				// No fallback channel — log and return the original response.
+				s.logOK(ctx, ownerID, model, res, time.Since(start).Milliseconds(), "cyber")
+				return Outcome{Status: res.Status, Body: res.Body, Target: "node", Reason: "cyber"}
+			}
+			s.sess.RecordSuccess(conv)
 			s.logOK(ctx, ownerID, model, res, time.Since(start).Milliseconds(), "")
 			return Outcome{Status: res.Status, Body: res.Body, Target: "node", Reason: ""}
 		}
-		// our pool failed → fallback backstop
+		// our pool failed → record error for session tracking
+		s.sess.RecordError(conv, int64(cfg.SessionErrorThreshold), int64(cfg.SessionCooldownSec)*1000, nowMs)
+		// fallback backstop
 		if cfg.FallbackEnabled && len(channels) > 0 {
 			return s.viaChannel(ctx, ownerID, model, body, channels[0], "exhausted", time.Since(start).Milliseconds())
 		}
@@ -316,6 +351,17 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 		MaxMs: cfg.CooldownMaxMs, Mult: cfg.CooldownMult,
 	}
 	order, resolver := s.buildCandidates(ctx, ownerID, cfg.MaxConcurrent)
+	channels := s.enabledChannels(ctx, ownerID)
+
+	conv := session.ConvID(body)
+	nowMs := s.Now()
+
+	// PRE-FLIGHT: session exile check — route exiled conversations to fallback.
+	if cfg.SessionErrorThreshold > 0 && s.sess.Exiled(conv, nowMs) && cfg.FallbackEnabled && len(channels) > 0 {
+		if out, committed := s.streamChannel(ctx, w, channels[0], body, ownerID, model, "session"); committed {
+			return out
+		}
+	}
 
 	maxFailover := cfg.MaxFailover
 	if maxFailover <= 0 {
@@ -331,15 +377,22 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 		if !ok {
 			continue
 		}
-		out, committed := s.streamOne(ctx, w, key, trial, resolver, breaker, body, cfg, ownerID, model)
+		out, committed, sseBody := s.streamOneWithBody(ctx, w, key, trial, resolver, breaker, body, cfg, ownerID, model)
 		if committed {
+			// Response exile: scan body for safety-refusal keywords.
+			if cfg.ResponseExileEnabled && matchesAny(sseBody, cfg.ResponseExileKeywords) {
+				s.sess.ForceExile(conv, int64(cfg.SessionCooldownSec)*1000, nowMs)
+				// Cannot re-serve mid-stream — exile only affects future requests.
+			} else {
+				s.sess.RecordSuccess(conv)
+			}
 			return out
 		}
-		// not committed → failed before first byte → failover
+		// not committed → failed before first byte → record error + failover
+		s.sess.RecordError(conv, int64(cfg.SessionErrorThreshold), int64(cfg.SessionCooldownSec)*1000, nowMs)
 	}
 
 	// exhausted → fallback channel stream, else 503
-	channels := s.enabledChannels(ctx, ownerID)
 	if cfg.FallbackEnabled && len(channels) > 0 {
 		if out, committed := s.streamChannel(ctx, w, channels[0], body, ownerID, model, "exhausted"); committed {
 			return out
@@ -351,9 +404,23 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 	return Outcome{Status: 503, Target: "none"}
 }
 
+// streamOneWithBody is like streamOne but also returns the captured SSE body.
+// This allows callers to inspect the response for exile keywords without
+// duplicating any of the settle invariants.
+func (s *Service) streamOneWithBody(ctx context.Context, w http.ResponseWriter, key string, trial bool, resolver Resolver, breaker state.BreakerCfg, body []byte, cfg policy.Config, ownerID, model string) (Outcome, bool, string) {
+	out, committed, sseBody := s.streamOneInternal(ctx, w, key, trial, resolver, breaker, body, cfg, ownerID, model)
+	return out, committed, sseBody
+}
+
 // streamOne attempts one account. committed=true means we wrote to the client
 // (success) and the caller must not fail over.
 func (s *Service) streamOne(ctx context.Context, w http.ResponseWriter, key string, trial bool, resolver Resolver, breaker state.BreakerCfg, body []byte, cfg policy.Config, ownerID, model string) (Outcome, bool) {
+	out, committed, _ := s.streamOneInternal(ctx, w, key, trial, resolver, breaker, body, cfg, ownerID, model)
+	return out, committed
+}
+
+// streamOneInternal is the actual implementation; streamOne and streamOneWithBody are thin wrappers.
+func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, key string, trial bool, resolver Resolver, breaker state.BreakerCfg, body []byte, cfg policy.Config, ownerID, model string) (Outcome, bool, string) {
 	settled := false
 	sendReturned := false
 	settle := func(success bool) {
@@ -384,11 +451,11 @@ func (s *Service) streamOne(ctx context.Context, w http.ResponseWriter, key stri
 	st, err := np.OpenStream(ctx, key)
 	sendReturned = true
 	if err != nil {
-		return Outcome{}, false // connection error → failover
+		return Outcome{}, false, "" // connection error → failover
 	}
 	if st.Banned || st.Status < 200 || st.Status >= 300 {
 		_ = st.Body.Close()
-		return Outcome{}, false // bad status before first byte → settle(false) via defer, failover
+		return Outcome{}, false, "" // bad status before first byte → settle(false) via defer, failover
 	}
 	// commit: stream to client
 	start := time.Now()
@@ -400,7 +467,7 @@ func (s *Service) streamOne(ctx context.Context, w http.ResponseWriter, key stri
 	in, out := parseUsageSSE(sseBody)
 	total := time.Since(start).Milliseconds()
 	s.logStream(ctx, ownerID, model, st.Status, in, out, total, ttfb)
-	return Outcome{Status: st.Status, Target: "node"}, true
+	return Outcome{Status: st.Status, Target: "node"}, true, sseBody
 }
 
 // recordBan records a ban episode and event for the given key (node:profile).
