@@ -584,6 +584,9 @@ func (s *Service) logStream(ctx context.Context, ownerID, model, key string, sta
 			Requests: 1, TokensIn: in, TokensOut: out, CostUsd: cost,
 		})
 	}
+	if httpStatus == "ok" {
+		_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: "dispatch_ok", Target: key, OwnerID: ownerID})
+	}
 }
 
 // flushCopy streams src→dst, flushing after each chunk so SSE reaches the client live.
