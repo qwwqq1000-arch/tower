@@ -79,6 +79,18 @@ func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc
 		mux.HandleFunc("PATCH /api/admin/users/{id}/role", requireAdmin(secret, setUserRoleHandler(q)))
 		mux.HandleFunc("PATCH /api/admin/users/{id}/hosting-rate", requireAdmin(secret, setUserHostingRateHandler(q)))
 		mux.HandleFunc("POST /auth/change-password", requireSession(secret, changePasswordHandler(q)))
+		// Tenant self-service: strictly scoped to the caller's session sub.
+		mux.HandleFunc("GET /api/me/accounts", requireSession(secret, meAccountsHandler(q)))
+		mux.HandleFunc("POST /api/me/accounts/{accountId}/pause", requireSession(secret, mePauseAccountHandler(q)))
+		mux.HandleFunc("GET /api/me/dashboard", requireSession(secret, meDashboardHandler(q)))
+		mux.HandleFunc("GET /api/me/logs", requireSession(secret, meLogsHandler(q)))
+		mux.HandleFunc("GET /api/me/events", requireSession(secret, meEventsHandler(q)))
+		mux.HandleFunc("GET /api/me/ledger", requireSession(secret, meLedgerHandler(q)))
+		mux.HandleFunc("GET /api/me/fallback-channels", requireSession(secret, meListFallbackHandler(q)))
+		mux.HandleFunc("POST /api/me/fallback-channels", requireSession(secret, meCreateFallbackHandler(q)))
+		mux.HandleFunc("PATCH /api/me/fallback-channels/{id}", requireSession(secret, meUpdateFallbackHandler(q)))
+		mux.HandleFunc("DELETE /api/me/fallback-channels/{id}", requireSession(secret, meDeleteFallbackHandler(q)))
+		mux.HandleFunc("PATCH /api/me/fallback-channels/{id}/enabled", requireSession(secret, meEnableFallbackHandler(q)))
 	}
 	mux.Handle("/", web.SPAHandler())
 	return mux

@@ -12,6 +12,9 @@ SELECT * FROM node_accounts WHERE account_id = $1;
 -- name: SetNodeAccountEnabled :exec
 UPDATE node_accounts SET enabled = $3 WHERE node_id = $1 AND account_id = $2;
 
+-- name: SetNodeAccountEnabledByAccount :exec
+UPDATE node_accounts SET enabled = $2 WHERE account_id = $1;
+
 -- name: UnassignAccount :exec
 DELETE FROM node_accounts WHERE node_id = $1 AND account_id = $2;
 

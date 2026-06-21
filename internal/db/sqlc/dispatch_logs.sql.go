@@ -51,6 +51,52 @@ func (q *Queries) InsertDispatchLog(ctx context.Context, arg InsertDispatchLogPa
 	return err
 }
 
+const listLogsByOwner = `-- name: ListLogsByOwner :many
+SELECT id, ts, owner_id, model, target, profile_id, status, http_status, latency_ms, tokens_in, tokens_out, fallback_reason, created_at, ttfb_ms, stream, cost_usd FROM dispatch_logs WHERE owner_id = $1 ORDER BY ts DESC LIMIT $2
+`
+
+type ListLogsByOwnerParams struct {
+	OwnerID string `json:"owner_id"`
+	Limit   int32  `json:"limit"`
+}
+
+func (q *Queries) ListLogsByOwner(ctx context.Context, arg ListLogsByOwnerParams) ([]DispatchLog, error) {
+	rows, err := q.db.Query(ctx, listLogsByOwner, arg.OwnerID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DispatchLog
+	for rows.Next() {
+		var i DispatchLog
+		if err := rows.Scan(
+			&i.ID,
+			&i.Ts,
+			&i.OwnerID,
+			&i.Model,
+			&i.Target,
+			&i.ProfileID,
+			&i.Status,
+			&i.HttpStatus,
+			&i.LatencyMs,
+			&i.TokensIn,
+			&i.TokensOut,
+			&i.FallbackReason,
+			&i.CreatedAt,
+			&i.TtfbMs,
+			&i.Stream,
+			&i.CostUsd,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRecentDispatchLogs = `-- name: ListRecentDispatchLogs :many
 SELECT id, ts, owner_id, model, target, profile_id, status, http_status, latency_ms, tokens_in, tokens_out, fallback_reason, created_at, ttfb_ms, stream, cost_usd FROM dispatch_logs ORDER BY ts DESC LIMIT $1
 `
@@ -90,4 +136,26 @@ func (q *Queries) ListRecentDispatchLogs(ctx context.Context, limit int32) ([]Di
 		return nil, err
 	}
 	return items, nil
+}
+
+const todayDispatchForOwner = `-- name: TodayDispatchForOwner :one
+SELECT count(*)::bigint AS requests, coalesce(sum(cost_usd),0)::float8 AS cost
+FROM dispatch_logs WHERE owner_id = $1 AND ts >= $2
+`
+
+type TodayDispatchForOwnerParams struct {
+	OwnerID string `json:"owner_id"`
+	Ts      int64  `json:"ts"`
+}
+
+type TodayDispatchForOwnerRow struct {
+	Requests int64   `json:"requests"`
+	Cost     float64 `json:"cost"`
+}
+
+func (q *Queries) TodayDispatchForOwner(ctx context.Context, arg TodayDispatchForOwnerParams) (TodayDispatchForOwnerRow, error) {
+	row := q.db.QueryRow(ctx, todayDispatchForOwner, arg.OwnerID, arg.Ts)
+	var i TodayDispatchForOwnerRow
+	err := row.Scan(&i.Requests, &i.Cost)
+	return i, err
 }

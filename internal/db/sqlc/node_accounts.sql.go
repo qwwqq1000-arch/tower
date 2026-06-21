@@ -133,6 +133,20 @@ func (q *Queries) SetNodeAccountEnabled(ctx context.Context, arg SetNodeAccountE
 	return err
 }
 
+const setNodeAccountEnabledByAccount = `-- name: SetNodeAccountEnabledByAccount :exec
+UPDATE node_accounts SET enabled = $2 WHERE account_id = $1
+`
+
+type SetNodeAccountEnabledByAccountParams struct {
+	AccountID string `json:"account_id"`
+	Enabled   bool   `json:"enabled"`
+}
+
+func (q *Queries) SetNodeAccountEnabledByAccount(ctx context.Context, arg SetNodeAccountEnabledByAccountParams) error {
+	_, err := q.db.Exec(ctx, setNodeAccountEnabledByAccount, arg.AccountID, arg.Enabled)
+	return err
+}
+
 const unassignAccount = `-- name: UnassignAccount :exec
 DELETE FROM node_accounts WHERE node_id = $1 AND account_id = $2
 `

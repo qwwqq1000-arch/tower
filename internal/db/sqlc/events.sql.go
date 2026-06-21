@@ -53,6 +53,42 @@ func (q *Queries) InsertDispatchEvent(ctx context.Context, arg InsertDispatchEve
 	return err
 }
 
+const listEventsByOwner = `-- name: ListEventsByOwner :many
+SELECT id, ts, type, target, owner_id, detail FROM dispatch_events WHERE owner_id = $1 ORDER BY ts DESC, id DESC LIMIT $2
+`
+
+type ListEventsByOwnerParams struct {
+	OwnerID string `json:"owner_id"`
+	Limit   int32  `json:"limit"`
+}
+
+func (q *Queries) ListEventsByOwner(ctx context.Context, arg ListEventsByOwnerParams) ([]DispatchEvent, error) {
+	rows, err := q.db.Query(ctx, listEventsByOwner, arg.OwnerID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DispatchEvent
+	for rows.Next() {
+		var i DispatchEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.Ts,
+			&i.Type,
+			&i.Target,
+			&i.OwnerID,
+			&i.Detail,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRecentEvents = `-- name: ListRecentEvents :many
 SELECT id, ts, type, target, owner_id, detail FROM dispatch_events ORDER BY ts DESC, id DESC LIMIT $1
 `
