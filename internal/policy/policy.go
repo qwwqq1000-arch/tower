@@ -77,7 +77,7 @@ func Defaults() Config {
 		SessionErrorThreshold:     0,
 		SessionCooldownSec:        300,
 		ResponseExileEnabled:      false,
-		ResponseExileKeywords:     []string{"cyber", "usage policy", "i can't help", "i cannot help"},
+		ResponseExileKeywords:     []string{"usage policy", "i can't help with that request"},
 	}
 }
 
