@@ -36,10 +36,12 @@ func sessionFrom(r *http.Request) (auth.SessionPayload, bool) {
 }
 
 // requireAdmin wraps requireSession and additionally requires an admin role.
+// Role hierarchy: superadmin >= admin >= operator all get full admin access.
+// Tenant and viewer roles are handled by future scoped endpoints.
 func requireAdmin(secret string, next http.HandlerFunc) http.HandlerFunc {
 	return requireSession(secret, func(w http.ResponseWriter, r *http.Request) {
 		p, ok := sessionFrom(r)
-		if !ok || (p.Role != "superadmin" && p.Role != "admin") {
+		if !ok || (p.Role != "superadmin" && p.Role != "admin" && p.Role != "operator") {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
 			return
 		}

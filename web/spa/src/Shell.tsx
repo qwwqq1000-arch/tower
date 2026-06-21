@@ -247,8 +247,8 @@ export function Shell({ children }: { children: ReactNode }) {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [changePwOpen, setChangePwOpen] = useState(false);
 
-  // Filter nav by role (admin AND superadmin see admin-only items)
-  const isAdmin = role === 'admin' || role === 'superadmin';
+  // Filter nav by role (superadmin/admin/operator all see admin-only items)
+  const isAdmin = role === 'admin' || role === 'superadmin' || role === 'operator';
   const items = NAV_ITEMS.filter((i) => !i.adminOnly || isAdmin);
   const mobileItems = items.slice(0, 5);
   // Palette: primary nav + settings sub-pages (so moved pages remain searchable)
