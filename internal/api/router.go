@@ -23,6 +23,15 @@ func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc
 	if svc != nil {
 		mux.HandleFunc("POST /v1/messages", dispatchMessagesHandler(svc, q))
 	}
+	if q != nil {
+		mux.HandleFunc("POST /api/admin/nodes", requireAdmin(secret, createNodeHandler(q)))
+		mux.HandleFunc("GET /api/admin/nodes", requireAdmin(secret, listNodesHandler(q)))
+		mux.HandleFunc("DELETE /api/admin/nodes/{id}", requireAdmin(secret, deleteNodeHandler(q)))
+		mux.HandleFunc("POST /api/admin/dispatch-keys", requireAdmin(secret, createDispatchKeyHandler(q)))
+		mux.HandleFunc("GET /api/admin/dispatch-keys", requireAdmin(secret, listDispatchKeysHandler(q)))
+		mux.HandleFunc("DELETE /api/admin/dispatch-keys/{id}", requireAdmin(secret, deleteDispatchKeyHandler(q)))
+		mux.HandleFunc("GET /api/dashboard", requireAdmin(secret, dashboardHandler(q, svc)))
+	}
 	return mux
 }
 

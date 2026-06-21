@@ -34,3 +34,15 @@ func sessionFrom(r *http.Request) (auth.SessionPayload, bool) {
 	p, ok := r.Context().Value(ctxKeySession).(auth.SessionPayload)
 	return p, ok
 }
+
+// requireAdmin wraps requireSession and additionally requires an admin role.
+func requireAdmin(secret string, next http.HandlerFunc) http.HandlerFunc {
+	return requireSession(secret, func(w http.ResponseWriter, r *http.Request) {
+		p, ok := sessionFrom(r)
+		if !ok || (p.Role != "superadmin" && p.Role != "admin") {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+			return
+		}
+		next(w, r)
+	})
+}
