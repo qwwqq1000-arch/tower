@@ -5,10 +5,13 @@ import type {
   User,
   NodeRecord,
   KeyRecord,
+  DispatchKeyRecord,
+  DispatchKeyCreated,
   DashboardStats,
   ProvisionRequest,
   ProvisionJob,
   Policy,
+  PolicyPatch,
   PolicyDryRunResult,
   DesiredConfig,
   LogEntry,
@@ -80,6 +83,18 @@ export const deleteKey = (id: string) =>
   api<void>('DELETE', `/api/admin/keys/${id}`);
 
 // ------------------------------------------------------------------
+// Dispatch Keys (调度密钥)
+// ------------------------------------------------------------------
+export const listDispatchKeys = () =>
+  api<DispatchKeyRecord[]>('GET', '/api/admin/dispatch-keys');
+
+export const createDispatchKey = (data: { label?: string }) =>
+  api<DispatchKeyCreated>('POST', '/api/admin/dispatch-keys', data);
+
+export const disableDispatchKey = (id: string) =>
+  api<void>('DELETE', `/api/admin/dispatch-keys/${id}`);
+
+// ------------------------------------------------------------------
 // Provision
 // ------------------------------------------------------------------
 export const startProvision = (req: ProvisionRequest) =>
@@ -94,10 +109,10 @@ export const getProvision = (jobId: string) =>
 export const listPolicies = () =>
   api<Policy[]>('GET', '/api/admin/policies');
 
-export const putGlobalPolicy = (data: Partial<Policy>) =>
-  api<Policy>('PUT', '/api/admin/policies/global', data);
+export const putGlobalPolicy = (data: PolicyPatch) =>
+  api<{ ok: string }>('PUT', '/api/admin/policies/global', data);
 
-export const dryRunPolicy = (data: Partial<Policy>) =>
+export const dryRunPolicy = (data: PolicyPatch) =>
   api<PolicyDryRunResult>('POST', '/api/admin/policies/dry-run', data);
 
 // ------------------------------------------------------------------
@@ -107,7 +122,7 @@ export const getDesired = () =>
   api<DesiredConfig>('GET', '/api/admin/desired');
 
 export const putDesired = (data: DesiredConfig) =>
-  api<DesiredConfig>('PUT', '/api/admin/desired', data);
+  api<{ ok: string }>('PUT', '/api/admin/desired', data);
 
 // ------------------------------------------------------------------
 // Logs

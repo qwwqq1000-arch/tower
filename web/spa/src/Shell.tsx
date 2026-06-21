@@ -22,16 +22,16 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { path: '/',          label: '看板',     icon: '◈' },
-  { path: '/nodes',     label: '节点',     icon: '⬡' },
-  { path: '/keys',      label: '号库',     icon: '⚿' },
-  { path: '/dkeys',     label: '调度密钥', icon: '🔑', adminOnly: true },
-  { path: '/policies',  label: '封控策略', icon: '⛨', adminOnly: true },
-  { path: '/desired',   label: '配置对账', icon: '⇌', adminOnly: true },
-  { path: '/logs',      label: '日志',     icon: '≡' },
-  { path: '/billing',   label: '计费',     icon: '₿', adminOnly: true },
-  { path: '/audit',     label: '审计',     icon: '◎', adminOnly: true },
-  { path: '/events',    label: '事件',     icon: '⚡' },
+  { path: '/',           label: '看板',     icon: '◈' },
+  { path: '/nodes',      label: '节点',     icon: '⬡' },
+  { path: '/accounts',   label: '号库',     icon: '⚿' },
+  { path: '/keys',       label: '调度密钥', icon: '🔑', adminOnly: true },
+  { path: '/policies',   label: '封控策略', icon: '⛨', adminOnly: true },
+  { path: '/desired',    label: '配置对账', icon: '⇌', adminOnly: true },
+  { path: '/logs',       label: '日志',     icon: '≡' },
+  { path: '/billing',    label: '计费',     icon: '₿', adminOnly: true },
+  { path: '/audit',      label: '审计',     icon: '◎', adminOnly: true },
+  { path: '/events',     label: '事件',     icon: '⚡' },
 ];
 
 // ------------------------------------------------------------------

@@ -27,6 +27,20 @@ export interface KeyRecord {
   created_at: string;
 }
 
+// --- Dispatch Keys (调度密钥) ---
+export interface DispatchKeyRecord {
+  id: string;
+  prefix: string;
+  label: string;
+  ownerId: string;
+  enabled: boolean;
+}
+
+export interface DispatchKeyCreated {
+  id: string;
+  key: string; // plaintext, shown once
+}
+
 // --- Dashboard ---
 export interface DashboardStats {
   nodes_total: number;
@@ -55,23 +69,57 @@ export interface ProvisionJob {
 
 // --- Policies (封控策略) ---
 export interface Policy {
-  id: string;
-  name: string;
-  rules: Record<string, unknown>;
-  enabled: boolean;
-  updated_at: string;
+  scopeType: string;
+  scopeId: string;
+  params: Record<string, unknown>;
+}
+
+// policy.Patch fields (all optional, pointer-like)
+export interface PolicyPatch {
+  MaxConcurrent?: number;
+  SlotCooldownMinMs?: number;
+  SlotCooldownMaxMs?: number;
+  BanPersistStreak?: number;
+  CooldownBaseMs?: number;
+  CooldownMaxMs?: number;
+  CooldownMult?: number;
+  AffinityTTLSec?: number;
+  FallbackEnabled?: boolean;
+  FallbackPriceThresholdUsd?: number;
+  BanSignals?: number[];
+  BanKeywords?: string[];
+}
+
+// policy.Config (resolved)
+export interface PolicyConfig {
+  MaxConcurrent: number;
+  SlotCooldownMinMs: number;
+  SlotCooldownMaxMs: number;
+  BanPersistStreak: number;
+  CooldownBaseMs: number;
+  CooldownMaxMs: number;
+  CooldownMult: number;
+  AffinityTTLSec: number;
+  FallbackEnabled: boolean;
+  FallbackPriceThresholdUsd: number;
+  BanSignals: number[];
+  BanKeywords: string[];
+}
+
+export interface PolicyDiff {
+  Field: string;
+  From: string;
+  To: string;
 }
 
 export interface PolicyDryRunResult {
-  affected_nodes: string[];
-  summary: string;
+  final: PolicyConfig;
+  diffs: PolicyDiff[];
 }
 
 // --- Desired config ---
-export interface DesiredConfig {
-  version: number;
-  spec: Record<string, unknown>;
-}
+// The backend stores raw JSON; we treat it as an opaque Record.
+export type DesiredConfig = Record<string, unknown>;
 
 // --- Logs ---
 export interface LogEntry {
