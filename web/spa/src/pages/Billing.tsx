@@ -1,11 +1,12 @@
 // ============================================================
 // Tower SPA — Billing page (计费)
-// Input tenantId → "结算" POST /api/admin/settle → show invoice
+// Tenant dropdown → "结算" POST /api/admin/settle → show invoice
 // GET /api/admin/ledger?tenantId= → ledger table
 // ============================================================
-import { useState, useCallback } from 'react';
-import { settle, getLedger } from '../api';
+import { useState, useCallback, useEffect } from 'react';
+import { settle, getLedger, listUsers } from '../api';
 import type { SettleResult, LedgerEntry } from '../types';
+import type { UserRow } from '../types';
 
 // ---- helpers ----
 function fmtTime(ms: number): string {
@@ -21,7 +22,7 @@ function fmtUsd(amount: number): string {
 }
 
 // ---- Invoice card ----
-function InvoiceCard({ result }: { result: SettleResult }) {
+function InvoiceCard({ result, tenantName }: { result: SettleResult; tenantName?: string }) {
   const ok = result.status === 'ok' || result.status === 'settled';
   return (
     <div className={`border rounded-xl p-5 space-y-3 ${ok ? 'bg-ok/5 border-ok/30' : 'bg-surface border-line'}`}>
@@ -39,7 +40,12 @@ function InvoiceCard({ result }: { result: SettleResult }) {
         </div>
         <div>
           <p className="text-xs text-muted">租户</p>
-          <p className="font-mono text-ink mt-0.5 truncate text-xs">{result.tenantId || '—'}</p>
+          <p className="font-mono text-ink mt-0.5 truncate text-xs">
+            {tenantName ? `${tenantName}` : (result.tenantId || '—')}
+          </p>
+          {tenantName && result.tenantId && (
+            <p className="text-xs text-muted truncate">{result.tenantId}</p>
+          )}
         </div>
         <div className="col-span-2">
           <p className="text-xs text-muted">结算金额</p>
@@ -83,6 +89,44 @@ function LedgerCard({ row }: { row: LedgerEntry }) {
   );
 }
 
+// ---- Tenant selector ----
+interface TenantSelectorProps {
+  tenants: UserRow[];
+  value: string;
+  onChange: (id: string) => void;
+  fallback?: boolean;
+}
+
+function TenantSelector({ tenants, value, onChange, fallback }: TenantSelectorProps) {
+  if (fallback) {
+    return (
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="tenant_xxx"
+        className="w-full max-w-sm bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink
+                   placeholder:text-muted focus:outline-none focus:border-accent transition font-mono"
+      />
+    );
+  }
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-full max-w-sm bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink
+                 focus:outline-none focus:border-accent transition"
+    >
+      <option value="">请选择租户</option>
+      {tenants.map((u) => (
+        <option key={u.id} value={u.id}>
+          {u.username} ({u.role})
+        </option>
+      ))}
+    </select>
+  );
+}
+
 // ---- Page ----
 export default function Billing() {
   const [tenantId, setTenantId] = useState('');
@@ -94,6 +138,38 @@ export default function Billing() {
   const [loadingLedger, setLoadingLedger] = useState(false);
   const [ledgerErr, setLedgerErr] = useState<string | null>(null);
   const [ledgerTenant, setLedgerTenant] = useState('');
+
+  const [tenants, setTenants] = useState<UserRow[]>([]);
+  const [tenantsErr, setTenantsErr] = useState<string | null>(null);
+  const [loadingTenants, setLoadingTenants] = useState(true);
+
+  // Load tenants on mount
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingTenants(true);
+    listUsers()
+      .then((rows) => {
+        if (!cancelled) {
+          setTenants(rows);
+          setTenantsErr(null);
+        }
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setTenantsErr(e instanceof Error ? e.message : '加载租户失败');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingTenants(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  const useFallback = !!tenantsErr && tenants.length === 0;
+
+  // Derive tenant name from selected id
+  const selectedTenant = tenants.find((u) => u.id === tenantId);
+  const tenantName = selectedTenant ? selectedTenant.username : undefined;
 
   const handleSettle = useCallback(async () => {
     if (!tenantId.trim()) return;
@@ -116,7 +192,7 @@ export default function Billing() {
     setLedgerErr(null);
     setLedger([]);
     const tid = tenantId.trim();
-    setLedgerTenant(tid);
+    setLedgerTenant(tenantName ? `${tenantName} (${tid})` : tid);
     try {
       const data = await getLedger(tid);
       setLedger(Array.isArray(data) ? data : []);
@@ -125,28 +201,35 @@ export default function Billing() {
     } finally {
       setLoadingLedger(false);
     }
-  }, [tenantId]);
+  }, [tenantId, tenantName]);
 
   return (
     <div className="p-4 md:p-6 space-y-6">
       {/* Header */}
       <div>
         <h1 className="text-2xl font-semibold text-ink">计费</h1>
-        <p className="text-xs text-muted mt-1">输入租户 ID，结算或查询账本</p>
+        <p className="text-xs text-muted mt-1">选择租户，结算或查询账本</p>
       </div>
 
-      {/* Tenant input + actions */}
+      {/* Tenant selector + actions */}
       <div className="bg-surface border border-line rounded-xl p-5 space-y-4">
         <div>
-          <label className="block text-xs font-medium text-muted mb-1.5">租户 ID</label>
-          <input
-            type="text"
-            value={tenantId}
-            onChange={(e) => setTenantId(e.target.value)}
-            placeholder="tenant_xxx"
-            className="w-full max-w-sm bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink
-                       placeholder:text-muted focus:outline-none focus:border-accent transition font-mono"
-          />
+          <label className="block text-xs font-medium text-muted mb-1.5">
+            {useFallback ? '租户 ID（加载租户列表失败，手动输入）' : '租户'}
+          </label>
+          {loadingTenants ? (
+            <div className="w-full max-w-sm h-9 bg-bg border border-line rounded-lg animate-pulse" />
+          ) : (
+            <TenantSelector
+              tenants={tenants}
+              value={tenantId}
+              onChange={setTenantId}
+              fallback={useFallback}
+            />
+          )}
+          {tenantsErr && !useFallback && (
+            <p className="text-xs text-warn mt-1">{tenantsErr}</p>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           <button
@@ -172,7 +255,7 @@ export default function Billing() {
       </div>
 
       {/* Invoice */}
-      {invoice && <InvoiceCard result={invoice} />}
+      {invoice && <InvoiceCard result={invoice} tenantName={tenantName} />}
 
       {/* Ledger */}
       {(ledger.length > 0 || ledgerErr || loadingLedger) && (
