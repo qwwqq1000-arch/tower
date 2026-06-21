@@ -176,3 +176,18 @@ export const oauthExchange = (
 // ------------------------------------------------------------------
 export const getDispatchStatus = () =>
   api<DispatchStatus>('GET', '/api/admin/dispatch/status');
+
+// ------------------------------------------------------------------
+// Node features (SDK 设置)
+// ------------------------------------------------------------------
+export const getNodeFeatures = (id: string) =>
+  api<Record<string, Record<string, unknown>>>('GET', `/api/admin/nodes/${id}/features`);
+
+export const patchNodeFeatures = (id: string, adapter: string, patch: Record<string, unknown>) =>
+  api<void>('PATCH', `/api/admin/nodes/${id}/features/${adapter}`, patch);
+
+export const refreshNode = (id: string) =>
+  api<void>('POST', `/api/admin/nodes/${id}/refresh`);
+
+export const setNodeEnabled = (id: string, enabled: boolean) =>
+  api<void>('PATCH', `/api/admin/nodes/${id}/enabled`, { enabled });

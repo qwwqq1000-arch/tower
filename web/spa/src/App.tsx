@@ -6,6 +6,7 @@ import { Shell } from './Shell';
 import Dashboard    from './pages/Dashboard';
 import Dispatch     from './pages/Dispatch';
 import Nodes        from './pages/Nodes';
+import NodeDetail   from './pages/NodeDetail';
 import Accounts     from './pages/Accounts';
 import Keys         from './pages/Keys';
 import Policies     from './pages/Policies';
@@ -25,6 +26,7 @@ export default function App() {
               <Route path="/"          element={<Dashboard />} />
               <Route path="/dispatch"  element={<Dispatch />} />
               <Route path="/nodes"     element={<Nodes />} />
+              <Route path="/nodes/:id" element={<NodeDetail />} />
               <Route path="/accounts"  element={<Accounts />} />
               <Route path="/keys"      element={<Keys />} />
               <Route path="/policies"  element={<Policies />} />
