@@ -1,12 +1,29 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 	"github.com/qwwqq1000-arch/tower/internal/nodeclient"
 )
+
+// effectiveProfiles returns the node's named profiles, or — when none exist but
+// the node is logged in (default account) — a synthetic "default" profile from /health.
+func effectiveProfiles(ctx context.Context, cl *nodeclient.Client) ([]nodeclient.Profile, error) {
+	ps, err := cl.ProfilesList(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(ps) == 0 {
+		h, herr := cl.Health(ctx)
+		if herr == nil && h.Auth.LoggedIn {
+			return []nodeclient.Profile{{ID: "default", Email: h.Auth.Email, SubscriptionType: h.Auth.SubscriptionType, LoggedIn: true}}, nil
+		}
+	}
+	return ps, nil
+}
 
 func nodeClientFor(q *sqlc.Queries, r *http.Request, id string) (*nodeclient.Client, sqlc.Node, bool) {
 	n, err := q.GetNode(r.Context(), id)
@@ -115,7 +132,7 @@ func importProfileHandler(q *sqlc.Queries) http.HandlerFunc {
 			return
 		}
 		cl := nodeclient.New(n.BaseUrl, n.ApiKey)
-		profiles, _ := cl.ProfilesList(r.Context())
+		profiles, _ := effectiveProfiles(r.Context(), cl)
 		var matched *nodeclient.Profile
 		for i := range profiles {
 			if profiles[i].ID == body.ProfileID {
@@ -172,7 +189,7 @@ func listProfilesHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 404, map[string]string{"error": "node not found"})
 			return
 		}
-		ps, err := cl.ProfilesList(r.Context())
+		ps, err := effectiveProfiles(r.Context(), cl)
 		if err != nil {
 			writeJSON(w, 502, map[string]string{"error": err.Error()})
 			return
