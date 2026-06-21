@@ -77,7 +77,7 @@ function AdapterEditor({ nodeId, adapter, fields, onSaved }: AdapterEditorProps)
                 >
                   <span
                     className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${
-                      val ? 'translate-x-4.5' : 'translate-x-0.5'
+                      val ? 'translate-x-4' : 'translate-x-0.5'
                     }`}
                   />
                 </button>
@@ -131,8 +131,10 @@ export default function NodeDetail() {
 
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState(false);
 
   const [togglingEnabled, setTogglingEnabled] = useState(false);
+  const [enableErr, setEnableErr] = useState<string | null>(null);
 
   // ---- load node ----
   const fetchNode = useCallback(async () => {
@@ -176,11 +178,14 @@ export default function NodeDetail() {
     if (!id) return;
     setRefreshing(true);
     setRefreshMsg(null);
+    setRefreshError(false);
     try {
       await refreshNode(id);
+      setRefreshError(false);
       setRefreshMsg('Token 已刷新');
       setTimeout(() => setRefreshMsg(null), 3000);
     } catch (err) {
+      setRefreshError(true);
       setRefreshMsg(err instanceof Error ? err.message : '刷新失败');
     } finally {
       setRefreshing(false);
@@ -191,11 +196,12 @@ export default function NodeDetail() {
   async function handleToggleEnabled() {
     if (!node || !id) return;
     setTogglingEnabled(true);
+    setEnableErr(null);
     try {
       await setNodeEnabled(id, !node.enabled);
       setNode((prev) => prev ? { ...prev, enabled: !prev.enabled } : prev);
-    } catch {
-      // ignore, state unchanged
+    } catch (err) {
+      setEnableErr(err instanceof Error ? err.message : '操作失败');
     } finally {
       setTogglingEnabled(false);
     }
@@ -241,22 +247,25 @@ export default function NodeDetail() {
           </div>
 
           {/* Enable/Disable toggle */}
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-muted">{node.enabled ? '启用' : '停用'}</span>
-            <button
-              type="button"
-              onClick={() => { void handleToggleEnabled(); }}
-              disabled={togglingEnabled}
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 ${
-                node.enabled ? 'bg-accent' : 'bg-line'
-              }`}
-            >
-              <span
-                className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
-                  node.enabled ? 'translate-x-6' : 'translate-x-1'
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-muted">{node.enabled ? '启用' : '停用'}</span>
+              <button
+                type="button"
+                onClick={() => { void handleToggleEnabled(); }}
+                disabled={togglingEnabled}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 ${
+                  node.enabled ? 'bg-accent' : 'bg-line'
                 }`}
-              />
-            </button>
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                    node.enabled ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
+            {enableErr && <span className="text-xs text-err">{enableErr}</span>}
           </div>
         </div>
 
@@ -292,7 +301,7 @@ export default function NodeDetail() {
             {refreshing ? '刷新中…' : '刷新 token'}
           </button>
           {refreshMsg && (
-            <span className={`text-xs ${refreshMsg.includes('失败') ? 'text-err' : 'text-ok'}`}>
+            <span className={`text-xs ${refreshError ? 'text-err' : 'text-ok'}`}>
               {refreshMsg}
             </span>
           )}

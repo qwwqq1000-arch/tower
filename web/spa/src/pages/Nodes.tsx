@@ -101,9 +101,10 @@ interface BatchBarProps {
   onRefreshAll: () => void;
   batchRunning: boolean;
   batchResult: string | null;
+  batchHasError: boolean;
 }
 
-function BatchBar({ selectedCount, onEnableAll, onDisableAll, onRefreshAll, batchRunning, batchResult }: BatchBarProps) {
+function BatchBar({ selectedCount, onEnableAll, onDisableAll, onRefreshAll, batchRunning, batchResult, batchHasError }: BatchBarProps) {
   return (
     <div className="flex items-center gap-3 flex-wrap bg-accent/10 border border-accent/30 rounded-xl px-4 py-2.5">
       <span className="text-sm text-ink font-medium">已选 {selectedCount} 个节点</span>
@@ -137,7 +138,7 @@ function BatchBar({ selectedCount, onEnableAll, onDisableAll, onRefreshAll, batc
         <span className="text-xs text-muted animate-pulse">处理中…</span>
       )}
       {batchResult && !batchRunning && (
-        <span className="text-xs text-ok">{batchResult}</span>
+        <span className={`text-xs ${batchHasError ? 'text-err' : 'text-ok'}`}>{batchResult}</span>
       )}
     </div>
   );
@@ -318,6 +319,7 @@ export default function Nodes() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [batchRunning, setBatchRunning] = useState(false);
   const [batchResult, setBatchResult] = useState<string | null>(null);
+  const [batchHasError, setBatchHasError] = useState(false);
 
   const fetchNodes = useCallback(async () => {
     try {
@@ -362,6 +364,7 @@ export default function Nodes() {
   async function runBatch(op: (id: string) => Promise<void>, label: string) {
     setBatchRunning(true);
     setBatchResult(null);
+    setBatchHasError(false);
     const ids = Array.from(selected);
     let ok = 0;
     let fail = 0;
@@ -372,6 +375,7 @@ export default function Nodes() {
           .catch(() => { fail++; }),
       ),
     );
+    setBatchHasError(fail > 0);
     setBatchResult(`${label}: ${ok} 成功, ${fail} 失败`);
     setBatchRunning(false);
     void fetchNodes();
@@ -408,6 +412,7 @@ export default function Nodes() {
           onRefreshAll={handleBatchRefresh}
           batchRunning={batchRunning}
           batchResult={batchResult}
+          batchHasError={batchHasError}
         />
       )}
 
