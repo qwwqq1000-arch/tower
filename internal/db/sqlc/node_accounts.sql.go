@@ -148,7 +148,7 @@ func (q *Queries) UnassignAccount(ctx context.Context, arg UnassignAccountParams
 }
 
 const updateNodeAccount = `-- name: UpdateNodeAccount :exec
-UPDATE node_accounts SET egress=$3, weight=$4, role=$5, enabled=$6
+UPDATE node_accounts SET egress=$3, weight=$4, role=$5, enabled=$6, slot_id=$7
 WHERE node_id=$1 AND account_id=$2
 `
 
@@ -159,6 +159,7 @@ type UpdateNodeAccountParams struct {
 	Weight    int32  `json:"weight"`
 	Role      string `json:"role"`
 	Enabled   bool   `json:"enabled"`
+	SlotID    string `json:"slot_id"`
 }
 
 func (q *Queries) UpdateNodeAccount(ctx context.Context, arg UpdateNodeAccountParams) error {
@@ -169,6 +170,7 @@ func (q *Queries) UpdateNodeAccount(ctx context.Context, arg UpdateNodeAccountPa
 		arg.Weight,
 		arg.Role,
 		arg.Enabled,
+		arg.SlotID,
 	)
 	return err
 }

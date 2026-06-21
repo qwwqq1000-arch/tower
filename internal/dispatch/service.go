@@ -206,6 +206,27 @@ func pickElastic(baseline, reserve []string, util, threshold float64, maxReserve
 	return baseline
 }
 
+// slotActiveNow reports whether the given [startMin, endMin) window (minute-of-day,
+// Beijing time) is active at the instant represented by nowMs (Unix ms).
+// If start == end or the window is [0, 1440) it is treated as always-active.
+// Overnight windows (start > end) are active when cur >= start OR cur < end.
+func slotActiveNow(startMin, endMin int, nowMs int64) bool {
+	if startMin == endMin || (startMin == 0 && endMin == 1440) {
+		return true // always-active
+	}
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		loc = time.UTC
+	}
+	t := time.Unix(nowMs/1000, (nowMs%1000)*int64(time.Millisecond)).In(loc)
+	cur := t.Hour()*60 + t.Minute()
+	if startMin <= endMin {
+		return cur >= startMin && cur < endMin
+	}
+	// overnight: e.g. 22:00 → 06:00
+	return cur >= startMin || cur < endMin
+}
+
 func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cfg policy.Config) ([]string, Resolver) {
 	nodes, err := s.Q.ListNodesByOwner(ctx, ownerID)
 	if err != nil || len(nodes) == 0 {
@@ -220,6 +241,16 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 	var cands []cand
 	nowMs := s.Now()
 	isOpus := strings.Contains(strings.ToLower(model), "opus")
+
+	// Load slots once per call for slot-window filtering.
+	type slotEntry struct{ startMin, endMin int; enabled bool }
+	slotMap := map[string]slotEntry{}
+	if slotRows, serr := s.Q.ListSlots(ctx); serr == nil {
+		for _, sl := range slotRows {
+			slotMap[sl.ID] = slotEntry{startMin: int(sl.StartMin), endMin: int(sl.EndMin), enabled: sl.Enabled}
+		}
+	}
+
 	for _, n := range nodes {
 		if !n.Enabled {
 			continue
@@ -231,6 +262,15 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 		for _, na := range accs {
 			if !na.Enabled {
 				continue
+			}
+			// Slot-window filter: skip only when slot exists, is enabled, and window is inactive.
+			if na.SlotID != "" {
+				if sl, ok := slotMap[na.SlotID]; ok && sl.enabled {
+					if !slotActiveNow(sl.startMin, sl.endMin, nowMs) {
+						continue
+					}
+				}
+				// Unknown slot_id or disabled slot → treat as always-active (don't skip).
 			}
 			// Determine warmup state for this account.
 			var onboardedAt int64

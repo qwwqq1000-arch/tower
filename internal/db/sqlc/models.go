@@ -228,6 +228,15 @@ type Settlement struct {
 	Note        string  `json:"note"`
 }
 
+type Slot struct {
+	ID        string             `json:"id"`
+	Name      string             `json:"name"`
+	StartMin  int32              `json:"start_min"`
+	EndMin    int32              `json:"end_min"`
+	Enabled   bool               `json:"enabled"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
 type Tenant struct {
 	ID           string             `json:"id"`
 	Username     string             `json:"username"`

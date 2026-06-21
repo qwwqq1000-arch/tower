@@ -16,5 +16,5 @@ UPDATE node_accounts SET enabled = $3 WHERE node_id = $1 AND account_id = $2;
 DELETE FROM node_accounts WHERE node_id = $1 AND account_id = $2;
 
 -- name: UpdateNodeAccount :exec
-UPDATE node_accounts SET egress=$3, weight=$4, role=$5, enabled=$6
+UPDATE node_accounts SET egress=$3, weight=$4, role=$5, enabled=$6, slot_id=$7
 WHERE node_id=$1 AND account_id=$2;
