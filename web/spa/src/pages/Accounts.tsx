@@ -12,8 +12,9 @@ import {
   updateNodeAccount,
   listNodeProfiles,
   importNodeProfile,
+  getNodeQuota,
 } from '../api';
-import type { NodeRecord, AccountRow, NodeProfile } from '../types';
+import type { NodeRecord, AccountRow, NodeProfile, QuotaAll } from '../types';
 
 // ------------------------------------------------------------------
 // Small toast helper
@@ -27,6 +28,51 @@ function Toast({ msg, onClose }: { msg: string; onClose: () => void }) {
     <div className="fixed bottom-4 right-4 z-50 bg-ok text-white text-sm px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-3">
       <span>{msg}</span>
       <button onClick={onClose} className="text-white/70 hover:text-white text-lg leading-none">×</button>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------
+// Quota badge helper
+// ------------------------------------------------------------------
+function QuotaBadge({ utilization, label }: { utilization: number; label: string }) {
+  const pct = Math.round(utilization * 100);
+  let cls = 'bg-green-500/20 text-green-400 border-green-500/40';
+  if (utilization >= 0.9) cls = 'bg-red-500/20 text-red-400 border-red-500/40';
+  else if (utilization >= 0.7) cls = 'bg-yellow-500/20 text-yellow-400 border-yellow-500/40';
+  return (
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-mono ${cls}`}>
+      {label} {pct}%
+    </span>
+  );
+}
+
+function QuotaCell({
+  nodeId,
+  profileId,
+  quotaMap,
+}: {
+  nodeId: string;
+  profileId: string;
+  quotaMap: Map<string, QuotaAll>;
+}) {
+  const quota = quotaMap.get(nodeId);
+  if (!quota) return <span className="text-xs text-muted">—</span>;
+
+  const profile = quota.profiles.find((p) => p.id === profileId);
+  if (!profile || !profile.windows || profile.windows.length === 0) {
+    return <span className="text-xs text-muted">—</span>;
+  }
+
+  const w5h = profile.windows.find((w) => w.type === '5h');
+  const w7d = profile.windows.find((w) => w.type === '7d');
+
+  if (!w5h && !w7d) return <span className="text-xs text-muted">—</span>;
+
+  return (
+    <div className="flex items-center gap-1 flex-wrap">
+      {w5h && <QuotaBadge utilization={w5h.utilization} label="5h" />}
+      {w7d && <QuotaBadge utilization={w7d.utilization} label="7d" />}
     </div>
   );
 }
@@ -414,17 +460,20 @@ function AccountEditModal({
 // ------------------------------------------------------------------
 // Account row (desktop table)
 // ------------------------------------------------------------------
-function AccountRow({
+function AccountTableRow({
   account,
+  quotaMap,
   onUnassign,
   onRefresh,
 }: {
   account: AccountRow;
+  quotaMap: Map<string, QuotaAll>;
   onUnassign: (nodeId: string, accountId: string) => void;
   onRefresh: () => void;
 }) {
   const [removing, setRemoving] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [toggling, setToggling] = useState(false);
 
   async function handleUnassign() {
     if (!confirm(`确认解绑账户 ${account.accountId} 与节点 ${account.nodeName}？`)) return;
@@ -437,27 +486,58 @@ function AccountRow({
     }
   }
 
+  async function handleToggleEnabled() {
+    setToggling(true);
+    try {
+      await updateNodeAccount(account.nodeId, account.accountId, {
+        egress: account.egress,
+        weight: account.weight,
+        role: account.role,
+        enabled: !account.enabled,
+      });
+      onRefresh();
+    } catch {
+      setToggling(false);
+    }
+  }
+
   return (
     <>
       <tr className="border-t border-line hover:bg-line/30 transition">
         <td className="px-4 py-3 text-sm text-ink font-medium">{account.nodeName}</td>
-        <td className="px-4 py-3 text-xs text-muted font-mono">{account.profileId || '—'}</td>
-        <td className="px-4 py-3 text-xs text-muted">—</td>
+        <td className="px-4 py-3">
+          <p className="text-xs text-ink">{account.email || '—'}</p>
+          <p className="text-[10px] text-muted font-mono mt-0.5">{account.profileId || '—'}</p>
+        </td>
         <td className="px-4 py-3">
           <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${account.enabled ? 'text-ok' : 'text-muted'}`}>
             <span className={`w-1.5 h-1.5 rounded-full ${account.enabled ? 'bg-ok' : 'bg-muted'}`} />
             {account.enabled ? '启用' : '禁用'}
           </span>
         </td>
+        <td className="px-4 py-3">
+          <QuotaCell nodeId={account.nodeId} profileId={account.profileId} quotaMap={quotaMap} />
+        </td>
         <td className="px-4 py-3 text-sm text-muted">{account.weight}</td>
         <td className="px-4 py-3 text-xs text-muted">{account.role || '—'}</td>
         <td className="px-4 py-3">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <button
               onClick={() => setEditing(true)}
               className="text-xs text-accent hover:text-accent/70 transition"
             >
               编辑
+            </button>
+            <button
+              onClick={() => { void handleToggleEnabled(); }}
+              disabled={toggling}
+              className={`text-xs transition disabled:opacity-50 ${
+                account.enabled
+                  ? 'text-yellow-500 hover:text-yellow-400'
+                  : 'text-ok hover:text-ok/70'
+              }`}
+            >
+              {toggling ? '…' : account.enabled ? '暂停' : '启用'}
             </button>
             <button
               onClick={() => { void handleUnassign(); }}
@@ -485,15 +565,18 @@ function AccountRow({
 // ------------------------------------------------------------------
 function AccountMobileCard({
   account,
+  quotaMap,
   onUnassign,
   onRefresh,
 }: {
   account: AccountRow;
+  quotaMap: Map<string, QuotaAll>;
   onUnassign: (nodeId: string, accountId: string) => void;
   onRefresh: () => void;
 }) {
   const [removing, setRemoving] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [toggling, setToggling] = useState(false);
 
   async function handleUnassign() {
     if (!confirm(`确认解绑账户 ${account.accountId} 与节点 ${account.nodeName}？`)) return;
@@ -506,13 +589,29 @@ function AccountMobileCard({
     }
   }
 
+  async function handleToggleEnabled() {
+    setToggling(true);
+    try {
+      await updateNodeAccount(account.nodeId, account.accountId, {
+        egress: account.egress,
+        weight: account.weight,
+        role: account.role,
+        enabled: !account.enabled,
+      });
+      onRefresh();
+    } catch {
+      setToggling(false);
+    }
+  }
+
   return (
     <>
       <div className="bg-surface border border-line rounded-xl p-4 space-y-2">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <p className="text-sm font-semibold text-ink truncate">{account.nodeName}</p>
-            <p className="text-xs text-muted font-mono mt-0.5 truncate">{account.profileId || '—'}</p>
+            <p className="text-xs text-ink mt-0.5 truncate">{account.email || '—'}</p>
+            <p className="text-[10px] text-muted font-mono mt-0.5 truncate">{account.profileId || '—'}</p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <button
@@ -520,6 +619,17 @@ function AccountMobileCard({
               className="text-xs text-accent hover:text-accent/70 transition"
             >
               编辑
+            </button>
+            <button
+              onClick={() => { void handleToggleEnabled(); }}
+              disabled={toggling}
+              className={`text-xs transition disabled:opacity-50 ${
+                account.enabled
+                  ? 'text-yellow-500 hover:text-yellow-400'
+                  : 'text-ok hover:text-ok/70'
+              }`}
+            >
+              {toggling ? '…' : account.enabled ? '暂停' : '启用'}
             </button>
             <button
               onClick={() => { void handleUnassign(); }}
@@ -540,6 +650,8 @@ function AccountMobileCard({
           {account.role && <span>角色 {account.role}</span>}
           {account.egress && <span className="font-mono">出口 {account.egress}</span>}
         </div>
+
+        <QuotaCell nodeId={account.nodeId} profileId={account.profileId} quotaMap={quotaMap} />
       </div>
       {editing && (
         <AccountEditModal
@@ -558,6 +670,7 @@ function AccountMobileCard({
 export default function Accounts() {
   const [nodes, setNodes] = useState<NodeRecord[]>([]);
   const [accounts, setAccounts] = useState<AccountRow[]>([]);
+  const [quotaMap, setQuotaMap] = useState<Map<string, QuotaAll>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -571,7 +684,19 @@ export default function Accounts() {
         listAccounts(),
       ]);
       setNodes(nodeList);
-      setAccounts(accountList ?? []);
+      const accs = accountList ?? [];
+      setAccounts(accs);
+
+      // Fetch quota for each distinct nodeId (best-effort, resilient)
+      const distinctNodeIds = [...new Set(accs.map((a) => a.nodeId))];
+      const results = await Promise.allSettled(
+        distinctNodeIds.map((id) => getNodeQuota(id).then((q) => ({ id, q }))),
+      );
+      const m = new Map<string, QuotaAll>();
+      for (const r of results) {
+        if (r.status === 'fulfilled') m.set(r.value.id, r.value.q);
+      }
+      setQuotaMap(m);
     } catch (e) {
       setError(e instanceof Error ? e.message : '加载失败');
     } finally {
@@ -641,9 +766,9 @@ export default function Accounts() {
               <thead>
                 <tr className="text-xs text-muted uppercase tracking-wide">
                   <th className="px-4 py-3 font-medium">节点</th>
-                  <th className="px-4 py-3 font-medium">Profile ID</th>
-                  <th className="px-4 py-3 font-medium">邮箱</th>
+                  <th className="px-4 py-3 font-medium">邮箱 / Profile</th>
                   <th className="px-4 py-3 font-medium">状态</th>
+                  <th className="px-4 py-3 font-medium">限额</th>
                   <th className="px-4 py-3 font-medium">权重</th>
                   <th className="px-4 py-3 font-medium">角色</th>
                   <th className="px-4 py-3 font-medium">操作</th>
@@ -651,9 +776,10 @@ export default function Accounts() {
               </thead>
               <tbody>
                 {accounts.map((a) => (
-                  <AccountRow
+                  <AccountTableRow
                     key={`${a.nodeId}/${a.accountId}`}
                     account={a}
+                    quotaMap={quotaMap}
                     onUnassign={handleUnassign}
                     onRefresh={() => { void fetchAll(); }}
                   />
@@ -668,6 +794,7 @@ export default function Accounts() {
               <AccountMobileCard
                 key={`${a.nodeId}/${a.accountId}`}
                 account={a}
+                quotaMap={quotaMap}
                 onUnassign={handleUnassign}
                 onRefresh={() => { void fetchAll(); }}
               />

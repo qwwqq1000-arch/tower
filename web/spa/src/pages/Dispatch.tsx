@@ -65,8 +65,7 @@ function ConcurrencyPanel({ accounts }: { accounts: DispatchAccountSnapshot[] })
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-line text-left text-xs text-muted">
-              <th className="px-4 py-2 font-medium">标签</th>
-              <th className="px-4 py-2 font-medium">Key</th>
+              <th className="px-4 py-2 font-medium">邮箱 / 账户</th>
               <th className="px-4 py-2 font-medium">状态</th>
               <th className="px-4 py-2 font-medium text-right">并发中</th>
               <th className="px-4 py-2 font-medium text-right">可用</th>
@@ -75,13 +74,15 @@ function ConcurrencyPanel({ accounts }: { accounts: DispatchAccountSnapshot[] })
           <tbody>
             {accounts.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-muted text-xs">无数据</td>
+                <td colSpan={4} className="px-4 py-6 text-center text-muted text-xs">无数据</td>
               </tr>
             )}
             {accounts.map((a) => (
               <tr key={a.key} className="border-b border-line/50 hover:bg-line/30 transition">
-                <td className="px-4 py-2 text-ink">{a.label ?? '—'}</td>
-                <td className="px-4 py-2 font-mono text-xs text-muted truncate max-w-[140px]">{a.key}</td>
+                <td className="px-4 py-2">
+                  <p className="text-sm text-ink font-medium">{a.label ?? '—'}</p>
+                  <p className="text-xs font-mono text-muted mt-0.5 truncate max-w-[200px]">{a.key}</p>
+                </td>
                 <td className="px-4 py-2"><StatusBadge status={a.status} /></td>
                 <td className="px-4 py-2 text-right tabular-nums">{a.inflight}</td>
                 <td className="px-4 py-2 text-right tabular-nums">{a.available}</td>
@@ -123,6 +124,27 @@ function TrafficPanel({ data }: { data: DispatchStatus }) {
 }
 
 // ------------------------------------------------------------------
+// Event type badge
+// ------------------------------------------------------------------
+function EventTypeBadge({ type }: { type: string }) {
+  let cls = 'bg-blue-500/20 text-blue-400 border-blue-500/40';
+  if (type === 'ban' || type.startsWith('ban_')) {
+    cls = 'bg-red-500/20 text-red-400 border-red-500/40';
+  } else if (type === 'dispatch_ok' || type === 'ok') {
+    cls = 'bg-green-500/20 text-green-400 border-green-500/40';
+  } else if (type === 'dispatch_err' || type === 'error' || type.endsWith('_err')) {
+    cls = 'bg-orange-500/20 text-orange-400 border-orange-500/40';
+  } else if (type === 'half_open' || type === 'recover') {
+    cls = 'bg-yellow-500/20 text-yellow-400 border-yellow-500/40';
+  }
+  return (
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-mono shrink-0 ${cls}`}>
+      {type}
+    </span>
+  );
+}
+
+// ------------------------------------------------------------------
 // Events timeline
 // ------------------------------------------------------------------
 function EventTimeline({ events, fallbackNames }: { events: DispatchEvent[]; fallbackNames: Map<string, string> }) {
@@ -135,6 +157,15 @@ function EventTimeline({ events, fallbackNames }: { events: DispatchEvent[]; fal
     return target;
   }
 
+  function formatTs(ts: number | undefined): string {
+    if (ts == null || ts === 0) return '—';
+    try {
+      return new Date(ts).toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    } catch {
+      return '—';
+    }
+  }
+
   return (
     <div className="bg-surface border border-line rounded-xl overflow-hidden">
       <div className="px-4 py-3 border-b border-line text-sm font-medium text-ink">事件时间线（最近 20）</div>
@@ -143,11 +174,11 @@ function EventTimeline({ events, fallbackNames }: { events: DispatchEvent[]; fal
       )}
       <ul className="divide-y divide-line/50 max-h-80 overflow-y-auto">
         {events.map((e, idx) => (
-          <li key={idx} className="flex items-start gap-3 px-4 py-2.5 hover:bg-line/30 transition">
-            <span className="text-xs text-muted tabular-nums shrink-0 w-28 pt-0.5">
-              {new Date(e.ts).toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+          <li key={idx} className="flex items-center gap-3 px-4 py-2.5 hover:bg-line/30 transition">
+            <span className="text-xs text-muted tabular-nums shrink-0 w-20">
+              {formatTs(e.ts)}
             </span>
-            <span className="text-xs font-mono text-accent shrink-0">{e.type}</span>
+            <EventTypeBadge type={e.type} />
             <span className="text-xs text-muted truncate">{renderTarget(e.target)}</span>
           </li>
         ))}

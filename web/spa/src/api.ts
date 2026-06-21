@@ -27,6 +27,7 @@ import type {
   FallbackChannel,
   UserRow,
   NodeTelemetry,
+  QuotaAll,
 } from './types';
 
 // ------------------------------------------------------------------
@@ -273,6 +274,12 @@ export const changePassword = (body: { oldPassword: string; newPassword: string 
 // ------------------------------------------------------------------
 export const getNodeTelemetry = (id: string) =>
   api<NodeTelemetry>('GET', `/api/admin/nodes/${id}/telemetry`);
+
+// ------------------------------------------------------------------
+// Node Quota (限额)
+// ------------------------------------------------------------------
+export const getNodeQuota = (id: string) =>
+  api<QuotaAll>('GET', `/api/admin/nodes/${id}/quota`);
 
 // ------------------------------------------------------------------
 // Ban analysis (封号分析)

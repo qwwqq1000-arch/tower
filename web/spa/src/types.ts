@@ -244,6 +244,27 @@ export interface AccountRow {
   weight: number;
   role: string;
   egress: string;
+  email: string;
+  status?: string;
+}
+
+// --- Node Quota ---
+export interface QuotaWindow {
+  type: string;   // e.g. "5h" | "7d"
+  status: string;
+  utilization: number;
+  resetsAt: string;
+}
+
+export interface QuotaProfile {
+  id: string;
+  isActive: boolean;
+  windows: QuotaWindow[];
+}
+
+export interface QuotaAll {
+  profiles: QuotaProfile[];
+  activeProfile: string;
 }
 
 export interface NodeProfile {
