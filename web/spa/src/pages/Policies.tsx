@@ -5,8 +5,8 @@
 // "Save global" → PUT /api/admin/policies/global
 // Only sends fields the user explicitly set.
 // ============================================================
-import { useState } from 'react';
-import { dryRunPolicy, putGlobalPolicy } from '../api';
+import { useState, useEffect } from 'react';
+import { dryRunPolicy, listPolicies, putGlobalPolicy } from '../api';
 import type { PolicyPatch, PolicyDryRunResult } from '../types';
 
 // ------------------------------------------------------------------
@@ -177,6 +177,57 @@ export default function Policies() {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+
+  // Load saved global policy on mount
+  useEffect(() => {
+    void (async () => {
+      try {
+        const policies = await listPolicies();
+        const global = policies.find((p) => p.scopeType === 'global');
+        if (!global?.params) return;
+        const p = global.params as Record<string, unknown>;
+        const setNum = (f: FieldState<number> & { set: (v: number) => void; toggle: () => void }, key: string) => {
+          if (key in p) { f.set(Number(p[key])); if (!f.enabled) f.toggle(); }
+        };
+        const setBool = (f: FieldState<boolean> & { set: (v: boolean) => void; toggle: () => void }, key: string) => {
+          if (key in p) { f.set(Boolean(p[key])); if (!f.enabled) f.toggle(); }
+        };
+        const setArr = (f: FieldState<string> & { set: (v: string) => void; toggle: () => void }, key: string) => {
+          if (key in p) { f.set((p[key] as unknown[]).join(',')); if (!f.enabled) f.toggle(); }
+        };
+        setNum(maxConcurrent, 'MaxConcurrent');
+        setNum(slotCooldownMinMs, 'SlotCooldownMinMs');
+        setNum(slotCooldownMaxMs, 'SlotCooldownMaxMs');
+        setNum(banPersistStreak, 'BanPersistStreak');
+        setNum(cooldownBaseMs, 'CooldownBaseMs');
+        setNum(cooldownMaxMs, 'CooldownMaxMs');
+        setNum(cooldownMult, 'CooldownMult');
+        setNum(affinityTTLSec, 'AffinityTTLSec');
+        setBool(fallbackEnabled, 'FallbackEnabled');
+        setNum(fallbackPriceThresholdUsd, 'FallbackPriceThresholdUsd');
+        setArr(fallbackKeywords, 'FallbackKeywords');
+        setArr(fallbackModels, 'FallbackModels');
+        setBool(fallbackProbeEnabled, 'FallbackProbeEnabled');
+        setArr(banSignals, 'BanSignals');
+        setArr(banKeywords, 'BanKeywords');
+        setNum(quotaRotateThreshold, 'QuotaRotateThreshold');
+        setNum(maxFailover, 'MaxFailover');
+        setNum(warmupHours, 'WarmupHours');
+        setNum(warmupMaxConcurrent, 'WarmupMaxConcurrent');
+        setBool(warmupBlockOpus, 'WarmupBlockOpus');
+        setNum(sessionErrorThreshold, 'SessionErrorThreshold');
+        setNum(sessionCooldownSec, 'SessionCooldownSec');
+        setBool(responseExileEnabled, 'ResponseExileEnabled');
+        setArr(responseExileKeywords, 'ResponseExileKeywords');
+        setBool(elasticEnabled, 'ElasticEnabled');
+        setNum(elasticScaleUpUtil, 'ElasticScaleUpUtil');
+        setNum(elasticMaxReserve, 'ElasticMaxReserve');
+      } catch {
+        // silently ignore — page still usable
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Build patch — only include enabled fields
   function buildPatch(): PolicyPatch {
@@ -412,7 +463,7 @@ export default function Policies() {
           />
         </FieldRow>
 
-        <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2 pt-4">亲和性 / 兜底</h2>
+        <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2 pt-4">亲和性</h2>
 
         <FieldRow
           label="AffinityTTLSec"
@@ -428,6 +479,8 @@ export default function Policies() {
             step={60}
           />
         </FieldRow>
+
+        <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2 pt-4">保底触发（兜底通道触发条件）</h2>
 
         <FieldRow
           label="FallbackEnabled"
@@ -518,6 +571,72 @@ export default function Policies() {
               {fallbackProbeEnabled.value ? '已启用' : '已禁用'}
             </span>
           </label>
+        </FieldRow>
+
+        <FieldRow
+          label="SessionErrorThreshold"
+          desc="会话连错阈值(0=关)"
+          enabled={sessionErrorThreshold.enabled}
+          onToggle={sessionErrorThreshold.toggle}
+        >
+          <NumInput
+            value={sessionErrorThreshold.value}
+            onChange={sessionErrorThreshold.set}
+            disabled={!sessionErrorThreshold.enabled}
+            min={0}
+          />
+        </FieldRow>
+
+        <FieldRow
+          label="SessionCooldownSec"
+          desc="会话放逐冷却(秒)"
+          enabled={sessionCooldownSec.enabled}
+          onToggle={sessionCooldownSec.toggle}
+        >
+          <NumInput
+            value={sessionCooldownSec.value}
+            onChange={sessionCooldownSec.set}
+            disabled={!sessionCooldownSec.enabled}
+            min={0}
+          />
+        </FieldRow>
+
+        <FieldRow
+          label="ResponseExileEnabled"
+          desc="安全拒答放逐(cyber)"
+          enabled={responseExileEnabled.enabled}
+          onToggle={responseExileEnabled.toggle}
+        >
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={responseExileEnabled.value}
+              onChange={(e) => responseExileEnabled.set(e.target.checked)}
+              disabled={!responseExileEnabled.enabled}
+              className="accent-accent w-4 h-4"
+            />
+            <span className="text-sm text-ink">
+              {responseExileEnabled.value ? '已启用' : '已禁用'}
+            </span>
+          </label>
+        </FieldRow>
+
+        <FieldRow
+          label="拒答关键词(逗号分隔)"
+          desc="拒答关键词(逗号分隔)"
+          enabled={responseExileKeywords.enabled}
+          onToggle={responseExileKeywords.toggle}
+        >
+          <input
+            type="text"
+            value={responseExileKeywords.value}
+            onChange={(e) => responseExileKeywords.set(e.target.value)}
+            disabled={!responseExileKeywords.enabled}
+            placeholder="keyword1,keyword2"
+            className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink
+                       placeholder:text-muted focus:outline-none focus:border-accent transition
+                       disabled:cursor-not-allowed"
+          />
         </FieldRow>
 
         <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2 pt-4">封禁信号</h2>
@@ -640,74 +759,6 @@ export default function Policies() {
               {warmupBlockOpus.value ? '已启用' : '已禁用'}
             </span>
           </label>
-        </FieldRow>
-
-        <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2 pt-4">会话/安全放逐</h2>
-
-        <FieldRow
-          label="SessionErrorThreshold"
-          desc="会话连错阈值(0=关)"
-          enabled={sessionErrorThreshold.enabled}
-          onToggle={sessionErrorThreshold.toggle}
-        >
-          <NumInput
-            value={sessionErrorThreshold.value}
-            onChange={sessionErrorThreshold.set}
-            disabled={!sessionErrorThreshold.enabled}
-            min={0}
-          />
-        </FieldRow>
-
-        <FieldRow
-          label="SessionCooldownSec"
-          desc="会话放逐冷却(秒)"
-          enabled={sessionCooldownSec.enabled}
-          onToggle={sessionCooldownSec.toggle}
-        >
-          <NumInput
-            value={sessionCooldownSec.value}
-            onChange={sessionCooldownSec.set}
-            disabled={!sessionCooldownSec.enabled}
-            min={0}
-          />
-        </FieldRow>
-
-        <FieldRow
-          label="ResponseExileEnabled"
-          desc="安全拒答放逐(cyber)"
-          enabled={responseExileEnabled.enabled}
-          onToggle={responseExileEnabled.toggle}
-        >
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={responseExileEnabled.value}
-              onChange={(e) => responseExileEnabled.set(e.target.checked)}
-              disabled={!responseExileEnabled.enabled}
-              className="accent-accent w-4 h-4"
-            />
-            <span className="text-sm text-ink">
-              {responseExileEnabled.value ? '已启用' : '已禁用'}
-            </span>
-          </label>
-        </FieldRow>
-
-        <FieldRow
-          label="拒答关键词(逗号分隔)"
-          desc="拒答关键词(逗号分隔)"
-          enabled={responseExileKeywords.enabled}
-          onToggle={responseExileKeywords.toggle}
-        >
-          <input
-            type="text"
-            value={responseExileKeywords.value}
-            onChange={(e) => responseExileKeywords.set(e.target.value)}
-            disabled={!responseExileKeywords.enabled}
-            placeholder="keyword1,keyword2"
-            className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink
-                       placeholder:text-muted focus:outline-none focus:border-accent transition
-                       disabled:cursor-not-allowed"
-          />
         </FieldRow>
 
         <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2 pt-4">弹性伸缩</h2>
