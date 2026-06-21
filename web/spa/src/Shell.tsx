@@ -151,8 +151,6 @@ const NAV_ITEMS: NavItem[] = [
   { path: '/desired',    label: '配置对账', icon: '⇌', adminOnly: true },
   { path: '/logs',       label: '日志',     icon: '≡' },
   { path: '/billing',    label: '计费',     icon: '₿', adminOnly: true },
-  { path: '/audit',      label: '审计',     icon: '◎', adminOnly: true },
-  { path: '/events',     label: '事件',     icon: '⚡' },
   { path: '/ban-analysis', label: '封号分析', icon: '⚠', adminOnly: true },
   { path: '/fallback',     label: '保底渠道', icon: '⤵', adminOnly: true },
   { path: '/users',        label: '用户',     icon: '👤', adminOnly: true },

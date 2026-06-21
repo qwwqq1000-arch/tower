@@ -13,8 +13,6 @@ import Policies     from './pages/Policies';
 import Desired      from './pages/Desired';
 import Logs         from './pages/Logs';
 import Billing      from './pages/Billing';
-import Audit        from './pages/Audit';
-import Events       from './pages/Events';
 import BanAnalysis  from './pages/BanAnalysis';
 import Fallback     from './pages/Fallback';
 import Users        from './pages/Users';
@@ -38,8 +36,6 @@ export default function App() {
               <Route path="/desired"   element={<Desired />} />
               <Route path="/logs"      element={<Logs />} />
               <Route path="/billing"   element={<Billing />} />
-              <Route path="/audit"     element={<Audit />} />
-              <Route path="/events"        element={<Events />} />
               <Route path="/ban-analysis" element={<BanAnalysis />} />
               <Route path="/fallback"     element={<Fallback />} />
               <Route path="/users"        element={<Users />} />
