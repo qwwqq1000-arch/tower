@@ -6,10 +6,17 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
 func newHTTP() *http.Client { return &http.Client{Timeout: 300 * time.Second} }
+
+// msgURL builds the /v1/messages URL, tolerating a trailing slash on baseURL
+// (a trailing slash would otherwise produce "...//v1/messages" → node 404).
+func msgURL(baseURL string) string {
+	return strings.TrimRight(baseURL, "/") + "/v1/messages"
+}
 
 // NodeRef locates one account on a node.
 type NodeRef struct {
@@ -43,7 +50,7 @@ func (p *NodeProxy) Send(ctx context.Context, key string) (ProxyResult, error) {
 	if !ok {
 		return ProxyResult{}, fmt.Errorf("unknown account %q", key)
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", ref.BaseURL+"/v1/messages", bytes.NewReader(p.Body))
+	req, err := http.NewRequestWithContext(ctx, "POST", msgURL(ref.BaseURL), bytes.NewReader(p.Body))
 	if err != nil {
 		return ProxyResult{}, err
 	}
@@ -89,7 +96,7 @@ func (p *ChannelProxy) client() *http.Client {
 
 // Send proxies to {BaseURL}/v1/messages on the channel.
 func (p *ChannelProxy) Send(ctx context.Context, _ string) (ProxyResult, error) {
-	req, err := http.NewRequestWithContext(ctx, "POST", p.Ch.BaseURL+"/v1/messages", bytes.NewReader(p.Body))
+	req, err := http.NewRequestWithContext(ctx, "POST", msgURL(p.Ch.BaseURL), bytes.NewReader(p.Body))
 	if err != nil {
 		return ProxyResult{}, err
 	}
@@ -122,7 +129,7 @@ func (p *NodeProxy) OpenStream(ctx context.Context, key string) (*Stream, error)
 	if !ok {
 		return nil, fmt.Errorf("unknown account %q", key)
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", ref.BaseURL+"/v1/messages", bytes.NewReader(p.Body))
+	req, err := http.NewRequestWithContext(ctx, "POST", msgURL(ref.BaseURL), bytes.NewReader(p.Body))
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +153,7 @@ func (p *NodeProxy) OpenStream(ctx context.Context, key string) (*Stream, error)
 
 // OpenStream starts a streaming request to a fallback channel (no ban classify).
 func (p *ChannelProxy) OpenStream(ctx context.Context, _ string) (*Stream, error) {
-	req, err := http.NewRequestWithContext(ctx, "POST", p.Ch.BaseURL+"/v1/messages", bytes.NewReader(p.Body))
+	req, err := http.NewRequestWithContext(ctx, "POST", msgURL(p.Ch.BaseURL), bytes.NewReader(p.Body))
 	if err != nil {
 		return nil, err
 	}
