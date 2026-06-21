@@ -103,3 +103,58 @@ func (p *ChannelProxy) Send(ctx context.Context, _ string) (ProxyResult, error) 
 	data, _ := io.ReadAll(resp.Body)
 	return ProxyResult{Status: resp.StatusCode, Body: string(data), Banned: false}, nil
 }
+
+// Stream is an open streaming response from an upstream.
+type Stream struct {
+	Status int
+	Header http.Header
+	Body   io.ReadCloser
+	Banned bool
+}
+
+// streamClient has no overall timeout (streaming responses are long-lived);
+// cancellation is via the request context.
+var streamClient = &http.Client{}
+
+// OpenStream starts a streaming request to a node. The caller owns Body.
+func (p *NodeProxy) OpenStream(ctx context.Context, key string) (*Stream, error) {
+	ref, ok := p.Resolve(key)
+	if !ok {
+		return nil, fmt.Errorf("unknown account %q", key)
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", ref.BaseURL+"/v1/messages", bytes.NewReader(p.Body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", ref.APIKey)
+	if ref.ProfileID != "" {
+		req.Header.Set("x-meridian-profile", ref.ProfileID)
+	}
+	ForgeClaudeCodeHeaders(req.Header)
+	resp, err := streamClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	return &Stream{
+		Status: resp.StatusCode,
+		Header: resp.Header,
+		Body:   resp.Body,
+		Banned: ClassifyBanned(resp.StatusCode, "", p.BanSignals, nil),
+	}, nil
+}
+
+// OpenStream starts a streaming request to a fallback channel (no ban classify).
+func (p *ChannelProxy) OpenStream(ctx context.Context, _ string) (*Stream, error) {
+	req, err := http.NewRequestWithContext(ctx, "POST", p.Ch.BaseURL+"/v1/messages", bytes.NewReader(p.Body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", p.Ch.APIKey)
+	resp, err := streamClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	return &Stream{Status: resp.StatusCode, Header: resp.Header, Body: resp.Body, Banned: false}, nil
+}
