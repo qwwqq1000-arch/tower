@@ -27,6 +27,7 @@ type Orchestrator struct {
 	CooldownMin int64
 	CooldownMax int64
 	MaxAttempts int
+	OnBan       func(key string) // optional: fired when an account is (re)banned
 }
 
 // attempt sends one request to key with guaranteed settlement. ok reports a clean 2xx.
@@ -52,10 +53,15 @@ func (o *Orchestrator) attempt(ctx context.Context, model, key string, px Proxy)
 		}
 		if trial {
 			o.Store.OnTrialResult(key, o.Cfg, success)
+			if !success && o.OnBan != nil {
+				o.OnBan(key)
+			}
 		} else if success {
 			o.Store.OnSuccess(key)
 		} else {
-			o.Store.OnBanSignal(key, o.Cfg)
+			if o.Store.OnBanSignal(key, o.Cfg) && o.OnBan != nil {
+				o.OnBan(key)
+			}
 		}
 	}
 	// defer guarantees settlement even on panic; success path overrides before return.

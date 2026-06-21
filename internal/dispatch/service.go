@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strings"
 
 	"github.com/qwwqq1000-arch/tower/internal/billing"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
@@ -77,7 +78,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 
 	// Our nodes.
 	if len(order) > 0 {
-		orch := &Orchestrator{Store: s.Store, Cfg: breaker, CooldownMin: cfg.SlotCooldownMinMs, CooldownMax: cfg.SlotCooldownMaxMs, MaxAttempts: 50}
+		orch := &Orchestrator{Store: s.Store, Cfg: breaker, CooldownMin: cfg.SlotCooldownMinMs, CooldownMax: cfg.SlotCooldownMaxMs, MaxAttempts: 50, OnBan: s.recordBan}
 		np := &NodeProxy{Body: body, Resolve: resolver, BanSignals: cfg.BanSignals, BanKeywords: cfg.BanKeywords}
 		res, ok := orch.Dispatch(ctx, model, order, np)
 		if ok {
@@ -280,10 +281,15 @@ func (s *Service) streamOne(ctx context.Context, w http.ResponseWriter, key stri
 		}
 		if trial {
 			s.Store.OnTrialResult(key, breaker, success)
+			if !success {
+				s.recordBan(key)
+			}
 		} else if success {
 			s.Store.OnSuccess(key)
 		} else {
-			s.Store.OnBanSignal(key, breaker)
+			if s.Store.OnBanSignal(key, breaker) {
+				s.recordBan(key)
+			}
 		}
 	}
 	defer func() { settle(false) }()
@@ -306,6 +312,25 @@ func (s *Service) streamOne(ctx context.Context, w http.ResponseWriter, key stri
 	settle(true)
 	s.logOK(ctx, ownerID, model, ProxyResult{Status: st.Status}, "")
 	return Outcome{Status: st.Status, Target: "node"}, true
+}
+
+// recordBan records a ban episode and event for the given key (node:profile).
+func (s *Service) recordBan(key string) {
+	node, profile, found := splitKey(key)
+	if !found {
+		return
+	}
+	ctx := context.Background()
+	_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: "ban", Target: key})
+	_ = s.Q.InsertBanEpisode(ctx, sqlc.InsertBanEpisodeParams{NodeID: node, ProfileID: profile, BannedAt: s.Now(), Detail: []byte("{}")})
+}
+
+func splitKey(key string) (node, profile string, ok bool) {
+	i := strings.LastIndex(key, ":")
+	if i < 0 {
+		return "", "", false
+	}
+	return key[:i], key[i+1:], true
 }
 
 // streamChannel attempts a fallback channel stream. committed=true means we wrote to the client.
