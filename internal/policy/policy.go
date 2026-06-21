@@ -30,6 +30,11 @@ type Config struct {
 	WarmupMaxConcurrent int
 	WarmupBlockOpus     bool
 
+	// Elastic scaling: activate reserve accounts when baseline is saturated.
+	ElasticEnabled      bool
+	ElasticScaleUpUtil  float64 // utilisation threshold to activate reserves (0.0–1.0); default 0.8
+	ElasticMaxReserve   int     // cap on reserve accounts added per evaluation; default 1000
+
 	// Session exile: route a conversation to fallback after this many consecutive
 	// errors from our nodes. 0 = disabled.
 	SessionErrorThreshold int
@@ -66,6 +71,9 @@ func Defaults() Config {
 		WarmupHours:               0,
 		WarmupMaxConcurrent:       1,
 		WarmupBlockOpus:           true,
+		ElasticEnabled:            false,
+		ElasticScaleUpUtil:        0.8,
+		ElasticMaxReserve:         1000,
 		SessionErrorThreshold:     0,
 		SessionCooldownSec:        300,
 		ResponseExileEnabled:      false,
@@ -95,6 +103,9 @@ type Patch struct {
 	WarmupHours         *int
 	WarmupMaxConcurrent *int
 	WarmupBlockOpus     *bool
+	ElasticEnabled     *bool
+	ElasticScaleUpUtil *float64
+	ElasticMaxReserve  *int
 	SessionErrorThreshold     *int
 	SessionCooldownSec        *int
 	ResponseExileEnabled      *bool
@@ -166,6 +177,15 @@ func apply(c *Config, p Patch) {
 	if p.WarmupBlockOpus != nil {
 		c.WarmupBlockOpus = *p.WarmupBlockOpus
 	}
+	if p.ElasticEnabled != nil {
+		c.ElasticEnabled = *p.ElasticEnabled
+	}
+	if p.ElasticScaleUpUtil != nil {
+		c.ElasticScaleUpUtil = *p.ElasticScaleUpUtil
+	}
+	if p.ElasticMaxReserve != nil {
+		c.ElasticMaxReserve = *p.ElasticMaxReserve
+	}
 	if p.SessionErrorThreshold != nil {
 		c.SessionErrorThreshold = *p.SessionErrorThreshold
 	}
@@ -226,6 +246,9 @@ func DryRun(base Config, patches ...Patch) (Config, []Diff) {
 	add("WarmupHours", base.WarmupHours, final.WarmupHours)
 	add("WarmupMaxConcurrent", base.WarmupMaxConcurrent, final.WarmupMaxConcurrent)
 	add("WarmupBlockOpus", base.WarmupBlockOpus, final.WarmupBlockOpus)
+	add("ElasticEnabled", base.ElasticEnabled, final.ElasticEnabled)
+	add("ElasticScaleUpUtil", base.ElasticScaleUpUtil, final.ElasticScaleUpUtil)
+	add("ElasticMaxReserve", base.ElasticMaxReserve, final.ElasticMaxReserve)
 	add("SessionErrorThreshold", base.SessionErrorThreshold, final.SessionErrorThreshold)
 	add("SessionCooldownSec", base.SessionCooldownSec, final.SessionCooldownSec)
 	add("ResponseExileEnabled", base.ResponseExileEnabled, final.ResponseExileEnabled)

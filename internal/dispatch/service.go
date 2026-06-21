@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/qwwqq1000-arch/tower/internal/billing"
@@ -27,11 +28,16 @@ type Service struct {
 	Base  policy.Config
 	Now   func() int64
 	sess  *session.Store
+
+	// scaledUp tracks owners for which reserve accounts were last activated,
+	// to deduplicate scale_up / scale_down events.
+	scaledUpMu sync.Mutex
+	scaledUp   map[string]bool
 }
 
 // NewService builds a dispatch Service.
 func NewService(q *sqlc.Queries, store *state.Store, base policy.Config, now func() int64) *Service {
-	return &Service{Q: q, Store: store, Base: base, Now: now, sess: session.NewStore()}
+	return &Service{Q: q, Store: store, Base: base, Now: now, sess: session.NewStore(), scaledUp: make(map[string]bool)}
 }
 
 // matchesAny reports whether body contains any of kws (case-insensitive).
@@ -181,6 +187,25 @@ func (s *Service) resolveConfig(ctx context.Context) policy.Config {
 	return policy.Resolve(s.Base, patches...)
 }
 
+// pickElastic selects the ordered candidate list given the elastic configuration.
+// It is a pure function so it can be table-tested independently.
+// baseline and reserve are already sorted weight-desc.
+// util is baseline inflight / baseline capacity (1.0 when capacity == 0).
+// Returns the ordered slice to use.
+func pickElastic(baseline, reserve []string, util, threshold float64, maxReserve int) []string {
+	if util >= threshold {
+		n := len(reserve)
+		if maxReserve > 0 && n > maxReserve {
+			n = maxReserve
+		}
+		out := make([]string, 0, len(baseline)+n)
+		out = append(out, baseline...)
+		out = append(out, reserve[:n]...)
+		return out
+	}
+	return baseline
+}
+
 func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cfg policy.Config) ([]string, Resolver) {
 	nodes, err := s.Q.ListNodesByOwner(ctx, ownerID)
 	if err != nil || len(nodes) == 0 {
@@ -188,8 +213,9 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 	}
 	refs := map[string]NodeRef{}
 	type cand struct {
-		key    string
-		weight int
+		key     string
+		weight  int
+		reserve bool
 	}
 	var cands []cand
 	nowMs := s.Now()
@@ -226,14 +252,81 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 			} else {
 				s.Store.SetWarmupCap(key, 0)
 			}
-			cands = append(cands, cand{key: key, weight: int(na.Weight)})
+			cands = append(cands, cand{key: key, weight: int(na.Weight), reserve: na.Role == "reserve"})
 		}
 	}
 	sort.SliceStable(cands, func(i, j int) bool { return cands[i].weight > cands[j].weight })
-	order := make([]string, len(cands))
-	for i, c := range cands {
-		order[i] = c.key
+
+	if !cfg.ElasticEnabled {
+		// Non-elastic path: all accounts, weight-desc (unchanged behaviour).
+		order := make([]string, len(cands))
+		for i, c := range cands {
+			order[i] = c.key
+		}
+		resolver := func(key string) (NodeRef, bool) { r, ok := refs[key]; return r, ok }
+		return order, resolver
 	}
+
+	// Elastic path: partition into baseline and reserve pools.
+	var baseline, reserve []string
+	for _, c := range cands {
+		if c.reserve {
+			reserve = append(reserve, c.key)
+		} else {
+			baseline = append(baseline, c.key)
+		}
+	}
+
+	// Compute baseline utilisation from the store snapshot.
+	snap := s.Store.Snapshot(nowMs)
+	baselineSet := make(map[string]bool, len(baseline))
+	for _, k := range baseline {
+		baselineSet[k] = true
+	}
+	var totalInflight, totalCapacity int
+	for _, sn := range snap {
+		if baselineSet[sn.Key] {
+			totalInflight += sn.Inflight
+			totalCapacity += sn.Inflight + sn.Available
+		}
+	}
+	var util float64
+	if totalCapacity == 0 {
+		util = 1.0
+	} else {
+		util = float64(totalInflight) / float64(totalCapacity)
+	}
+
+	threshold := cfg.ElasticScaleUpUtil
+	order := pickElastic(baseline, reserve, util, threshold, cfg.ElasticMaxReserve)
+
+	// Deduplicated scale_up / scale_down events.
+	nReserve := len(order) - len(baseline)
+	if nReserve < 0 {
+		nReserve = 0
+	}
+	s.scaledUpMu.Lock()
+	wasScaled := s.scaledUp[ownerID]
+	if nReserve > 0 && !wasScaled {
+		s.scaledUp[ownerID] = true
+		s.scaledUpMu.Unlock()
+		_ = events.Record(ctx, s.Q, nowMs, events.Event{
+			Type:    "scale_up",
+			Target:  fmt.Sprintf("reserves=%d", nReserve),
+			OwnerID: ownerID,
+		})
+	} else if nReserve == 0 && wasScaled {
+		delete(s.scaledUp, ownerID)
+		s.scaledUpMu.Unlock()
+		_ = events.Record(ctx, s.Q, nowMs, events.Event{
+			Type:    "scale_down",
+			Target:  "reserves=0",
+			OwnerID: ownerID,
+		})
+	} else {
+		s.scaledUpMu.Unlock()
+	}
+
 	resolver := func(key string) (NodeRef, bool) { r, ok := refs[key]; return r, ok }
 	return order, resolver
 }

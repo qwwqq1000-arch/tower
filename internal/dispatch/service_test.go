@@ -162,3 +162,73 @@ data: {"type":"message_delta","usage":{"output_tokens":15}}
 		t.Errorf("split: cache1h got %d, want 200", cache1h2)
 	}
 }
+
+func TestPickElastic(t *testing.T) {
+	b := []string{"b1", "b2"}
+	r := []string{"r1", "r2", "r3"}
+
+	cases := []struct {
+		name       string
+		util       float64
+		threshold  float64
+		maxReserve int
+		wantLen    int
+		wantOrder  []string
+	}{
+		{
+			name: "below threshold — baseline only",
+			util: 0.5, threshold: 0.8, maxReserve: 1000,
+			wantLen:   2,
+			wantOrder: []string{"b1", "b2"},
+		},
+		{
+			name: "at threshold — reserves added",
+			util: 0.8, threshold: 0.8, maxReserve: 1000,
+			wantLen:   5,
+			wantOrder: []string{"b1", "b2", "r1", "r2", "r3"},
+		},
+		{
+			name: "above threshold — reserves added",
+			util: 1.0, threshold: 0.8, maxReserve: 1000,
+			wantLen:   5,
+			wantOrder: []string{"b1", "b2", "r1", "r2", "r3"},
+		},
+		{
+			name: "above threshold — maxReserve cap applied",
+			util: 0.9, threshold: 0.8, maxReserve: 2,
+			wantLen:   4,
+			wantOrder: []string{"b1", "b2", "r1", "r2"},
+		},
+		{
+			name: "above threshold — maxReserve 0 means no cap",
+			util: 0.9, threshold: 0.8, maxReserve: 0,
+			wantLen:   5,
+			wantOrder: []string{"b1", "b2", "r1", "r2", "r3"},
+		},
+		{
+			name: "empty reserve pool — baseline only even above threshold",
+			util: 1.0, threshold: 0.8, maxReserve: 1000,
+			// use nil reserve
+			wantLen:   2,
+			wantOrder: []string{"b1", "b2"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rv := r
+			if tc.name == "empty reserve pool — baseline only even above threshold" {
+				rv = nil
+			}
+			got := pickElastic(b, rv, tc.util, tc.threshold, tc.maxReserve)
+			if len(got) != tc.wantLen {
+				t.Fatalf("len=%d, want %d; got %v", len(got), tc.wantLen, got)
+			}
+			for i, key := range tc.wantOrder {
+				if got[i] != key {
+					t.Errorf("order[%d]=%q, want %q", i, got[i], key)
+				}
+			}
+		})
+	}
+}
