@@ -4,6 +4,7 @@ package provision
 import (
 	"encoding/hex"
 	"fmt"
+	"strings"
 )
 
 // Step is one named provisioning command.
@@ -21,6 +22,11 @@ type Input struct {
 	InstallDir      string
 }
 
+// shq single-quotes s for safe shell interpolation (interior ' becomes '\'' ).
+func shq(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 // GenAPIKey builds a meridian API key: "sk-mer-" + 32 random bytes hex.
 func GenAPIKey(rnd func([]byte)) string {
 	b := make([]byte, 32)
@@ -35,14 +41,14 @@ func Steps(in Input) []Step {
 		{"ensure-docker", "安装/确认 Docker",
 			"command -v docker >/dev/null 2>&1 || (curl -fsSL https://get.docker.com | sh); systemctl enable --now docker 2>/dev/null || true"},
 		{"fetch-source", "拉取 new-meridian 源码",
-			fmt.Sprintf("if [ -d '%s/.git' ]; then cd '%s' && git pull; else git clone '%s' '%s'; fi", dir, dir, in.SourceRepo, dir)},
+			fmt.Sprintf("if [ -d %s/.git ]; then cd %s && git pull; else git clone %s %s; fi", shq(dir), shq(dir), shq(in.SourceRepo), shq(dir))},
 		{"write-env", "写入 .env",
-			fmt.Sprintf("cd '%s' && printf 'MERIDIAN_API_KEY=%s\\nMERIDIAN_HOST=0.0.0.0\\n' > .env", dir, in.APIKey)},
+			fmt.Sprintf("cd %s && printf 'MERIDIAN_API_KEY=%%s\\nMERIDIAN_HOST=0.0.0.0\\n' %s > .env", shq(dir), shq(in.APIKey))},
 		{"build", "本机构建(指纹多样化)",
-			fmt.Sprintf("cd '%s' && docker compose build --build-arg CACHEBUST='%s'", dir, in.FingerprintSeed)},
+			fmt.Sprintf("cd %s && docker compose build --build-arg CACHEBUST=%s", shq(dir), shq(in.FingerprintSeed))},
 		{"compose-up", "启动容器",
-			fmt.Sprintf("cd '%s' && docker compose up -d", dir)},
+			fmt.Sprintf("cd %s && docker compose up -d", shq(dir))},
 		{"read-key", "确认 API key",
-			fmt.Sprintf("echo '%s'", in.APIKey)},
+			fmt.Sprintf("echo %s", shq(in.APIKey))},
 	}
 }
