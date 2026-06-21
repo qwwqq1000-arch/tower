@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
@@ -25,6 +26,9 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 	accounts := []map[string]any{}
 	if svc != nil && svc.Store != nil {
 		for _, s := range svc.Store.Snapshot(now) {
+			if strings.HasPrefix(s.Key, "fb:") {
+				continue
+			}
 			accounts = append(accounts, map[string]any{"key": s.Key, "label": labels[s.Key], "status": s.Status, "inflight": s.Inflight, "available": s.Available})
 		}
 	}
