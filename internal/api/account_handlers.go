@@ -99,6 +99,72 @@ func oauthExchangeHandler(q *sqlc.Queries) http.HandlerFunc {
 	}
 }
 
+func importProfileHandler(q *sqlc.Queries) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		nodeID := r.PathValue("id")
+		n, err := q.GetNode(r.Context(), nodeID)
+		if err != nil {
+			writeJSON(w, 404, map[string]string{"error": "node not found"})
+			return
+		}
+		var body struct {
+			ProfileID string `json:"profileId"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ProfileID == "" {
+			writeJSON(w, 400, map[string]string{"error": "profileId required"})
+			return
+		}
+		cl := nodeclient.New(n.BaseUrl, n.ApiKey)
+		profiles, _ := cl.ProfilesList(r.Context())
+		var matched *nodeclient.Profile
+		for i := range profiles {
+			if profiles[i].ID == body.ProfileID {
+				matched = &profiles[i]
+				break
+			}
+		}
+		if matched == nil || !matched.LoggedIn {
+			writeJSON(w, 400, map[string]string{"error": "profile not found or not logged in"})
+			return
+		}
+		// Idempotent: reuse existing assignment if present.
+		existing, _ := q.ListNodeAccountsByNode(r.Context(), n.ID)
+		for _, a := range existing {
+			if a.ProfileID == matched.ID {
+				writeJSON(w, 200, map[string]any{"ok": true, "reused": true, "profileId": matched.ID, "email": matched.Email})
+				return
+			}
+		}
+		accID := randHex("acc_")
+		if _, err := q.CreateAccount(r.Context(), sqlc.CreateAccountParams{
+			ID:               accID,
+			OwnerID:          n.OwnerID,
+			Email:            matched.Email,
+			SubscriptionType: "",
+			OauthAccessEnc:   "",
+			OauthRefreshEnc:  "",
+			ExpiresAt:        0,
+			OnboardedAt:      0,
+		}); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if _, err := q.AssignAccount(r.Context(), sqlc.AssignAccountParams{
+			NodeID:    n.ID,
+			AccountID: accID,
+			ProfileID: matched.ID,
+			Egress:    "",
+			Weight:    100,
+			Role:      "baseline",
+			SlotID:    "",
+		}); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"ok": true, "profileId": matched.ID, "email": matched.Email})
+	}
+}
+
 func listProfilesHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		cl, _, ok := nodeClientFor(q, r, r.PathValue("id"))
