@@ -51,6 +51,10 @@ func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc
 		mux.HandleFunc("POST /api/admin/nodes/{id}/oauth/exchange", requireAdmin(secret, oauthExchangeHandler(q)))
 		mux.HandleFunc("GET /api/admin/dispatch/status", requireAdmin(secret, dispatchStatusHandler(q, svc)))
 		mux.HandleFunc("GET /api/admin/dispatch/stream", requireAdmin(secret, dispatchStreamHandler(q, svc)))
+		mux.HandleFunc("GET /api/admin/nodes/{id}/features", requireAdmin(secret, nodeFeaturesGetHandler(q)))
+		mux.HandleFunc("PATCH /api/admin/nodes/{id}/features/{adapter}", requireAdmin(secret, nodeFeaturesPatchHandler(q)))
+		mux.HandleFunc("POST /api/admin/nodes/{id}/refresh", requireAdmin(secret, nodeRefreshHandler(q)))
+		mux.HandleFunc("PATCH /api/admin/nodes/{id}/enabled", requireAdmin(secret, nodeEnableHandler(q)))
 	}
 	mux.Handle("/", web.SPAHandler())
 	return mux
