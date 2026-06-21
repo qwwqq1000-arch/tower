@@ -146,3 +146,29 @@ func (q *Queries) UnassignAccount(ctx context.Context, arg UnassignAccountParams
 	_, err := q.db.Exec(ctx, unassignAccount, arg.NodeID, arg.AccountID)
 	return err
 }
+
+const updateNodeAccount = `-- name: UpdateNodeAccount :exec
+UPDATE node_accounts SET egress=$3, weight=$4, role=$5, enabled=$6
+WHERE node_id=$1 AND account_id=$2
+`
+
+type UpdateNodeAccountParams struct {
+	NodeID    string `json:"node_id"`
+	AccountID string `json:"account_id"`
+	Egress    string `json:"egress"`
+	Weight    int32  `json:"weight"`
+	Role      string `json:"role"`
+	Enabled   bool   `json:"enabled"`
+}
+
+func (q *Queries) UpdateNodeAccount(ctx context.Context, arg UpdateNodeAccountParams) error {
+	_, err := q.db.Exec(ctx, updateNodeAccount,
+		arg.NodeID,
+		arg.AccountID,
+		arg.Egress,
+		arg.Weight,
+		arg.Role,
+		arg.Enabled,
+	)
+	return err
+}
