@@ -15,6 +15,7 @@ import Logs         from './pages/Logs';
 import Billing      from './pages/Billing';
 import Audit        from './pages/Audit';
 import Events       from './pages/Events';
+import BanAnalysis  from './pages/BanAnalysis';
 
 export default function App() {
   return (
@@ -34,7 +35,8 @@ export default function App() {
               <Route path="/logs"      element={<Logs />} />
               <Route path="/billing"   element={<Billing />} />
               <Route path="/audit"     element={<Audit />} />
-              <Route path="/events"    element={<Events />} />
+              <Route path="/events"        element={<Events />} />
+              <Route path="/ban-analysis" element={<BanAnalysis />} />
             </Routes>
           </Shell>
         </LoginGate>

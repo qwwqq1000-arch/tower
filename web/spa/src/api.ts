@@ -191,3 +191,15 @@ export const refreshNode = (id: string) =>
 
 export const setNodeEnabled = (id: string, enabled: boolean) =>
   api<void>('PATCH', `/api/admin/nodes/${id}/enabled`, { enabled });
+
+// ------------------------------------------------------------------
+// Ban analysis (封号分析)
+// ------------------------------------------------------------------
+export interface BanBucket { bucket: number; count: number }
+export interface BanAnalysis {
+  total: number;
+  byWeekday: BanBucket[];
+  byHour: BanBucket[];
+}
+export const getBanAnalysis = () =>
+  api<BanAnalysis>('GET', '/api/admin/ban-analysis');
