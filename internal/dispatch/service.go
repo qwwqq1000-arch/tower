@@ -110,7 +110,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 		}
 		orch := &Orchestrator{Store: s.Store, Cfg: breaker, CooldownMin: cfg.SlotCooldownMinMs, CooldownMax: cfg.SlotCooldownMaxMs, MaxAttempts: maxFailover, OnBan: s.recordBan}
 		np := &NodeProxy{Body: body, Resolve: resolver, BanSignals: cfg.BanSignals, BanKeywords: cfg.BanKeywords}
-		res, ok := orch.Dispatch(ctx, model, order, np)
+		res, winKey, ok := orch.Dispatch(ctx, model, order, np)
 		if ok {
 			// Response exile: if the response body contains a safety-refusal keyword,
 			// exile this conversation and re-serve via fallback if possible.
@@ -120,12 +120,12 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 					return s.viaChannel(ctx, ownerID, model, body, channels[0], "cyber", time.Since(start).Milliseconds())
 				}
 				// No fallback channel — log and return the original response.
-				s.logOK(ctx, ownerID, model, res, time.Since(start).Milliseconds(), "cyber")
-				return Outcome{Status: res.Status, Body: res.Body, Target: "node", Reason: "cyber"}
+				s.logOK(ctx, ownerID, model, res, winKey, time.Since(start).Milliseconds(), "cyber")
+				return Outcome{Status: res.Status, Body: res.Body, Target: winKey, Reason: "cyber"}
 			}
 			s.sess.RecordSuccess(conv)
-			s.logOK(ctx, ownerID, model, res, time.Since(start).Milliseconds(), "")
-			return Outcome{Status: res.Status, Body: res.Body, Target: "node", Reason: ""}
+			s.logOK(ctx, ownerID, model, res, winKey, time.Since(start).Milliseconds(), "")
+			return Outcome{Status: res.Status, Body: res.Body, Target: winKey, Reason: ""}
 		}
 		// our pool failed → record error for session tracking
 		s.sess.RecordError(conv, int64(cfg.SessionErrorThreshold), int64(cfg.SessionCooldownSec)*1000, nowMs)
@@ -238,38 +238,42 @@ func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []
 	if res.Status < 200 || res.Status >= 300 {
 		status = "error"
 	}
+	var cost float64
 	if status == "ok" {
 		in, out := parseUsage(res.Body)
-		cost := billing.CostUsd(model, in, out, 0, 0)
+		cost = billing.CostUsd(model, in, out, 0, 0)
 		_ = s.Q.UpsertFallbackSpend(ctx, sqlc.UpsertFallbackSpendParams{ChannelID: ch.ID, Day: todayDayStr(), Requests: 1, EstCostUsd: cost, BalanceObserved: 0})
 	}
 	_ = s.Q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{
 		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: "fallback:" + ch.ID,
 		ProfileID: "", Status: status, HttpStatus: int32(res.Status), LatencyMs: latencyMs, FallbackReason: reason,
+		Stream: false, CostUsd: cost,
 	})
 	return Outcome{Status: res.Status, Body: res.Body, Target: "fallback:" + ch.ID, Reason: reason}
 }
 
-func (s *Service) logOK(ctx context.Context, ownerID, model string, res ProxyResult, latencyMs int64, reason string) {
+func (s *Service) logOK(ctx context.Context, ownerID, model string, res ProxyResult, key string, latencyMs int64, reason string) {
 	in, out := parseUsage(res.Body)
+	cost := billing.CostUsd(model, in, out, 0, 0)
 	_ = s.Q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{
-		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: "node", ProfileID: "",
+		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: key, ProfileID: "",
 		Status: "ok", HttpStatus: int32(res.Status), LatencyMs: latencyMs, TokensIn: in, TokensOut: out,
-		FallbackReason: reason, TtfbMs: latencyMs,
+		FallbackReason: reason, TtfbMs: latencyMs, Stream: false, CostUsd: cost,
 	})
 	if in > 0 || out > 0 {
 		_ = s.Q.AddCostRollup(ctx, sqlc.AddCostRollupParams{
 			ScopeType: "owner", ScopeID: ownerID, Day: "", Model: model,
-			Requests: 1, TokensIn: in, TokensOut: out, CostUsd: billing.CostUsd(model, in, out, 0, 0),
+			Requests: 1, TokensIn: in, TokensOut: out, CostUsd: cost,
 		})
 	}
-	_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: "dispatch_ok", Target: "node", OwnerID: ownerID})
+	_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: "dispatch_ok", Target: key, OwnerID: ownerID})
 }
 
 func (s *Service) logErr(ctx context.Context, ownerID, model string, status int, latencyMs int64, reason string) {
 	_ = s.Q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{
 		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: "node", ProfileID: "",
 		Status: "error", HttpStatus: int32(status), LatencyMs: latencyMs, FallbackReason: reason,
+		Stream: false, CostUsd: 0,
 	})
 }
 
@@ -323,20 +327,21 @@ func parseUsageSSE(body string) (in, out int64) {
 }
 
 // logStream logs a completed streaming dispatch with TTFB and token counts.
-func (s *Service) logStream(ctx context.Context, ownerID, model string, status int, in, out, latencyMs, ttfbMs int64) {
+func (s *Service) logStream(ctx context.Context, ownerID, model, key string, status int, in, out, latencyMs, ttfbMs int64) {
 	httpStatus := "ok"
 	if status < 200 || status >= 300 {
 		httpStatus = "error"
 	}
+	cost := billing.CostUsd(model, in, out, 0, 0)
 	_ = s.Q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{
-		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: "node", ProfileID: "",
+		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: key, ProfileID: "",
 		Status: httpStatus, HttpStatus: int32(status), LatencyMs: latencyMs,
-		TokensIn: in, TokensOut: out, TtfbMs: ttfbMs,
+		TokensIn: in, TokensOut: out, TtfbMs: ttfbMs, Stream: true, CostUsd: cost,
 	})
 	if in > 0 || out > 0 {
 		_ = s.Q.AddCostRollup(ctx, sqlc.AddCostRollupParams{
 			ScopeType: "owner", ScopeID: ownerID, Day: "", Model: model,
-			Requests: 1, TokensIn: in, TokensOut: out, CostUsd: billing.CostUsd(model, in, out, 0, 0),
+			Requests: 1, TokensIn: in, TokensOut: out, CostUsd: cost,
 		})
 	}
 }
@@ -485,8 +490,8 @@ func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, 
 	settle(true)
 	in, out := parseUsageSSE(sseBody)
 	total := time.Since(start).Milliseconds()
-	s.logStream(ctx, ownerID, model, st.Status, in, out, total, ttfb)
-	return Outcome{Status: st.Status, Target: "node"}, true, sseBody
+	s.logStream(ctx, ownerID, model, key, st.Status, in, out, total, ttfb)
+	return Outcome{Status: st.Status, Target: key}, true, sseBody
 }
 
 // recordBan records a ban episode and event for the given key (node:profile).
@@ -529,12 +534,17 @@ func (s *Service) streamChannel(ctx context.Context, w http.ResponseWriter, ch s
 	}
 	CopyForwardableHeaders(w.Header(), st.Header)
 	w.WriteHeader(st.Status)
-	flushCopy(w, st.Body)
+	start := time.Now()
+	ttfb, sseBody := flushCopyCapture(w, st.Body, start)
 	_ = st.Body.Close()
-	_ = s.Q.UpsertFallbackSpend(ctx, sqlc.UpsertFallbackSpendParams{ChannelID: ch.ID, Day: todayDayStr(), Requests: 1, EstCostUsd: 0, BalanceObserved: 0})
+	in, out := parseUsageSSE(sseBody)
+	cost := billing.CostUsd(model, in, out, 0, 0)
+	_ = s.Q.UpsertFallbackSpend(ctx, sqlc.UpsertFallbackSpendParams{ChannelID: ch.ID, Day: todayDayStr(), Requests: 1, EstCostUsd: cost, BalanceObserved: 0})
 	_ = s.Q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{
 		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: "fallback:" + ch.ID,
 		Status: "ok", HttpStatus: int32(st.Status), FallbackReason: reason,
+		LatencyMs: time.Since(start).Milliseconds(), TtfbMs: ttfb,
+		TokensIn: in, TokensOut: out, Stream: true, CostUsd: cost,
 	})
 	return Outcome{Status: st.Status, Target: "fallback:" + ch.ID, Reason: reason}, true
 }

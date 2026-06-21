@@ -40,9 +40,12 @@ func TestDispatch_SuccessFirst(t *testing.T) {
 	o := newOrch()
 	o.Store.Ensure("a", 1)
 	px := &stubProxy{results: map[string]ProxyResult{"a": {Status: 200, Body: "ok"}}}
-	res, ok := o.Dispatch(context.Background(), "opus", []string{"a"}, px)
+	res, winKey, ok := o.Dispatch(context.Background(), "opus", []string{"a"}, px)
 	if !ok || res.Status != 200 {
 		t.Fatalf("res=%+v ok=%v", res, ok)
+	}
+	if winKey != "a" {
+		t.Fatalf("winKey=%q, want %q", winKey, "a")
 	}
 	// slot released after complete → can dispatch again
 	if !o.Store.TryDispatch("a", "opus", o.Cfg) {
@@ -58,9 +61,12 @@ func TestDispatch_FailoverOnBan(t *testing.T) {
 		"a": {Status: 401, Banned: true},
 		"b": {Status: 200, Body: "ok"},
 	}}
-	res, ok := o.Dispatch(context.Background(), "opus", []string{"a", "b"}, px)
+	res, winKey, ok := o.Dispatch(context.Background(), "opus", []string{"a", "b"}, px)
 	if !ok || res.Status != 200 {
 		t.Fatalf("should failover to b: res=%+v ok=%v", res, ok)
+	}
+	if winKey != "b" {
+		t.Fatalf("winKey=%q, want %q", winKey, "b")
 	}
 	if len(px.calls) != 2 || px.calls[0] != "a" || px.calls[1] != "b" {
 		t.Fatalf("calls=%v, want [a b]", px.calls)
@@ -75,9 +81,12 @@ func TestDispatch_AllFail(t *testing.T) {
 	o := newOrch()
 	o.Store.Ensure("a", 1)
 	px := &stubProxy{errs: map[string]error{"a": errors.New("boom")}}
-	_, ok := o.Dispatch(context.Background(), "opus", []string{"a"}, px)
+	_, winKey, ok := o.Dispatch(context.Background(), "opus", []string{"a"}, px)
 	if ok {
 		t.Fatal("should return ok=false when all fail")
+	}
+	if winKey != "" {
+		t.Fatalf("winKey=%q on failure, want empty", winKey)
 	}
 }
 

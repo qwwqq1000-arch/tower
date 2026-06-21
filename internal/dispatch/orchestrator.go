@@ -79,7 +79,8 @@ func (o *Orchestrator) attempt(ctx context.Context, model, key string, px Proxy)
 }
 
 // Dispatch tries accounts in order until one returns a clean 2xx or attempts run out.
-func (o *Orchestrator) Dispatch(ctx context.Context, model string, order []string, px Proxy) (ProxyResult, bool) {
+// It returns the ProxyResult, the key that succeeded ("" on failure), and a bool ok.
+func (o *Orchestrator) Dispatch(ctx context.Context, model string, order []string, px Proxy) (ProxyResult, string, bool) {
 	var last ProxyResult
 	attempts := 0
 	for _, key := range order {
@@ -89,9 +90,9 @@ func (o *Orchestrator) Dispatch(ctx context.Context, model string, order []strin
 		attempts++
 		res, ok := o.attempt(ctx, model, key, px)
 		if ok {
-			return res, true
+			return res, key, true
 		}
 		last = res
 	}
-	return last, false
+	return last, "", false
 }

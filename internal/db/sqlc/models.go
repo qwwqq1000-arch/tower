@@ -115,6 +115,8 @@ type DispatchLog struct {
 	FallbackReason string             `json:"fallback_reason"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	TtfbMs         int64              `json:"ttfb_ms"`
+	Stream         bool               `json:"stream"`
+	CostUsd        float64            `json:"cost_usd"`
 }
 
 type FallbackChannel struct {

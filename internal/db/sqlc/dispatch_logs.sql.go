@@ -10,23 +10,25 @@ import (
 )
 
 const insertDispatchLog = `-- name: InsertDispatchLog :exec
-INSERT INTO dispatch_logs (ts, owner_id, model, target, profile_id, status, http_status, latency_ms, tokens_in, tokens_out, fallback_reason, ttfb_ms)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+INSERT INTO dispatch_logs (ts, owner_id, model, target, profile_id, status, http_status, latency_ms, tokens_in, tokens_out, fallback_reason, ttfb_ms, stream, cost_usd)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 `
 
 type InsertDispatchLogParams struct {
-	Ts             int64  `json:"ts"`
-	OwnerID        string `json:"owner_id"`
-	Model          string `json:"model"`
-	Target         string `json:"target"`
-	ProfileID      string `json:"profile_id"`
-	Status         string `json:"status"`
-	HttpStatus     int32  `json:"http_status"`
-	LatencyMs      int64  `json:"latency_ms"`
-	TokensIn       int64  `json:"tokens_in"`
-	TokensOut      int64  `json:"tokens_out"`
-	FallbackReason string `json:"fallback_reason"`
-	TtfbMs         int64  `json:"ttfb_ms"`
+	Ts             int64   `json:"ts"`
+	OwnerID        string  `json:"owner_id"`
+	Model          string  `json:"model"`
+	Target         string  `json:"target"`
+	ProfileID      string  `json:"profile_id"`
+	Status         string  `json:"status"`
+	HttpStatus     int32   `json:"http_status"`
+	LatencyMs      int64   `json:"latency_ms"`
+	TokensIn       int64   `json:"tokens_in"`
+	TokensOut      int64   `json:"tokens_out"`
+	FallbackReason string  `json:"fallback_reason"`
+	TtfbMs         int64   `json:"ttfb_ms"`
+	Stream         bool    `json:"stream"`
+	CostUsd        float64 `json:"cost_usd"`
 }
 
 func (q *Queries) InsertDispatchLog(ctx context.Context, arg InsertDispatchLogParams) error {
@@ -43,12 +45,14 @@ func (q *Queries) InsertDispatchLog(ctx context.Context, arg InsertDispatchLogPa
 		arg.TokensOut,
 		arg.FallbackReason,
 		arg.TtfbMs,
+		arg.Stream,
+		arg.CostUsd,
 	)
 	return err
 }
 
 const listRecentDispatchLogs = `-- name: ListRecentDispatchLogs :many
-SELECT id, ts, owner_id, model, target, profile_id, status, http_status, latency_ms, tokens_in, tokens_out, fallback_reason, created_at, ttfb_ms FROM dispatch_logs ORDER BY ts DESC LIMIT $1
+SELECT id, ts, owner_id, model, target, profile_id, status, http_status, latency_ms, tokens_in, tokens_out, fallback_reason, created_at, ttfb_ms, stream, cost_usd FROM dispatch_logs ORDER BY ts DESC LIMIT $1
 `
 
 func (q *Queries) ListRecentDispatchLogs(ctx context.Context, limit int32) ([]DispatchLog, error) {
@@ -75,6 +79,8 @@ func (q *Queries) ListRecentDispatchLogs(ctx context.Context, limit int32) ([]Di
 			&i.FallbackReason,
 			&i.CreatedAt,
 			&i.TtfbMs,
+			&i.Stream,
+			&i.CostUsd,
 		); err != nil {
 			return nil, err
 		}
