@@ -74,6 +74,22 @@ func nodeEnableHandler(q *sqlc.Queries) http.HandlerFunc {
 	}
 }
 
+func nodeQuotaHandler(q *sqlc.Queries) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		cl, _, ok := nodeClientFor(q, r, r.PathValue("id"))
+		if !ok {
+			writeJSON(w, 404, map[string]string{"error": "node not found"})
+			return
+		}
+		quota, err := cl.QuotaAll(r.Context())
+		if err != nil {
+			writeJSON(w, 502, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, 200, quota)
+	}
+}
+
 func nodeTelemetryHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		cl, _, ok := nodeClientFor(q, r, r.PathValue("id"))

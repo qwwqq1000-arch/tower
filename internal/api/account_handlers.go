@@ -208,15 +208,17 @@ func listAccountsHandler(q *sqlc.Queries) http.HandlerFunc {
 		out := make([]map[string]any, 0, len(rows))
 		for _, a := range rows {
 			out = append(out, map[string]any{
-				"nodeId":    a.NodeID,
-				"nodeName":  a.NodeName,
-				"baseUrl":   a.BaseUrl,
-				"accountId": a.AccountID,
-				"profileId": a.ProfileID,
-				"enabled":   a.Enabled,
-				"weight":    a.Weight,
-				"role":      a.Role,
-				"egress":    a.Egress,
+				"nodeId":     a.NodeID,
+				"nodeName":   a.NodeName,
+				"baseUrl":    a.BaseUrl,
+				"accountId":  a.AccountID,
+				"profileId":  a.ProfileID,
+				"enabled":    a.Enabled,
+				"weight":     a.Weight,
+				"role":       a.Role,
+				"egress":     a.Egress,
+				"email":      a.Email,
+				"status":     a.AcctStatus,
 			})
 		}
 		writeJSON(w, 200, out)

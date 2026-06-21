@@ -56,6 +56,8 @@ func parseUsage(body string) (int64, int64) {
 // Dispatch routes one request: fallback decision → our nodes (failover) →
 // fallback backstop, logging and cost-rolling the outcome.
 func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string, body []byte) Outcome {
+	start := time.Now()
+
 	cfg := s.resolveConfig(ctx)
 	breaker := state.BreakerCfg{
 		PersistStreak: cfg.BanPersistStreak, BaseMs: cfg.CooldownBaseMs,
@@ -74,7 +76,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 
 	// Fallback-first when triggered (and channels exist).
 	if cfg.FallbackEnabled && trig != fallback.None && trig != fallback.Exhausted && len(channels) > 0 {
-		return s.viaChannel(ctx, ownerID, model, body, channels[0], string(trig))
+		return s.viaChannel(ctx, ownerID, model, body, channels[0], string(trig), time.Since(start).Milliseconds())
 	}
 
 	// Our nodes.
@@ -83,22 +85,22 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 		np := &NodeProxy{Body: body, Resolve: resolver, BanSignals: cfg.BanSignals, BanKeywords: cfg.BanKeywords}
 		res, ok := orch.Dispatch(ctx, model, order, np)
 		if ok {
-			s.logOK(ctx, ownerID, model, res, "")
+			s.logOK(ctx, ownerID, model, res, time.Since(start).Milliseconds(), "")
 			return Outcome{Status: res.Status, Body: res.Body, Target: "node", Reason: ""}
 		}
 		// our pool failed → fallback backstop
 		if cfg.FallbackEnabled && len(channels) > 0 {
-			return s.viaChannel(ctx, ownerID, model, body, channels[0], "exhausted")
+			return s.viaChannel(ctx, ownerID, model, body, channels[0], "exhausted", time.Since(start).Milliseconds())
 		}
-		s.logErr(ctx, ownerID, model, res.Status, "")
+		s.logErr(ctx, ownerID, model, res.Status, 0, "")
 		return Outcome{Status: 503, Body: `{"error":"all accounts exhausted"}`, Target: "node", Reason: ""}
 	}
 
 	// No nodes at all → fallback if possible.
 	if cfg.FallbackEnabled && len(channels) > 0 {
-		return s.viaChannel(ctx, ownerID, model, body, channels[0], "exhausted")
+		return s.viaChannel(ctx, ownerID, model, body, channels[0], "exhausted", time.Since(start).Milliseconds())
 	}
-	s.logErr(ctx, ownerID, model, 503, "no_nodes")
+	s.logErr(ctx, ownerID, model, 503, 0, "no_nodes")
 	return Outcome{Status: 503, Body: `{"error":"no nodes available"}`, Target: "none", Reason: ""}
 }
 
@@ -165,11 +167,11 @@ func (s *Service) enabledChannels(ctx context.Context, _ string) []sqlc.Fallback
 	return chs
 }
 
-func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []byte, ch sqlc.FallbackChannel, reason string) Outcome {
+func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []byte, ch sqlc.FallbackChannel, reason string, latencyMs int64) Outcome {
 	cp := &ChannelProxy{Body: body, Ch: ChannelRef{BaseURL: ch.BaseUrl, APIKey: ch.ApiKey}}
 	res, err := cp.Send(ctx, ch.ID)
 	if err != nil {
-		s.logErr(ctx, ownerID, model, 502, reason)
+		s.logErr(ctx, ownerID, model, 502, latencyMs, reason)
 		return Outcome{Status: 502, Body: `{"error":"fallback channel error"}`, Target: "fallback", Reason: reason}
 	}
 	status := "ok"
@@ -183,16 +185,16 @@ func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []
 	}
 	_ = s.Q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{
 		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: "fallback:" + ch.ID,
-		ProfileID: "", Status: status, HttpStatus: int32(res.Status), FallbackReason: reason,
+		ProfileID: "", Status: status, HttpStatus: int32(res.Status), LatencyMs: latencyMs, FallbackReason: reason,
 	})
 	return Outcome{Status: res.Status, Body: res.Body, Target: "fallback:" + ch.ID, Reason: reason}
 }
 
-func (s *Service) logOK(ctx context.Context, ownerID, model string, res ProxyResult, reason string) {
+func (s *Service) logOK(ctx context.Context, ownerID, model string, res ProxyResult, latencyMs int64, reason string) {
 	in, out := parseUsage(res.Body)
 	_ = s.Q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{
 		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: "node", ProfileID: "",
-		Status: "ok", HttpStatus: int32(res.Status), TokensIn: in, TokensOut: out,
+		Status: "ok", HttpStatus: int32(res.Status), LatencyMs: latencyMs, TokensIn: in, TokensOut: out,
 		FallbackReason: reason,
 	})
 	if in > 0 || out > 0 {
@@ -204,10 +206,10 @@ func (s *Service) logOK(ctx context.Context, ownerID, model string, res ProxyRes
 	_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: "dispatch_ok", Target: "node", OwnerID: ownerID})
 }
 
-func (s *Service) logErr(ctx context.Context, ownerID, model string, status int, reason string) {
+func (s *Service) logErr(ctx context.Context, ownerID, model string, status int, latencyMs int64, reason string) {
 	_ = s.Q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{
 		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: "node", ProfileID: "",
-		Status: "error", HttpStatus: int32(status), FallbackReason: reason,
+		Status: "error", HttpStatus: int32(status), LatencyMs: latencyMs, FallbackReason: reason,
 	})
 }
 
@@ -267,7 +269,7 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 	}
 	w.WriteHeader(http.StatusServiceUnavailable)
 	_, _ = w.Write([]byte(`{"error":"no nodes available"}`))
-	s.logErr(ctx, ownerID, model, 503, "")
+	s.logErr(ctx, ownerID, model, 503, 0, "")
 	return Outcome{Status: 503, Target: "none"}
 }
 
@@ -316,7 +318,7 @@ func (s *Service) streamOne(ctx context.Context, w http.ResponseWriter, key stri
 	flushCopy(w, st.Body)
 	_ = st.Body.Close()
 	settle(true)
-	s.logOK(ctx, ownerID, model, ProxyResult{Status: st.Status}, "")
+	s.logOK(ctx, ownerID, model, ProxyResult{Status: st.Status}, 0, "")
 	return Outcome{Status: st.Status, Target: "node"}, true
 }
 

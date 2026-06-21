@@ -15,7 +15,11 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 	labels := map[string]string{}
 	if accs, err := q.ListNodeAccountsAll(ctx); err == nil {
 		for _, a := range accs {
-			labels[a.NodeID+":"+a.ProfileID] = a.NodeName
+			label := a.NodeName
+			if a.Email != "" {
+				label = a.Email
+			}
+			labels[a.NodeID+":"+a.ProfileID] = label
 		}
 	}
 	accounts := []map[string]any{}
