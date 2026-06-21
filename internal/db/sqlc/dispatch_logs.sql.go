@@ -9,6 +9,28 @@ import (
 	"context"
 )
 
+const countDispatchLogs = `-- name: CountDispatchLogs :one
+SELECT count(*) FROM dispatch_logs
+`
+
+func (q *Queries) CountDispatchLogs(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countDispatchLogs)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countDispatchLogsSince = `-- name: CountDispatchLogsSince :one
+SELECT count(*) FROM dispatch_logs WHERE ts >= $1
+`
+
+func (q *Queries) CountDispatchLogsSince(ctx context.Context, ts int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countDispatchLogsSince, ts)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const insertDispatchLog = `-- name: InsertDispatchLog :exec
 INSERT INTO dispatch_logs (ts, owner_id, model, target, profile_id, status, http_status, latency_ms, tokens_in, tokens_out, fallback_reason, ttfb_ms, stream, cost_usd)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)

@@ -11,3 +11,9 @@ SELECT * FROM dispatch_logs WHERE owner_id = $1 ORDER BY ts DESC LIMIT $2;
 -- name: TodayDispatchForOwner :one
 SELECT count(*)::bigint AS requests, coalesce(sum(cost_usd),0)::float8 AS cost
 FROM dispatch_logs WHERE owner_id = $1 AND ts >= $2;
+
+-- name: CountDispatchLogs :one
+SELECT count(*) FROM dispatch_logs;
+
+-- name: CountDispatchLogsSince :one
+SELECT count(*) FROM dispatch_logs WHERE ts >= $1;

@@ -53,7 +53,7 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 			})
 		}
 	}
-	traffic := map[string]any{"total": 0, "ok": 0, "error": 0, "tokensIn": int64(0), "tokensOut": int64(0)}
+	traffic := map[string]any{"total": int64(0), "rpm": int64(0), "ok": 0, "error": 0, "tokensIn": int64(0), "tokensOut": int64(0)}
 	if logs, err := q.ListRecentDispatchLogs(ctx, 200); err == nil {
 		var ok, errc int
 		var in, out int64
@@ -66,7 +66,15 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 			in += l.TokensIn
 			out += l.TokensOut
 		}
-		traffic = map[string]any{"total": len(logs), "ok": ok, "error": errc, "tokensIn": in, "tokensOut": out}
+		var total int64
+		if t, terr := q.CountDispatchLogs(ctx); terr == nil {
+			total = t
+		}
+		var rpm int64
+		if r, rerr := q.CountDispatchLogsSince(ctx, now-60000); rerr == nil {
+			rpm = r
+		}
+		traffic = map[string]any{"total": total, "rpm": rpm, "ok": ok, "error": errc, "tokensIn": in, "tokensOut": out}
 	}
 	events := []map[string]any{}
 	if evs, err := q.ListRecentEvents(ctx, 20); err == nil {
@@ -115,6 +123,7 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 				"priority": ch.Priority, "weight": ch.Weight,
 				"todayRequests": todayReq, "todayCostUsd": todayCost,
 				"inflight": inflight, "available": available,
+				"balanceUsd": ch.BalanceUsd,
 			})
 		}
 	}
