@@ -58,6 +58,14 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 			}
 		}
 	}
+	// Build a snapshot map keyed by account key for O(1) lookup.
+	snapMap := map[string]struct{ Inflight, Available int }{}
+	if svc != nil && svc.Store != nil {
+		for _, s := range svc.Store.Snapshot(now) {
+			snapMap[s.Key] = struct{ Inflight, Available int }{s.Inflight, s.Available}
+		}
+	}
+
 	fallbackChannels := []map[string]any{}
 	if chs, err := q.ListAllFallbackChannels(ctx); err == nil {
 		today := todayDayStr()
@@ -68,10 +76,20 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 				todayReq = spend.Requests
 				todayCost = spend.Cost
 			}
+			fbKey := "fb:" + ch.ID
+			inflight, available := 0, int(ch.MaxConcurrent)
+			if available <= 0 {
+				available = 1000
+			}
+			if snap, ok := snapMap[fbKey]; ok {
+				inflight = snap.Inflight
+				available = snap.Available
+			}
 			fallbackChannels = append(fallbackChannels, map[string]any{
 				"id": ch.ID, "name": ch.Name, "enabled": ch.Enabled,
 				"priority": ch.Priority, "weight": ch.Weight,
 				"todayRequests": todayReq, "todayCostUsd": todayCost,
+				"inflight": inflight, "available": available,
 			})
 		}
 	}

@@ -227,7 +227,22 @@ func (s *Service) enabledChannels(ctx context.Context, _ string) []sqlc.Fallback
 	return chs
 }
 
+// fbSlotKey returns the store key for a fallback channel's concurrency slot.
+func fbSlotKey(id string) string { return "fb:" + id }
+
 func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []byte, ch sqlc.FallbackChannel, reason string, latencyMs int64) Outcome {
+	cap := int(ch.MaxConcurrent)
+	if cap <= 0 {
+		cap = 1000
+	}
+	key := fbSlotKey(ch.ID)
+	s.Store.Ensure(key, cap)
+	bk := state.BreakerCfg{PersistStreak: 1 << 30, BaseMs: 0, MaxMs: 0, Mult: 1}
+	occupied := s.Store.TryDispatch(key, model, bk)
+	if occupied {
+		defer s.Store.Complete(key, int64(ch.CooldownMs), int64(ch.CooldownMs))
+	}
+
 	cp := &ChannelProxy{Body: body, Ch: ChannelRef{BaseURL: ch.BaseUrl, APIKey: ch.ApiKey}}
 	res, err := cp.Send(ctx, ch.ID)
 	if err != nil {
@@ -523,6 +538,18 @@ func todayDayStr() string {
 
 // streamChannel attempts a fallback channel stream. committed=true means we wrote to the client.
 func (s *Service) streamChannel(ctx context.Context, w http.ResponseWriter, ch sqlc.FallbackChannel, body []byte, ownerID, model, reason string) (Outcome, bool) {
+	cap := int(ch.MaxConcurrent)
+	if cap <= 0 {
+		cap = 1000
+	}
+	key := fbSlotKey(ch.ID)
+	s.Store.Ensure(key, cap)
+	bk := state.BreakerCfg{PersistStreak: 1 << 30, BaseMs: 0, MaxMs: 0, Mult: 1}
+	occupied := s.Store.TryDispatch(key, model, bk)
+	if occupied {
+		defer s.Store.Complete(key, int64(ch.CooldownMs), int64(ch.CooldownMs))
+	}
+
 	cp := &ChannelProxy{Body: body, Ch: ChannelRef{BaseURL: ch.BaseUrl, APIKey: ch.ApiKey}}
 	st, err := cp.OpenStream(ctx, ch.ID)
 	if err != nil {
