@@ -16,6 +16,8 @@ type Config struct {
 	AffinityTTLSec            int
 	FallbackEnabled           bool
 	FallbackPriceThresholdUsd float64
+	BanSignals                []int
+	BanKeywords               []string
 }
 
 // Defaults returns sane baseline configuration.
@@ -31,6 +33,8 @@ func Defaults() Config {
 		AffinityTTLSec:            300,
 		FallbackEnabled:           false,
 		FallbackPriceThresholdUsd: 0.005,
+		BanSignals:                []int{401, 403},
+		BanKeywords:               []string{"authentication_error", "account_disabled", "account_suspended"},
 	}
 }
 
@@ -46,6 +50,8 @@ type Patch struct {
 	AffinityTTLSec            *int
 	FallbackEnabled           *bool
 	FallbackPriceThresholdUsd *float64
+	BanSignals                *[]int
+	BanKeywords               *[]string
 }
 
 func apply(c *Config, p Patch) {
@@ -78,6 +84,12 @@ func apply(c *Config, p Patch) {
 	}
 	if p.FallbackPriceThresholdUsd != nil {
 		c.FallbackPriceThresholdUsd = *p.FallbackPriceThresholdUsd
+	}
+	if p.BanSignals != nil {
+		c.BanSignals = *p.BanSignals
+	}
+	if p.BanKeywords != nil {
+		c.BanKeywords = *p.BanKeywords
 	}
 }
 
@@ -117,5 +129,7 @@ func DryRun(base Config, patches ...Patch) (Config, []Diff) {
 	add("AffinityTTLSec", base.AffinityTTLSec, final.AffinityTTLSec)
 	add("FallbackEnabled", base.FallbackEnabled, final.FallbackEnabled)
 	add("FallbackPriceThresholdUsd", base.FallbackPriceThresholdUsd, final.FallbackPriceThresholdUsd)
+	add("BanSignals", base.BanSignals, final.BanSignals)
+	add("BanKeywords", base.BanKeywords, final.BanKeywords)
 	return final, diffs
 }

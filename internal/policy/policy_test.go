@@ -1,6 +1,9 @@
 package policy
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func ptrI(i int) *int       { return &i }
 func ptrB(b bool) *bool     { return &b }
@@ -26,7 +29,7 @@ func TestResolve_LayeredOverride(t *testing.T) {
 func TestResolve_NilPatchNoChange(t *testing.T) {
 	base := Defaults()
 	got := Resolve(base, Patch{})
-	if got != base {
+	if !reflect.DeepEqual(got, base) {
 		t.Fatalf("empty patch changed config: %+v vs %+v", got, base)
 	}
 }
