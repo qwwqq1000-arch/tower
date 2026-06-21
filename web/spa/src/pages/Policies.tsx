@@ -74,11 +74,12 @@ interface NumInputProps {
   onChange: (v: number) => void;
   disabled?: boolean;
   min?: number;
+  max?: number;
   step?: number;
   placeholder?: string;
 }
 
-function NumInput({ value, onChange, disabled, min, step, placeholder }: NumInputProps) {
+function NumInput({ value, onChange, disabled, min, max, step, placeholder }: NumInputProps) {
   return (
     <input
       type="number"
@@ -86,6 +87,7 @@ function NumInput({ value, onChange, disabled, min, step, placeholder }: NumInpu
       onChange={(e) => onChange(Number(e.target.value))}
       disabled={disabled}
       min={min}
+      max={max}
       step={step ?? 1}
       placeholder={placeholder}
       className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink
@@ -146,6 +148,7 @@ export default function Policies() {
   // Float field
   const cooldownMult = useField<number>(2);
   const fallbackPriceThresholdUsd = useField<number>(0.005);
+  const quotaRotateThreshold = useField<number>(0.95);
   // Boolean
   const fallbackEnabled = useField<boolean>(false);
   const fallbackProbeEnabled = useField<boolean>(false);
@@ -191,6 +194,7 @@ export default function Policies() {
         .map((s) => s.trim())
         .filter(Boolean);
     }
+    if (quotaRotateThreshold.enabled) patch.QuotaRotateThreshold = quotaRotateThreshold.value;
     return patch;
   }
 
@@ -227,6 +231,7 @@ export default function Policies() {
     maxConcurrent, slotCooldownMinMs, slotCooldownMaxMs, banPersistStreak,
     cooldownBaseMs, cooldownMaxMs, cooldownMult, affinityTTLSec,
     fallbackEnabled, fallbackPriceThresholdUsd, fallbackKeywords, fallbackModels, fallbackProbeEnabled, banSignals, banKeywords,
+    quotaRotateThreshold,
   ].some((f) => f.enabled);
 
   return (
@@ -522,6 +527,24 @@ export default function Policies() {
             className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink
                        placeholder:text-muted focus:outline-none focus:border-accent transition
                        disabled:cursor-not-allowed"
+          />
+        </FieldRow>
+
+        <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2 pt-4">额度轮换</h2>
+
+        <FieldRow
+          label="额度轮换阈值(0–1,利用率≥此值的号暂停派单直到配额重置)"
+          desc="配额利用率达到阈值时暂停该号派单，等待配额周期重置后恢复"
+          enabled={quotaRotateThreshold.enabled}
+          onToggle={quotaRotateThreshold.toggle}
+        >
+          <NumInput
+            value={quotaRotateThreshold.value}
+            onChange={quotaRotateThreshold.set}
+            disabled={!quotaRotateThreshold.enabled}
+            min={0}
+            max={1}
+            step={0.01}
           />
         </FieldRow>
       </div>

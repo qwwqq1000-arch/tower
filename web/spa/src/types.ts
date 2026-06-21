@@ -140,6 +140,7 @@ export interface PolicyPatch {
   FallbackProbeEnabled?: boolean;
   BanSignals?: number[];
   BanKeywords?: string[];
+  QuotaRotateThreshold?: number;
 }
 
 // policy.Config (resolved)
