@@ -175,6 +175,12 @@ export const listAccounts = () =>
 export const unassignAccount = (nodeId: string, accountId: string) =>
   api<void>('DELETE', `/api/admin/accounts/${nodeId}/${accountId}`);
 
+export const setAccountExpiry = (accountId: string, expiresAt: number) =>
+  api<{ ok: string }>('PATCH', `/api/admin/accounts/${accountId}/expiry`, { expiresAt });
+
+export const setAccountOwner = (accountId: string, ownerId: string) =>
+  api<{ ok: string }>('PATCH', `/api/admin/accounts/${accountId}/owner`, { ownerId });
+
 export const listNodeProfiles = (nodeId: string) =>
   api<NodeProfile[]>('GET', `/api/admin/nodes/${nodeId}/profiles`);
 

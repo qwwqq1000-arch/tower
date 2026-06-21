@@ -269,14 +269,17 @@ export interface AccountRow {
   slotId?: string;
   todayCostUsd?: number;
   totalCostUsd?: number;
+  expiresAt?: number;        // unix ms
+  ownerId?: string;          // tenant owner id ("" = shared)
+  subscriptionType?: string; // e.g. "claude_max_5x"
 }
 
 // --- Node Quota ---
 export interface QuotaWindow {
-  type: string;   // e.g. "5h" | "7d"
+  type: string;        // e.g. "five_hour" | "seven_day"
   status: string;
   utilization: number;
-  resetsAt: string;
+  resetsAt?: number;   // unix ms — limit recovery time
 }
 
 export interface QuotaProfile {
