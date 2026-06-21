@@ -148,7 +148,10 @@ export default function Policies() {
   const fallbackPriceThresholdUsd = useField<number>(0.005);
   // Boolean
   const fallbackEnabled = useField<boolean>(false);
+  const fallbackProbeEnabled = useField<boolean>(false);
   // Array fields (as raw text)
+  const fallbackKeywords = useField<string>('');
+  const fallbackModels = useField<string>('');
   const banSignals = useField<string>('401,403');
   const banKeywords = useField<string>('authentication_error,account_disabled,account_suspended');
 
@@ -171,6 +174,9 @@ export default function Policies() {
     if (affinityTTLSec.enabled) patch.AffinityTTLSec = affinityTTLSec.value;
     if (fallbackEnabled.enabled) patch.FallbackEnabled = fallbackEnabled.value;
     if (fallbackPriceThresholdUsd.enabled) patch.FallbackPriceThresholdUsd = fallbackPriceThresholdUsd.value;
+    if (fallbackKeywords.enabled) patch.FallbackKeywords = fallbackKeywords.value.split(',').map(s => s.trim()).filter(Boolean);
+    if (fallbackModels.enabled) patch.FallbackModels = fallbackModels.value.split(',').map(s => s.trim()).filter(Boolean);
+    if (fallbackProbeEnabled.enabled) patch.FallbackProbeEnabled = fallbackProbeEnabled.value;
     if (banSignals.enabled) {
       patch.BanSignals = banSignals.value
         .split(',')
@@ -220,7 +226,7 @@ export default function Policies() {
   const anyEnabled = [
     maxConcurrent, slotCooldownMinMs, slotCooldownMaxMs, banPersistStreak,
     cooldownBaseMs, cooldownMaxMs, cooldownMult, affinityTTLSec,
-    fallbackEnabled, fallbackPriceThresholdUsd, banSignals, banKeywords,
+    fallbackEnabled, fallbackPriceThresholdUsd, fallbackKeywords, fallbackModels, fallbackProbeEnabled, banSignals, banKeywords,
   ].some((f) => f.enabled);
 
   return (
@@ -423,6 +429,62 @@ export default function Policies() {
             min={0}
             step={0.001}
           />
+        </FieldRow>
+
+        <FieldRow
+          label="保底关键词(逗号分隔,命中即走保底)"
+          desc="响应内容命中任一关键词时强制走兜底通道"
+          enabled={fallbackKeywords.enabled}
+          onToggle={fallbackKeywords.toggle}
+        >
+          <input
+            type="text"
+            value={fallbackKeywords.value}
+            onChange={(e) => fallbackKeywords.set(e.target.value)}
+            disabled={!fallbackKeywords.enabled}
+            placeholder="keyword1,keyword2"
+            className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink
+                       placeholder:text-muted focus:outline-none focus:border-accent transition
+                       disabled:cursor-not-allowed"
+          />
+        </FieldRow>
+
+        <FieldRow
+          label="指定模型走保底(逗号分隔,子串匹配)"
+          desc="请求模型名含子串时强制走兜底通道"
+          enabled={fallbackModels.enabled}
+          onToggle={fallbackModels.toggle}
+        >
+          <input
+            type="text"
+            value={fallbackModels.value}
+            onChange={(e) => fallbackModels.set(e.target.value)}
+            disabled={!fallbackModels.enabled}
+            placeholder="claude-3-opus,claude-3-5"
+            className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink
+                       placeholder:text-muted focus:outline-none focus:border-accent transition
+                       disabled:cursor-not-allowed"
+          />
+        </FieldRow>
+
+        <FieldRow
+          label="探活/hi 走保底"
+          desc="探活心跳请求（hi 消息）强制走兜底通道"
+          enabled={fallbackProbeEnabled.enabled}
+          onToggle={fallbackProbeEnabled.toggle}
+        >
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={fallbackProbeEnabled.value}
+              onChange={(e) => fallbackProbeEnabled.set(e.target.checked)}
+              disabled={!fallbackProbeEnabled.enabled}
+              className="accent-accent w-4 h-4"
+            />
+            <span className="text-sm text-ink">
+              {fallbackProbeEnabled.value ? '已启用' : '已禁用'}
+            </span>
+          </label>
         </FieldRow>
 
         <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2 pt-4">封禁信号</h2>

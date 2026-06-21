@@ -135,6 +135,9 @@ export interface PolicyPatch {
   AffinityTTLSec?: number;
   FallbackEnabled?: boolean;
   FallbackPriceThresholdUsd?: number;
+  FallbackKeywords?: string[];
+  FallbackModels?: string[];
+  FallbackProbeEnabled?: boolean;
   BanSignals?: number[];
   BanKeywords?: string[];
 }
