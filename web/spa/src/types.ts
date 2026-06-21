@@ -42,8 +42,59 @@ export interface DispatchKeyCreated {
 }
 
 // --- Dashboard ---
+/** @deprecated use DashboardData */
 export interface DashboardResponse {
   nodes: NodeRecord[];
+}
+
+export interface DashboardNodeItem {
+  id: string;
+  name: string;
+  baseUrl: string;
+  enabled: boolean;
+  status: string;
+  version: string;
+  region: string;
+}
+
+export interface DashboardByModel {
+  model: string;
+  requests: number;
+  tokensIn: number;
+  tokensOut: number;
+  costUsd: number;
+}
+
+export interface DashboardHostingRow {
+  tenantId: string;
+  username: string;
+  role: string;
+  consumptionUsd: number;
+  rate: number;
+  feeUsd: number;
+  unsettledUsd: number;
+}
+
+export interface DashboardData {
+  nodes: {
+    total: number;
+    enabled: number;
+    byStatus: Record<string, number>;
+    list: DashboardNodeItem[];
+  };
+  accounts: {
+    total: number;
+  };
+  today: {
+    requests: number;
+    ok: number;
+    successRate: number;
+    tokensIn: number;
+    tokensOut: number;
+    costUsd: number;
+    byModel: DashboardByModel[];
+  };
+  hosting: DashboardHostingRow[];
 }
 
 // --- Provision ---

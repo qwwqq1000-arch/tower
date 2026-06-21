@@ -6,7 +6,7 @@ import type {
   NodeRecord,
   DispatchKeyRecord,
   DispatchKeyCreated,
-  DashboardResponse,
+  DashboardData,
   ProvisionRequest,
   ProvisionJob,
   Policy,
@@ -61,7 +61,7 @@ export const me = () => api<User>('GET', '/auth/me');
 // Dashboard
 // ------------------------------------------------------------------
 export const getDashboard = () =>
-  api<DashboardResponse>('GET', '/api/dashboard');
+  api<DashboardData>('GET', '/api/dashboard');
 
 // ------------------------------------------------------------------
 // Nodes
