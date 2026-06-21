@@ -71,7 +71,7 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 	events := []map[string]any{}
 	if evs, err := q.ListRecentEvents(ctx, 20); err == nil {
 		for _, e := range evs {
-			events = append(events, map[string]any{"ts": e.Ts, "type": e.Type, "target": e.Target})
+			events = append(events, map[string]any{"ts": e.Ts, "type": e.Type, "target": e.Target, "detail": json.RawMessage(e.Detail)})
 		}
 	}
 	nodesTotal, nodesEnabled := 0, 0

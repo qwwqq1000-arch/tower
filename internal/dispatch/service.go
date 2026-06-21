@@ -175,7 +175,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 
 	// No nodes at all → fallback if possible.
 	if cfg.FallbackEnabled && len(channels) > 0 {
-		return s.viaChannel(ctx, ownerID, model, body, channels[0], "exhausted", time.Since(start).Milliseconds())
+		return s.viaChannel(ctx, ownerID, model, body, channels[0], "no_nodes", time.Since(start).Milliseconds())
 	}
 	s.logErr(ctx, ownerID, model, 503, 0, "no_nodes")
 	return Outcome{Status: 503, Body: `{"error":"no nodes available"}`, Target: "none", Reason: ""}
@@ -680,7 +680,11 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 
 	// exhausted → fallback channel stream, else 503
 	if cfg.FallbackEnabled && len(channels) > 0 {
-		if out, committed := s.streamChannel(ctx, w, channels[0], body, ownerID, model, "exhausted"); committed {
+		exReason := "exhausted"
+		if len(order) == 0 {
+			exReason = "no_nodes"
+		}
+		if out, committed := s.streamChannel(ctx, w, channels[0], body, ownerID, model, exReason); committed {
 			return out
 		}
 	}

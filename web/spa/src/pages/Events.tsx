@@ -39,6 +39,7 @@ const FALLBACK_REASON_CN: Record<string, string> = {
   exhausted: '号池耗尽',
   session:   '会话连错',
   cyber:     '安全拒答',
+  no_nodes:  '无节点可用',
 };
 
 function getStyle(type: string) {
