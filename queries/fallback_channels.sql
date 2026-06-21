@@ -8,3 +8,17 @@ SELECT * FROM fallback_channels WHERE owner_id = $1 ORDER BY priority, created_a
 
 -- name: ListEnabledFallbackChannels :many
 SELECT * FROM fallback_channels WHERE enabled = TRUE ORDER BY priority, created_at;
+
+-- name: ListAllFallbackChannels :many
+SELECT * FROM fallback_channels ORDER BY priority, created_at;
+
+-- name: UpdateFallbackChannel :exec
+UPDATE fallback_channels SET name=$2, base_url=$3, api_key=$4, priority=$5, weight=$6,
+  max_concurrent=$7, cooldown_ms=$8, price_threshold=$9, model_allowlist=$10
+WHERE id=$1;
+
+-- name: SetFallbackChannelEnabled :exec
+UPDATE fallback_channels SET enabled=$2 WHERE id=$1;
+
+-- name: DeleteFallbackChannel :exec
+DELETE FROM fallback_channels WHERE id=$1;

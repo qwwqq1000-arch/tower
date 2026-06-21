@@ -65,6 +65,54 @@ func (q *Queries) CreateFallbackChannel(ctx context.Context, arg CreateFallbackC
 	return i, err
 }
 
+const deleteFallbackChannel = `-- name: DeleteFallbackChannel :exec
+DELETE FROM fallback_channels WHERE id=$1
+`
+
+func (q *Queries) DeleteFallbackChannel(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, deleteFallbackChannel, id)
+	return err
+}
+
+const listAllFallbackChannels = `-- name: ListAllFallbackChannels :many
+SELECT id, owner_id, group_id, name, base_url, api_key, priority, weight, max_concurrent, cooldown_ms, price_threshold, model_allowlist, enabled, created_at FROM fallback_channels ORDER BY priority, created_at
+`
+
+func (q *Queries) ListAllFallbackChannels(ctx context.Context) ([]FallbackChannel, error) {
+	rows, err := q.db.Query(ctx, listAllFallbackChannels)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FallbackChannel
+	for rows.Next() {
+		var i FallbackChannel
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.GroupID,
+			&i.Name,
+			&i.BaseUrl,
+			&i.ApiKey,
+			&i.Priority,
+			&i.Weight,
+			&i.MaxConcurrent,
+			&i.CooldownMs,
+			&i.PriceThreshold,
+			&i.ModelAllowlist,
+			&i.Enabled,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEnabledFallbackChannels = `-- name: ListEnabledFallbackChannels :many
 SELECT id, owner_id, group_id, name, base_url, api_key, priority, weight, max_concurrent, cooldown_ms, price_threshold, model_allowlist, enabled, created_at FROM fallback_channels WHERE enabled = TRUE ORDER BY priority, created_at
 `
@@ -141,4 +189,53 @@ func (q *Queries) ListFallbackChannelsByOwner(ctx context.Context, ownerID strin
 		return nil, err
 	}
 	return items, nil
+}
+
+const setFallbackChannelEnabled = `-- name: SetFallbackChannelEnabled :exec
+UPDATE fallback_channels SET enabled=$2 WHERE id=$1
+`
+
+type SetFallbackChannelEnabledParams struct {
+	ID      string `json:"id"`
+	Enabled bool   `json:"enabled"`
+}
+
+func (q *Queries) SetFallbackChannelEnabled(ctx context.Context, arg SetFallbackChannelEnabledParams) error {
+	_, err := q.db.Exec(ctx, setFallbackChannelEnabled, arg.ID, arg.Enabled)
+	return err
+}
+
+const updateFallbackChannel = `-- name: UpdateFallbackChannel :exec
+UPDATE fallback_channels SET name=$2, base_url=$3, api_key=$4, priority=$5, weight=$6,
+  max_concurrent=$7, cooldown_ms=$8, price_threshold=$9, model_allowlist=$10
+WHERE id=$1
+`
+
+type UpdateFallbackChannelParams struct {
+	ID             string  `json:"id"`
+	Name           string  `json:"name"`
+	BaseUrl        string  `json:"base_url"`
+	ApiKey         string  `json:"api_key"`
+	Priority       int32   `json:"priority"`
+	Weight         int32   `json:"weight"`
+	MaxConcurrent  int32   `json:"max_concurrent"`
+	CooldownMs     int64   `json:"cooldown_ms"`
+	PriceThreshold float64 `json:"price_threshold"`
+	ModelAllowlist string  `json:"model_allowlist"`
+}
+
+func (q *Queries) UpdateFallbackChannel(ctx context.Context, arg UpdateFallbackChannelParams) error {
+	_, err := q.db.Exec(ctx, updateFallbackChannel,
+		arg.ID,
+		arg.Name,
+		arg.BaseUrl,
+		arg.ApiKey,
+		arg.Priority,
+		arg.Weight,
+		arg.MaxConcurrent,
+		arg.CooldownMs,
+		arg.PriceThreshold,
+		arg.ModelAllowlist,
+	)
+	return err
 }
