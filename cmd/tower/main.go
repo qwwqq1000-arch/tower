@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"net/http"
 	"time"
+	_ "time/tzdata" // embed the timezone DB (alpine runtime has no tzdata)
 
 	"github.com/qwwqq1000-arch/tower/internal/api"
 	"github.com/qwwqq1000-arch/tower/internal/bootstrap"

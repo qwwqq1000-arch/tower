@@ -340,7 +340,10 @@ func splitKey(key string) (node, profile string, ok bool) {
 }
 
 func todayDayStr() string {
-	loc, _ := time.LoadLocation("Asia/Shanghai")
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		loc = time.UTC
+	}
 	return time.Now().In(loc).Format("2006-01-02")
 }
 
