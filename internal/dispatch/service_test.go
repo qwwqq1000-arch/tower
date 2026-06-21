@@ -101,11 +101,64 @@ data: {"type":"message_delta","usage":{"output_tokens":42}}
 event: message_stop
 data: {"type":"message_stop"}
 `
-	in, out := parseUsageSSE(body)
+	in, out, cacheRead, cache5m, cache1h := parseUsageSSE(body)
 	if in != 150 {
 		t.Errorf("input_tokens: got %d, want 150", in)
 	}
 	if out != 42 {
 		t.Errorf("output_tokens: got %d, want 42", out)
+	}
+	if cacheRead != 0 || cache5m != 0 || cache1h != 0 {
+		t.Errorf("cache tokens should be 0, got read=%d 5m=%d 1h=%d", cacheRead, cache5m, cache1h)
+	}
+}
+
+func TestParseUsageSSE_CacheTokens(t *testing.T) {
+	// Aggregate cache_creation_input_tokens (no split ephemeral fields) → treated as cache5m
+	bodyAggregate := `event: message_start
+data: {"type":"message_start","message":{"usage":{"input_tokens":100,"output_tokens":0,"cache_read_input_tokens":5000,"cache_creation_input_tokens":1200}}}
+
+event: message_delta
+data: {"type":"message_delta","usage":{"output_tokens":20}}
+`
+	in, out, cacheRead, cache5m, cache1h := parseUsageSSE(bodyAggregate)
+	if in != 100 {
+		t.Errorf("aggregate: input_tokens got %d, want 100", in)
+	}
+	if out != 20 {
+		t.Errorf("aggregate: output_tokens got %d, want 20", out)
+	}
+	if cacheRead != 5000 {
+		t.Errorf("aggregate: cache_read got %d, want 5000", cacheRead)
+	}
+	if cache5m != 1200 {
+		t.Errorf("aggregate: cache5m got %d, want 1200 (aggregate treated as 5m)", cache5m)
+	}
+	if cache1h != 0 {
+		t.Errorf("aggregate: cache1h got %d, want 0", cache1h)
+	}
+
+	// Split ephemeral fields present → use split
+	bodySplit := `event: message_start
+data: {"type":"message_start","message":{"usage":{"input_tokens":50,"output_tokens":0,"cache_read_input_tokens":3000,"cache_creation_input_tokens":900,"cache_creation":{"ephemeral_5m_input_tokens":700,"ephemeral_1h_input_tokens":200}}}}
+
+event: message_delta
+data: {"type":"message_delta","usage":{"output_tokens":15}}
+`
+	in2, out2, cacheRead2, cache5m2, cache1h2 := parseUsageSSE(bodySplit)
+	if in2 != 50 {
+		t.Errorf("split: input_tokens got %d, want 50", in2)
+	}
+	if out2 != 15 {
+		t.Errorf("split: output_tokens got %d, want 15", out2)
+	}
+	if cacheRead2 != 3000 {
+		t.Errorf("split: cache_read got %d, want 3000", cacheRead2)
+	}
+	if cache5m2 != 700 {
+		t.Errorf("split: cache5m got %d, want 700", cache5m2)
+	}
+	if cache1h2 != 200 {
+		t.Errorf("split: cache1h got %d, want 200", cache1h2)
 	}
 }

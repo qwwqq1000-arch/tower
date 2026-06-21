@@ -39,3 +39,20 @@ func TestCostUsd(t *testing.T) {
 		t.Fatalf("zero=%v", c)
 	}
 }
+
+func TestCostUsdFull_ReferenceOpus(t *testing.T) {
+	// Reference: claude-opus-4-8, inTok=2, outTok=7353, cacheRead=301197, cache5m=0, cache1h=5154
+	// Expected ≈ 0.385974 (within 1e-5)
+	// Breakdown (opus InputPer1M=5, OutputPer1M=25):
+	//   input:      2       * 5  / 1e6 = 0.00001
+	//   output:     7353    * 25 / 1e6 = 0.183825
+	//   cacheRead:  301197  * 5 * 0.1 / 1e6 = 0.150598...5
+	//   cache5m:    0       * 5 * 1.25 / 1e6 = 0
+	//   cache1h:    5154    * 5 * 2.0  / 1e6 = 0.05154
+	//   total ≈ 0.385973...
+	got := CostUsdFull("claude-opus-4-8", 2, 7353, 301197, 0, 5154)
+	want := 0.385974 // spec reference value
+	if math.Abs(got-want) > 1e-5 {
+		t.Fatalf("CostUsdFull reference example: got %v, want ~%v (diff=%v)", got, want, math.Abs(got-want))
+	}
+}

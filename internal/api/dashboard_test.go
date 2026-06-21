@@ -30,7 +30,7 @@ func TestDashboardComprehensive(t *testing.T) {
 	// seed a node + a today dispatch log (opus, tokens) for cost
 	_, _ = q.CreateNode(ctx, sqlc.CreateNodeParams{ID: "n_dash", Name: "n", BaseUrl: "http://x", ApiKey: "k"})
 	now := time.Now().UnixMilli()
-	_ = q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{Ts: now, OwnerID: "o", Model: "claude-opus-4-8", Target: "node", Status: "ok", HttpStatus: 200, TokensIn: 1000, TokensOut: 2000})
+	_ = q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{Ts: now, OwnerID: "o", Model: "claude-opus-4-8", Target: "node", Status: "ok", HttpStatus: 200, TokensIn: 1000, TokensOut: 2000, CostUsd: 0.055})
 
 	const secret = "test-secret-padding-to-32-chars!"
 	router := NewRouter(pool, secret, nil, q)

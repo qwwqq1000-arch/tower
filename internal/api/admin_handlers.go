@@ -163,13 +163,12 @@ func dashboardHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
 		byModel := []map[string]any{}
 		if modelRows, err := q.TodayDispatchByModel(ctx, since); err == nil {
 			for _, mr := range modelRows {
-				c := billing.CostUsd(mr.Model, mr.TokensIn, mr.TokensOut, 0, 0)
 				reqN += int(mr.Requests)
 				okN += int(mr.Ok)
 				inTok += mr.TokensIn
 				outTok += mr.TokensOut
-				cost += c
-				byModel = append(byModel, map[string]any{"model": mr.Model, "requests": mr.Requests, "tokensIn": mr.TokensIn, "tokensOut": mr.TokensOut, "costUsd": c})
+				cost += mr.Cost
+				byModel = append(byModel, map[string]any{"model": mr.Model, "requests": mr.Requests, "tokensIn": mr.TokensIn, "tokensOut": mr.TokensOut, "costUsd": mr.Cost})
 			}
 		}
 		successRate := 0.0

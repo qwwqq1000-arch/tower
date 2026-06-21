@@ -55,17 +55,36 @@ type Outcome struct {
 
 type usage struct {
 	Usage struct {
-		InputTokens  int64 `json:"input_tokens"`
-		OutputTokens int64 `json:"output_tokens"`
+		InputTokens              int64 `json:"input_tokens"`
+		OutputTokens             int64 `json:"output_tokens"`
+		CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+		CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+		CacheCreation            struct {
+			Ephemeral5mInputTokens int64 `json:"ephemeral_5m_input_tokens"`
+			Ephemeral1hInputTokens int64 `json:"ephemeral_1h_input_tokens"`
+		} `json:"cache_creation"`
 	} `json:"usage"`
 }
 
-func parseUsage(body string) (int64, int64) {
+// parseUsage extracts (in, out, cacheRead, cache5m, cache1h) from a JSON response body.
+// If the split ephemeral fields are present (either >0), they are used as cache5m/cache1h;
+// otherwise the aggregate cache_creation_input_tokens is treated as cache5m (cache1h=0).
+func parseUsage(body string) (in, out, cacheRead, cache5m, cache1h int64) {
 	var u usage
 	if err := json.Unmarshal([]byte(body), &u); err != nil {
-		return 0, 0
+		return 0, 0, 0, 0, 0
 	}
-	return u.Usage.InputTokens, u.Usage.OutputTokens
+	in = u.Usage.InputTokens
+	out = u.Usage.OutputTokens
+	cacheRead = u.Usage.CacheReadInputTokens
+	if u.Usage.CacheCreation.Ephemeral5mInputTokens > 0 || u.Usage.CacheCreation.Ephemeral1hInputTokens > 0 {
+		cache5m = u.Usage.CacheCreation.Ephemeral5mInputTokens
+		cache1h = u.Usage.CacheCreation.Ephemeral1hInputTokens
+	} else {
+		cache5m = u.Usage.CacheCreationInputTokens
+		cache1h = 0
+	}
+	return in, out, cacheRead, cache5m, cache1h
 }
 
 // Dispatch routes one request: fallback decision → our nodes (failover) →
@@ -255,8 +274,8 @@ func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []
 	}
 	var cost float64
 	if status == "ok" {
-		in, out := parseUsage(res.Body)
-		cost = billing.CostUsd(model, in, out, 0, 0)
+		in, out, cacheRead, cache5m, cache1h := parseUsage(res.Body)
+		cost = billing.CostUsdFull(model, in, out, cacheRead, cache5m, cache1h)
 		_ = s.Q.UpsertFallbackSpend(ctx, sqlc.UpsertFallbackSpendParams{ChannelID: ch.ID, Day: todayDayStr(), Requests: 1, EstCostUsd: cost, BalanceObserved: 0})
 	}
 	_ = s.Q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{
@@ -268,8 +287,8 @@ func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []
 }
 
 func (s *Service) logOK(ctx context.Context, ownerID, model string, res ProxyResult, key string, latencyMs int64, reason string) {
-	in, out := parseUsage(res.Body)
-	cost := billing.CostUsd(model, in, out, 0, 0)
+	in, out, cacheRead, cache5m, cache1h := parseUsage(res.Body)
+	cost := billing.CostUsdFull(model, in, out, cacheRead, cache5m, cache1h)
 	_ = s.Q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{
 		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: key, ProfileID: "",
 		Status: "ok", HttpStatus: int32(res.Status), LatencyMs: latencyMs, TokensIn: in, TokensOut: out,
@@ -324,11 +343,17 @@ func flushCopyCapture(dst http.ResponseWriter, src io.Reader, start time.Time) (
 	return ttfbMs, sb.String()
 }
 
-// parseUsageSSE extracts input/output token counts from an Anthropic SSE body.
+// parseUsageSSE extracts (in, out, cacheRead, cache5m, cache1h) from an Anthropic SSE body.
 // input_tokens appears in message_start; output_tokens last value is in message_delta.
-func parseUsageSSE(body string) (in, out int64) {
+// If the split ephemeral fields appear (either >0), cache5m/cache1h are set from those;
+// otherwise aggregate cache_creation_input_tokens is treated as cache5m (cache1h=0).
+func parseUsageSSE(body string) (in, out, cacheRead, cache5m, cache1h int64) {
 	reIn := regexp.MustCompile(`"input_tokens":\s*(\d+)`)
 	reOut := regexp.MustCompile(`"output_tokens":\s*(\d+)`)
+	reCacheRead := regexp.MustCompile(`"cache_read_input_tokens":\s*(\d+)`)
+	reEph5m := regexp.MustCompile(`"ephemeral_5m_input_tokens":\s*(\d+)`)
+	reEph1h := regexp.MustCompile(`"ephemeral_1h_input_tokens":\s*(\d+)`)
+	reCacheCreate := regexp.MustCompile(`"cache_creation_input_tokens":\s*(\d+)`)
 
 	if m := reIn.FindStringSubmatch(body); len(m) == 2 {
 		fmt.Sscanf(m[1], "%d", &in)
@@ -338,16 +363,37 @@ func parseUsageSSE(body string) (in, out int64) {
 	if len(all) > 0 {
 		fmt.Sscanf(all[len(all)-1][1], "%d", &out)
 	}
-	return in, out
+	if m := reCacheRead.FindStringSubmatch(body); len(m) == 2 {
+		fmt.Sscanf(m[1], "%d", &cacheRead)
+	}
+	var eph5m, eph1h int64
+	if m := reEph5m.FindStringSubmatch(body); len(m) == 2 {
+		fmt.Sscanf(m[1], "%d", &eph5m)
+	}
+	if m := reEph1h.FindStringSubmatch(body); len(m) == 2 {
+		fmt.Sscanf(m[1], "%d", &eph1h)
+	}
+	if eph5m > 0 || eph1h > 0 {
+		cache5m = eph5m
+		cache1h = eph1h
+	} else {
+		var agg int64
+		if m := reCacheCreate.FindStringSubmatch(body); len(m) == 2 {
+			fmt.Sscanf(m[1], "%d", &agg)
+		}
+		cache5m = agg
+		cache1h = 0
+	}
+	return in, out, cacheRead, cache5m, cache1h
 }
 
 // logStream logs a completed streaming dispatch with TTFB and token counts.
-func (s *Service) logStream(ctx context.Context, ownerID, model, key string, status int, in, out, latencyMs, ttfbMs int64) {
+func (s *Service) logStream(ctx context.Context, ownerID, model, key string, status int, in, out, cacheRead, cache5m, cache1h, latencyMs, ttfbMs int64) {
 	httpStatus := "ok"
 	if status < 200 || status >= 300 {
 		httpStatus = "error"
 	}
-	cost := billing.CostUsd(model, in, out, 0, 0)
+	cost := billing.CostUsdFull(model, in, out, cacheRead, cache5m, cache1h)
 	_ = s.Q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{
 		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: key, ProfileID: "",
 		Status: httpStatus, HttpStatus: int32(status), LatencyMs: latencyMs,
@@ -503,9 +549,9 @@ func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, 
 	ttfb, sseBody := flushCopyCapture(w, st.Body, start)
 	_ = st.Body.Close()
 	settle(true)
-	in, out := parseUsageSSE(sseBody)
+	in, out, cacheRead, cache5m, cache1h := parseUsageSSE(sseBody)
 	total := time.Since(start).Milliseconds()
-	s.logStream(ctx, ownerID, model, key, st.Status, in, out, total, ttfb)
+	s.logStream(ctx, ownerID, model, key, st.Status, in, out, cacheRead, cache5m, cache1h, total, ttfb)
 	return Outcome{Status: st.Status, Target: key}, true, sseBody
 }
 
@@ -564,8 +610,8 @@ func (s *Service) streamChannel(ctx context.Context, w http.ResponseWriter, ch s
 	start := time.Now()
 	ttfb, sseBody := flushCopyCapture(w, st.Body, start)
 	_ = st.Body.Close()
-	in, out := parseUsageSSE(sseBody)
-	cost := billing.CostUsd(model, in, out, 0, 0)
+	in, out, cacheRead, cache5m, cache1h := parseUsageSSE(sseBody)
+	cost := billing.CostUsdFull(model, in, out, cacheRead, cache5m, cache1h)
 	_ = s.Q.UpsertFallbackSpend(ctx, sqlc.UpsertFallbackSpendParams{ChannelID: ch.ID, Day: todayDayStr(), Requests: 1, EstCostUsd: cost, BalanceObserved: 0})
 	_ = s.Q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{
 		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: "fallback:" + ch.ID,
