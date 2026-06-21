@@ -123,46 +123,56 @@ export type DesiredConfig = Record<string, unknown>;
 
 // --- Logs ---
 export interface LogEntry {
-  ts: string;
-  level: string;
-  msg: string;
-  node_id?: string;
-  [key: string]: unknown;
+  ts: number;         // unix ms
+  model: string;
+  target: string;
+  status: string;
+  httpStatus: number;
+  latencyMs: number;
+  tokensIn: number;
+  tokensOut: number;
+  fallbackReason: string;
 }
 
 // --- Events ---
 export interface EventRecord {
-  id: string;
+  ts: number;         // unix ms
   type: string;
-  payload: Record<string, unknown>;
-  ts: string;
+  target: string;
+  detail?: Record<string, unknown>;
 }
 
 // --- Audit ---
 export interface AuditRecord {
-  id: string;
+  ts: number;         // unix ms
   actor: string;
   action: string;
-  resource: string;
-  ts: string;
-  detail?: Record<string, unknown>;
+  target: string;
 }
 
 // --- Settle / Ledger ---
+export interface SettleRequest {
+  tenantId: string;
+  periodStart?: number;
+  periodEnd?: number;
+}
+
 export interface SettleResult {
-  settled: number;
-  skipped: number;
+  id: string;
+  tenantId: string;
+  gross: number;
+  status: string;
 }
 
 export interface LedgerEntry {
-  id: string;
-  node_id: string;
-  tokens: number;
-  cost_usd: number;
-  ts: string;
+  ts: number;         // unix ms
+  type: string;
+  amount: number;
+  ref: string;
+  note: string;
 }
 
-// --- Pagination wrapper ---
+// --- Pagination wrapper (kept for future use) ---
 export interface Page<T> {
   items: T[];
   total: number;

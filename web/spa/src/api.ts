@@ -17,9 +17,9 @@ import type {
   LogEntry,
   EventRecord,
   AuditRecord,
+  SettleRequest,
   SettleResult,
   LedgerEntry,
-  Page,
 } from './types';
 
 // ------------------------------------------------------------------
@@ -129,7 +129,7 @@ export const putDesired = (data: DesiredConfig) =>
 // ------------------------------------------------------------------
 export const getLogs = (params?: Record<string, string>) => {
   const qs = params ? '?' + new URLSearchParams(params).toString() : '';
-  return api<Page<LogEntry>>('GET', `/api/admin/logs${qs}`);
+  return api<LogEntry[]>('GET', `/api/admin/logs${qs}`);
 };
 
 // ------------------------------------------------------------------
@@ -137,7 +137,7 @@ export const getLogs = (params?: Record<string, string>) => {
 // ------------------------------------------------------------------
 export const getEvents = (params?: Record<string, string>) => {
   const qs = params ? '?' + new URLSearchParams(params).toString() : '';
-  return api<Page<EventRecord>>('GET', `/api/admin/events${qs}`);
+  return api<EventRecord[]>('GET', `/api/admin/events${qs}`);
 };
 
 // ------------------------------------------------------------------
@@ -145,16 +145,16 @@ export const getEvents = (params?: Record<string, string>) => {
 // ------------------------------------------------------------------
 export const getAudit = (params?: Record<string, string>) => {
   const qs = params ? '?' + new URLSearchParams(params).toString() : '';
-  return api<Page<AuditRecord>>('GET', `/api/admin/audit${qs}`);
+  return api<AuditRecord[]>('GET', `/api/admin/audit${qs}`);
 };
 
 // ------------------------------------------------------------------
 // Settle / Ledger (计费)
 // ------------------------------------------------------------------
-export const settle = () =>
-  api<SettleResult>('POST', '/api/admin/settle');
+export const settle = (req: SettleRequest) =>
+  api<SettleResult>('POST', '/api/admin/settle', req);
 
-export const getLedger = (params?: Record<string, string>) => {
-  const qs = params ? '?' + new URLSearchParams(params).toString() : '';
-  return api<Page<LedgerEntry>>('GET', `/api/admin/ledger${qs}`);
+export const getLedger = (tenantId: string) => {
+  const qs = '?' + new URLSearchParams({ tenantId }).toString();
+  return api<LedgerEntry[]>('GET', `/api/admin/ledger${qs}`);
 };
