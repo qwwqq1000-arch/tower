@@ -17,6 +17,10 @@ export interface NodeRecord {
   enabled: boolean;
   version?: string;
   status?: string;
+  createdAt?: number;
+  loggedIn?: boolean;
+  email?: string;
+  liveVersion?: string;
 }
 
 // --- Keys (号库) ---
