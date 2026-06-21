@@ -5,6 +5,7 @@ type Account struct {
 	Breaker      Breaker
 	Slots        *Slots
 	Disabled     bool
+	Offline      bool
 	LimitedUntil map[string]int64 // model class ("opus"/"sonnet"/"all") -> reset time ms
 }
 
@@ -13,10 +14,13 @@ func NewAccount(capacity int) *Account {
 	return &Account{Slots: NewSlots(capacity), LimitedUntil: map[string]int64{}}
 }
 
-// Status returns the account's headline state at now (priority: disabled > banned > half_open > active).
+// Status returns the account's headline state at now (priority: disabled > offline > banned > half_open > active).
 func (a *Account) Status(now int64) string {
 	if a.Disabled {
 		return "disabled"
+	}
+	if a.Offline {
+		return "offline"
 	}
 	switch a.Breaker.State(now) {
 	case "open":
@@ -47,6 +51,9 @@ func (a *Account) limitedFor(now int64, model string) bool {
 // effects; the caller claims the trial via Breaker.TakeTrial when trial is true.
 func (a *Account) CanDispatch(now int64, model string, cfg BreakerCfg) (ok bool, trial bool) {
 	if a.Disabled {
+		return false, false
+	}
+	if a.Offline {
 		return false, false
 	}
 	if a.limitedFor(now, model) {

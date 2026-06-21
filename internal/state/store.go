@@ -18,16 +18,21 @@ func NewStore(clock func() int64, rnd func(min, max int64) int64) *Store {
 	return &Store{now: clock, rnd: rnd, accts: map[string]*Account{}}
 }
 
-// Ensure returns the account for key, creating it with capacity if absent.
-func (s *Store) Ensure(key string, capacity int) *Account {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// ensureLocked returns (creating if needed) the account; caller MUST hold s.mu.
+func (s *Store) ensureLocked(key string, capacity int) *Account {
 	a := s.accts[key]
 	if a == nil {
 		a = NewAccount(capacity)
 		s.accts[key] = a
 	}
 	return a
+}
+
+// Ensure returns the account for key, creating it with capacity if absent.
+func (s *Store) Ensure(key string, capacity int) *Account {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ensureLocked(key, capacity)
 }
 
 // WithLock runs fn while holding the store lock (for compound atomic ops).
@@ -150,4 +155,26 @@ func (s *Store) NodeStatus(nodeID string) string {
 		}
 	}
 	return best
+}
+
+// SetLimited replaces an account's model-class rate-limit map (creating it if absent).
+func (s *Store) SetLimited(key string, capacity int, limits map[string]int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.ensureLocked(key, capacity)
+	a.LimitedUntil = limits
+}
+
+// SetOffline marks an account online/offline.
+func (s *Store) SetOffline(key string, capacity int, offline bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureLocked(key, capacity).Offline = offline
+}
+
+// SetDisabled marks an account enabled/disabled.
+func (s *Store) SetDisabled(key string, capacity int, disabled bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureLocked(key, capacity).Disabled = disabled
 }
