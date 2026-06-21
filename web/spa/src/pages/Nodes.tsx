@@ -3,10 +3,259 @@
 // Table (desktop) / Cards (mobile): name/baseUrl/enabled/delete
 // "Add node" form + multi-select + batch operations
 // ============================================================
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { listNodes, createNode, deleteNode, setNodeEnabled, refreshNode } from '../api';
+import { listNodes, createNode, deleteNode, setNodeEnabled, refreshNode, startProvision, getProvision } from '../api';
 import type { NodeRecord } from '../types';
+
+// ------------------------------------------------------------------
+// One-click provision wizard (一键开通)
+// ------------------------------------------------------------------
+interface ProvisionWizardProps {
+  onSuccess: () => void;
+}
+
+function ProvisionWizard({ onSuccess }: ProvisionWizardProps) {
+  const [open, setOpen] = useState(false);
+  const [host, setHost] = useState('');
+  const [user, setUser] = useState('root');
+  const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
+  const [ownerId, setOwnerId] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [jobStatus, setJobStatus] = useState<string | null>(null);
+  const [jobStep, setJobStep] = useState<string | null>(null);
+  const [jobLog, setJobLog] = useState<string | null>(null);
+  const [jobDone, setJobDone] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const logBoxRef = useRef<HTMLPreElement | null>(null);
+
+  function clearTimer() {
+    if (timerRef.current !== null) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  }
+
+  // Scroll log box to bottom when log updates
+  useEffect(() => {
+    if (logBoxRef.current) {
+      logBoxRef.current.scrollTop = logBoxRef.current.scrollHeight;
+    }
+  }, [jobLog]);
+
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => clearTimer();
+  }, []);
+
+  function handleClose() {
+    clearTimer();
+    setOpen(false);
+    setHost('');
+    setUser('root');
+    setPassword('');
+    setName('');
+    setOwnerId('');
+    setSubmitting(false);
+    setErr(null);
+    setJobStatus(null);
+    setJobStep(null);
+    setJobLog(null);
+    setJobDone(false);
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!host.trim() || !password.trim() || !name.trim()) return;
+    setSubmitting(true);
+    setErr(null);
+    setJobStatus('pending');
+    setJobStep(null);
+    setJobLog('');
+    setJobDone(false);
+    try {
+      const res = await startProvision({
+        host: host.trim(),
+        user: user.trim() || 'root',
+        password: password,
+        name: name.trim(),
+        ...(ownerId.trim() ? { ownerId: ownerId.trim() } : {}),
+      });
+      const jobId = res.jobId;
+      // Poll every 2s
+      timerRef.current = setInterval(() => {
+        void (async () => {
+          try {
+            const job = await getProvision(jobId);
+            setJobStatus(job.status);
+            setJobStep(job.step ?? null);
+            setJobLog(job.log ?? null);
+            if (job.status === 'success' || job.status === 'failed') {
+              clearTimer();
+              setJobDone(true);
+              setSubmitting(false);
+              if (job.status === 'success') {
+                onSuccess();
+              }
+            }
+          } catch (pollErr) {
+            setErr(pollErr instanceof Error ? pollErr.message : '轮询失败');
+            clearTimer();
+            setSubmitting(false);
+            setJobDone(true);
+          }
+        })();
+      }, 2000);
+    } catch (startErr) {
+      setErr(startErr instanceof Error ? startErr.message : '开通失败');
+      setSubmitting(false);
+      setJobStatus(null);
+    }
+  }
+
+  const statusColor =
+    jobStatus === 'success' ? 'text-ok' :
+    jobStatus === 'failed' ? 'text-err' :
+    'text-muted';
+
+  return (
+    <div className="bg-surface border border-line rounded-xl overflow-hidden">
+      {/* Header / toggle */}
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold text-ink hover:bg-line/20 transition"
+      >
+        <span>一键开通节点</span>
+        <span className="text-muted text-xs">{open ? '收起 ▲' : '展开 ▼'}</span>
+      </button>
+
+      {open && (
+        <div className="border-t border-line p-4 space-y-4">
+          {/* Form */}
+          {!submitting && !jobDone && (
+            <form onSubmit={(e) => { void handleSubmit(e); }} className="space-y-3">
+              <div className="flex flex-col sm:flex-row gap-2">
+                <input
+                  type="text"
+                  value={host}
+                  onChange={(e) => setHost(e.target.value)}
+                  placeholder="主机 IP / 域名 *"
+                  required
+                  className="flex-1 bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink
+                             placeholder:text-muted focus:outline-none focus:border-accent transition"
+                />
+                <input
+                  type="text"
+                  value={user}
+                  onChange={(e) => setUser(e.target.value)}
+                  placeholder="SSH 用户名（默认 root）"
+                  className="flex-1 bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink
+                             placeholder:text-muted focus:outline-none focus:border-accent transition"
+                />
+              </div>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="SSH 密码 *"
+                  required
+                  className="flex-1 bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink
+                             placeholder:text-muted focus:outline-none focus:border-accent transition"
+                />
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="节点名称 *"
+                  required
+                  className="flex-1 bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink
+                             placeholder:text-muted focus:outline-none focus:border-accent transition"
+                />
+                <input
+                  type="text"
+                  value={ownerId}
+                  onChange={(e) => setOwnerId(e.target.value)}
+                  placeholder="归属用户 ID（选填）"
+                  className="flex-1 bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink
+                             placeholder:text-muted focus:outline-none focus:border-accent transition"
+                />
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="submit"
+                  disabled={!host.trim() || !password.trim() || !name.trim()}
+                  className="px-4 py-2 text-sm font-medium bg-accent text-white rounded-lg
+                             hover:bg-accent/80 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                >
+                  开始开通
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClose}
+                  className="px-4 py-2 text-sm font-medium bg-bg border border-line text-muted rounded-lg hover:text-ink transition"
+                >
+                  取消
+                </button>
+              </div>
+              {err && <p className="text-xs text-err">{err}</p>}
+            </form>
+          )}
+
+          {/* Progress / log */}
+          {(submitting || jobDone) && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-sm font-medium text-ink">进度</span>
+                {jobStatus && (
+                  <span className={`text-xs font-medium ${statusColor}`}>
+                    状态: {jobStatus}
+                  </span>
+                )}
+                {jobStep && (
+                  <span className="text-xs text-muted">步骤: {jobStep}</span>
+                )}
+                {submitting && (
+                  <span className="text-xs text-muted animate-pulse">轮询中…</span>
+                )}
+              </div>
+              {jobLog !== null && (
+                <pre
+                  ref={logBoxRef}
+                  className="bg-bg border border-line rounded-lg p-3 text-xs font-mono text-ink
+                             max-h-48 overflow-y-auto whitespace-pre-wrap break-all"
+                >
+                  {jobLog || '(等待日志…)'}
+                </pre>
+              )}
+              {err && <p className="text-xs text-err">{err}</p>}
+              {jobDone && (
+                <div className="flex gap-2">
+                  {jobStatus === 'success' && (
+                    <span className="text-xs text-ok font-medium">开通成功！</span>
+                  )}
+                  {jobStatus === 'failed' && (
+                    <span className="text-xs text-err font-medium">开通失败</span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleClose}
+                    className="text-xs text-accent hover:underline"
+                  >
+                    关闭
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ------------------------------------------------------------------
 // Add-node form
@@ -402,6 +651,9 @@ export default function Nodes() {
 
       {/* Add node form */}
       <AddNodeForm onAdded={() => { void fetchNodes(); }} />
+
+      {/* One-click provision wizard */}
+      <ProvisionWizard onSuccess={() => { void fetchNodes(); }} />
 
       {/* Batch action bar */}
       {selected.size > 0 && (

@@ -100,17 +100,19 @@ export interface DashboardData {
 // --- Provision ---
 export interface ProvisionRequest {
   host: string;
-  port?: number;
-  key_id?: string;
+  user?: string;
+  password: string;
+  name: string;
+  ownerId?: string;
 }
 
 export interface ProvisionJob {
   id: string;
   host: string;
-  status: 'pending' | 'running' | 'done' | 'failed';
+  name: string;
+  status: 'pending' | 'running' | 'success' | 'failed';
+  step: string;
   log: string;
-  created_at: string;
-  updated_at: string;
 }
 
 // --- Policies (封控策略) ---

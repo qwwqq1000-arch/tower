@@ -91,10 +91,19 @@ export const disableDispatchKey = (id: string) =>
 // Provision
 // ------------------------------------------------------------------
 export const startProvision = (req: ProvisionRequest) =>
-  api<ProvisionJob>('POST', '/api/admin/provision', req);
+  api<{ jobId: string }>('POST', '/api/admin/provision', req);
 
 export const getProvision = (jobId: string) =>
   api<ProvisionJob>('GET', `/api/admin/provision/${jobId}`);
+
+// ------------------------------------------------------------------
+// Node Account (per-account tuning)
+// ------------------------------------------------------------------
+export const updateNodeAccount = (
+  nodeId: string,
+  accountId: string,
+  body: { egress?: string; weight?: number; role?: string; enabled?: boolean },
+) => api<{ ok: string }>('PATCH', `/api/admin/accounts/${nodeId}/${accountId}`, body);
 
 // ------------------------------------------------------------------
 // Policies (封控策略)

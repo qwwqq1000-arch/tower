@@ -9,6 +9,7 @@ import {
   unassignAccount,
   oauthStart,
   oauthExchange,
+  updateNodeAccount,
 } from '../api';
 import type { NodeRecord, AccountRow } from '../types';
 
@@ -187,16 +188,143 @@ function OAuthWizard({
 }
 
 // ------------------------------------------------------------------
+// Edit modal for per-account tuning
+// ------------------------------------------------------------------
+function AccountEditModal({
+  account,
+  onSave,
+  onClose,
+}: {
+  account: AccountRow;
+  onSave: () => void;
+  onClose: () => void;
+}) {
+  const [weight, setWeight] = useState(String(account.weight));
+  const [role, setRole] = useState(account.role || 'baseline');
+  const [egress, setEgress] = useState(account.egress || '');
+  const [enabled, setEnabled] = useState(account.enabled);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setErr(null);
+    try {
+      await updateNodeAccount(account.nodeId, account.accountId, {
+        weight: Number(weight),
+        role,
+        egress,
+        enabled,
+      });
+      onSave();
+      onClose();
+    } catch (saveErr) {
+      setErr(saveErr instanceof Error ? saveErr.message : '保存失败');
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+      <div className="bg-surface border border-line rounded-xl shadow-xl w-full max-w-md p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-ink">编辑账户</h2>
+          <button onClick={onClose} className="text-muted hover:text-ink text-lg leading-none">×</button>
+        </div>
+        <p className="text-xs text-muted font-mono truncate">{account.accountId}</p>
+        <form onSubmit={(e) => { void handleSave(e); }} className="space-y-3">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-muted font-medium">权重</label>
+            <input
+              type="number"
+              value={weight}
+              onChange={(e) => setWeight(e.target.value)}
+              min={0}
+              className="bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink
+                         focus:outline-none focus:border-accent transition"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-muted font-medium">角色</label>
+            <select
+              value={role}
+              onChange={(e) => setRole(e.target.value)}
+              className="bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink
+                         focus:outline-none focus:border-accent transition"
+            >
+              <option value="baseline">baseline</option>
+              <option value="reserve">reserve</option>
+            </select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-muted font-medium">出口 IP (egress)</label>
+            <input
+              type="text"
+              value={egress}
+              onChange={(e) => setEgress(e.target.value)}
+              placeholder="留空表示默认出口"
+              className="bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink
+                         placeholder:text-muted focus:outline-none focus:border-accent transition"
+            />
+          </div>
+          <div className="flex items-center gap-3">
+            <label className="text-xs text-muted font-medium">启用</label>
+            <button
+              type="button"
+              onClick={() => setEnabled((v) => !v)}
+              className={`relative inline-flex h-5 w-9 items-center rounded-full transition
+                ${enabled ? 'bg-accent' : 'bg-line'}`}
+            >
+              <span
+                className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition
+                  ${enabled ? 'translate-x-4' : 'translate-x-1'}`}
+              />
+            </button>
+            <span className={`text-xs ${enabled ? 'text-ok' : 'text-muted'}`}>
+              {enabled ? '启用' : '禁用'}
+            </span>
+          </div>
+          {err && <p className="text-xs text-err">{err}</p>}
+          <div className="flex gap-2 pt-1">
+            <button
+              type="submit"
+              disabled={saving}
+              className="flex-1 px-4 py-2 text-sm font-medium bg-accent text-white rounded-lg
+                         hover:bg-accent/80 disabled:opacity-50 disabled:cursor-not-allowed transition"
+            >
+              {saving ? '保存中…' : '保存'}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={saving}
+              className="flex-1 px-4 py-2 text-sm font-medium bg-bg border border-line text-muted rounded-lg
+                         hover:text-ink disabled:opacity-50 transition"
+            >
+              取消
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------
 // Account row (desktop table)
 // ------------------------------------------------------------------
 function AccountRow({
   account,
   onUnassign,
+  onRefresh,
 }: {
   account: AccountRow;
   onUnassign: (nodeId: string, accountId: string) => void;
+  onRefresh: () => void;
 }) {
   const [removing, setRemoving] = useState(false);
+  const [editing, setEditing] = useState(false);
 
   async function handleUnassign() {
     if (!confirm(`确认解绑账户 ${account.accountId} 与节点 ${account.nodeName}？`)) return;
@@ -210,28 +338,45 @@ function AccountRow({
   }
 
   return (
-    <tr className="border-t border-line hover:bg-line/30 transition">
-      <td className="px-4 py-3 text-sm text-ink font-medium">{account.nodeName}</td>
-      <td className="px-4 py-3 text-xs text-muted font-mono">{account.profileId || '—'}</td>
-      <td className="px-4 py-3 text-xs text-muted">—</td>
-      <td className="px-4 py-3">
-        <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${account.enabled ? 'text-ok' : 'text-muted'}`}>
-          <span className={`w-1.5 h-1.5 rounded-full ${account.enabled ? 'bg-ok' : 'bg-muted'}`} />
-          {account.enabled ? '启用' : '禁用'}
-        </span>
-      </td>
-      <td className="px-4 py-3 text-sm text-muted">{account.weight}</td>
-      <td className="px-4 py-3 text-xs text-muted">{account.role || '—'}</td>
-      <td className="px-4 py-3">
-        <button
-          onClick={() => { void handleUnassign(); }}
-          disabled={removing}
-          className="text-xs text-err hover:text-err/70 disabled:opacity-50 transition"
-        >
-          {removing ? '解绑中…' : '解绑'}
-        </button>
-      </td>
-    </tr>
+    <>
+      <tr className="border-t border-line hover:bg-line/30 transition">
+        <td className="px-4 py-3 text-sm text-ink font-medium">{account.nodeName}</td>
+        <td className="px-4 py-3 text-xs text-muted font-mono">{account.profileId || '—'}</td>
+        <td className="px-4 py-3 text-xs text-muted">—</td>
+        <td className="px-4 py-3">
+          <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${account.enabled ? 'text-ok' : 'text-muted'}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${account.enabled ? 'bg-ok' : 'bg-muted'}`} />
+            {account.enabled ? '启用' : '禁用'}
+          </span>
+        </td>
+        <td className="px-4 py-3 text-sm text-muted">{account.weight}</td>
+        <td className="px-4 py-3 text-xs text-muted">{account.role || '—'}</td>
+        <td className="px-4 py-3">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setEditing(true)}
+              className="text-xs text-accent hover:text-accent/70 transition"
+            >
+              编辑
+            </button>
+            <button
+              onClick={() => { void handleUnassign(); }}
+              disabled={removing}
+              className="text-xs text-err hover:text-err/70 disabled:opacity-50 transition"
+            >
+              {removing ? '解绑中…' : '解绑'}
+            </button>
+          </div>
+        </td>
+      </tr>
+      {editing && (
+        <AccountEditModal
+          account={account}
+          onSave={onRefresh}
+          onClose={() => setEditing(false)}
+        />
+      )}
+    </>
   );
 }
 
@@ -241,11 +386,14 @@ function AccountRow({
 function AccountMobileCard({
   account,
   onUnassign,
+  onRefresh,
 }: {
   account: AccountRow;
   onUnassign: (nodeId: string, accountId: string) => void;
+  onRefresh: () => void;
 }) {
   const [removing, setRemoving] = useState(false);
+  const [editing, setEditing] = useState(false);
 
   async function handleUnassign() {
     if (!confirm(`确认解绑账户 ${account.accountId} 与节点 ${account.nodeName}？`)) return;
@@ -259,30 +407,48 @@ function AccountMobileCard({
   }
 
   return (
-    <div className="bg-surface border border-line rounded-xl p-4 space-y-2">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="text-sm font-semibold text-ink truncate">{account.nodeName}</p>
-          <p className="text-xs text-muted font-mono mt-0.5 truncate">{account.profileId || '—'}</p>
+    <>
+      <div className="bg-surface border border-line rounded-xl p-4 space-y-2">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-ink truncate">{account.nodeName}</p>
+            <p className="text-xs text-muted font-mono mt-0.5 truncate">{account.profileId || '—'}</p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => setEditing(true)}
+              className="text-xs text-accent hover:text-accent/70 transition"
+            >
+              编辑
+            </button>
+            <button
+              onClick={() => { void handleUnassign(); }}
+              disabled={removing}
+              className="text-xs text-err hover:text-err/70 disabled:opacity-50 transition"
+            >
+              {removing ? '…' : '解绑'}
+            </button>
+          </div>
         </div>
-        <button
-          onClick={() => { void handleUnassign(); }}
-          disabled={removing}
-          className="shrink-0 text-xs text-err hover:text-err/70 disabled:opacity-50 transition"
-        >
-          {removing ? '…' : '解绑'}
-        </button>
-      </div>
 
-      <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
-        <span className={`flex items-center gap-1 ${account.enabled ? 'text-ok' : 'text-muted'}`}>
-          <span className={`w-1.5 h-1.5 rounded-full ${account.enabled ? 'bg-ok' : 'bg-muted'}`} />
-          {account.enabled ? '启用' : '禁用'}
-        </span>
-        <span>权重 {account.weight}</span>
-        {account.role && <span>角色 {account.role}</span>}
+        <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
+          <span className={`flex items-center gap-1 ${account.enabled ? 'text-ok' : 'text-muted'}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${account.enabled ? 'bg-ok' : 'bg-muted'}`} />
+            {account.enabled ? '启用' : '禁用'}
+          </span>
+          <span>权重 {account.weight}</span>
+          {account.role && <span>角色 {account.role}</span>}
+          {account.egress && <span className="font-mono">出口 {account.egress}</span>}
+        </div>
       </div>
-    </div>
+      {editing && (
+        <AccountEditModal
+          account={account}
+          onSave={onRefresh}
+          onClose={() => setEditing(false)}
+        />
+      )}
+    </>
   );
 }
 
@@ -389,6 +555,7 @@ export default function Accounts() {
                     key={`${a.nodeId}/${a.accountId}`}
                     account={a}
                     onUnassign={handleUnassign}
+                    onRefresh={() => { void fetchAll(); }}
                   />
                 ))}
               </tbody>
@@ -402,6 +569,7 @@ export default function Accounts() {
                 key={`${a.nodeId}/${a.accountId}`}
                 account={a}
                 onUnassign={handleUnassign}
+                onRefresh={() => { void fetchAll(); }}
               />
             ))}
           </div>
