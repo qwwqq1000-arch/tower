@@ -21,6 +21,7 @@ func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc
 	mux.HandleFunc("POST /auth/login", loginHandler(pool, secret))
 	mux.HandleFunc("POST /auth/logout", logoutHandler())
 	mux.HandleFunc("GET /auth/me", requireSession(secret, meHandler(pool)))
+	mux.HandleFunc("GET /api/admin/server-status", requireAdmin(secret, serverStatusHandler()))
 	if svc != nil {
 		mux.HandleFunc("POST /v1/messages", dispatchMessagesHandler(svc, q))
 	}
