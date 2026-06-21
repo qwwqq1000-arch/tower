@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/qwwqq1000-arch/tower/internal/api"
+	"github.com/qwwqq1000-arch/tower/internal/bootstrap"
 	"github.com/qwwqq1000-arch/tower/internal/config"
 	"github.com/qwwqq1000-arch/tower/internal/crypto"
 	"github.com/qwwqq1000-arch/tower/internal/db"
@@ -37,6 +38,11 @@ func main() {
 	defer pool.Close()
 
 	q := sqlc.New(pool)
+	if created, err := bootstrap.EnsureAdmin(ctx, q, cfg.AdminUser, cfg.AdminPassword); err != nil {
+		log.Printf("bootstrap admin: %v", err)
+	} else if created {
+		log.Printf("bootstrap: created initial admin %q", cfg.AdminUser)
+	}
 	nowMs := func() int64 { return time.Now().UnixMilli() }
 	rng := func(min, max int64) int64 {
 		if max <= min {

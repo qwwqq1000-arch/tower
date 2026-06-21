@@ -13,6 +13,8 @@ type Config struct {
 	DatabaseURL   string // postgres connection string
 	MasterKeyB64  string // base64-encoded 32-byte AES-256 master key
 	SessionSecret string // HMAC secret for session cookies
+	AdminUser     string
+	AdminPassword string
 }
 
 // Load reads configuration from the environment. HTTPAddr defaults to ":8080";
@@ -23,6 +25,8 @@ func Load() (Config, error) {
 		DatabaseURL:   os.Getenv("TOWER_DATABASE_URL"),
 		MasterKeyB64:  os.Getenv("TOWER_MASTER_KEY"),
 		SessionSecret: os.Getenv("TOWER_SESSION_SECRET"),
+		AdminUser:     os.Getenv("TOWER_ADMIN_USER"),
+		AdminPassword: os.Getenv("TOWER_ADMIN_PASSWORD"),
 	}
 	var missing []string
 	if cfg.DatabaseURL == "" {
