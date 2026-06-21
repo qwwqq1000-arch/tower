@@ -141,19 +141,24 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { path: '/',           label: '看板',     icon: '◈' },
-  { path: '/dispatch',   label: '调度',     icon: '⇄', adminOnly: true },
-  { path: '/nodes',      label: '节点',     icon: '⬡' },
-  { path: '/accounts',   label: '号库',     icon: '⚿' },
-  { path: '/keys',       label: '调度密钥', icon: '🔑', adminOnly: true },
-  { path: '/policies',   label: '封控策略', icon: '⛨', adminOnly: true },
-  { path: '/slots',     label: '时段槽位', icon: '⏱', adminOnly: true },
-  { path: '/desired',    label: '配置对账', icon: '⇌', adminOnly: true },
-  { path: '/logs',       label: '日志',     icon: '≡' },
-  { path: '/billing',    label: '计费',     icon: '₿', adminOnly: true },
-  { path: '/ban-analysis', label: '封号分析', icon: '⚠', adminOnly: true },
-  { path: '/fallback',     label: '保底渠道', icon: '⤵', adminOnly: true },
-  { path: '/users',        label: '用户',     icon: '👤', adminOnly: true },
+  { path: '/',          label: '看板',     icon: '◈' },
+  { path: '/dispatch',  label: '调度',     icon: '⇄', adminOnly: true },
+  { path: '/nodes',     label: '节点',     icon: '⬡' },
+  { path: '/accounts',  label: '号库',     icon: '⚿' },
+  { path: '/fallback',  label: '保底渠道', icon: '⤵', adminOnly: true },
+  { path: '/logs',      label: '日志',     icon: '≡' },
+  { path: '/billing',   label: '计费',     icon: '₿', adminOnly: true },
+  { path: '/settings',  label: '设置',     icon: '⚙', adminOnly: true },
+];
+
+// Settings sub-pages — not in primary sidebar, but searchable via palette
+const SETTINGS_ITEMS: NavItem[] = [
+  { path: '/policies',    label: '封控策略', icon: '⛨', adminOnly: true },
+  { path: '/slots',       label: '时段槽位', icon: '⏱', adminOnly: true },
+  { path: '/desired',     label: '配置对账', icon: '⇌', adminOnly: true },
+  { path: '/keys',        label: '调度密钥', icon: '🔑', adminOnly: true },
+  { path: '/ban-analysis',label: '封号分析', icon: '⚠', adminOnly: true },
+  { path: '/users',       label: '用户',     icon: '👤', adminOnly: true },
 ];
 
 // ------------------------------------------------------------------
@@ -246,6 +251,11 @@ export function Shell({ children }: { children: ReactNode }) {
   const isAdmin = role === 'admin' || role === 'superadmin';
   const items = NAV_ITEMS.filter((i) => !i.adminOnly || isAdmin);
   const mobileItems = items.slice(0, 5);
+  // Palette: primary nav + settings sub-pages (so moved pages remain searchable)
+  const paletteItems = [
+    ...items,
+    ...SETTINGS_ITEMS.filter((i) => !i.adminOnly || isAdmin),
+  ];
 
   // ⌘K / Ctrl+K global shortcut
   useEffect(() => {
@@ -384,7 +394,7 @@ export function Shell({ children }: { children: ReactNode }) {
 
       {/* Command palette */}
       {paletteOpen && (
-        <Palette items={items} onClose={() => setPaletteOpen(false)} />
+        <Palette items={paletteItems} onClose={() => setPaletteOpen(false)} />
       )}
 
       {/* Change-password modal */}

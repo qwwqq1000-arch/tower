@@ -17,6 +17,7 @@ import BanAnalysis  from './pages/BanAnalysis';
 import Fallback     from './pages/Fallback';
 import Users        from './pages/Users';
 import Slots        from './pages/Slots';
+import Settings     from './pages/Settings';
 
 export default function App() {
   return (
@@ -39,6 +40,7 @@ export default function App() {
               <Route path="/ban-analysis" element={<BanAnalysis />} />
               <Route path="/fallback"     element={<Fallback />} />
               <Route path="/users"        element={<Users />} />
+              <Route path="/settings"     element={<Settings />} />
             </Routes>
           </Shell>
         </LoginGate>
