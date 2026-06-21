@@ -1,16 +1,19 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/qwwqq1000-arch/tower/internal/auth"
 	"github.com/qwwqq1000-arch/tower/internal/billing"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 	"github.com/qwwqq1000-arch/tower/internal/dispatch"
+	"github.com/qwwqq1000-arch/tower/internal/nodeclient"
 )
 
 func randHex(prefix string) string {
@@ -44,9 +47,52 @@ func listNodesHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
+
+		type healthResult struct {
+			loggedIn    bool
+			email       string
+			liveVersion string
+		}
+		results := make([]healthResult, len(rows))
+		var wg sync.WaitGroup
+		for i, n := range rows {
+			wg.Add(1)
+			go func(idx int, baseURL, apiKey string) {
+				defer wg.Done()
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer cancel()
+				c := nodeclient.New(baseURL, apiKey)
+				h, err := c.Health(ctx)
+				if err != nil {
+					return
+				}
+				results[idx] = healthResult{
+					loggedIn:    h.Auth.LoggedIn,
+					email:       h.Auth.Email,
+					liveVersion: h.Version,
+				}
+			}(i, n.BaseUrl, n.ApiKey)
+		}
+		wg.Wait()
+
 		out := make([]map[string]any, 0, len(rows))
-		for _, n := range rows {
-			out = append(out, map[string]any{"id": n.ID, "name": n.Name, "baseUrl": n.BaseUrl, "ownerId": n.OwnerID, "enabled": n.Enabled, "version": n.Version})
+		for i, n := range rows {
+			var createdAtMs int64
+			if n.CreatedAt.Valid {
+				createdAtMs = n.CreatedAt.Time.UnixMilli()
+			}
+			out = append(out, map[string]any{
+				"id":          n.ID,
+				"name":        n.Name,
+				"baseUrl":     n.BaseUrl,
+				"ownerId":     n.OwnerID,
+				"enabled":     n.Enabled,
+				"version":     n.Version,
+				"createdAt":   createdAtMs,
+				"loggedIn":    results[i].loggedIn,
+				"email":       results[i].email,
+				"liveVersion": results[i].liveVersion,
+			})
 		}
 		writeJSON(w, http.StatusOK, out)
 	}
