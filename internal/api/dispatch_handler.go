@@ -49,15 +49,15 @@ func dispatchMessagesHandler(svc *dispatch.Service, q *sqlc.Queries) http.Handle
 		}
 		body, _ := io.ReadAll(r.Body)
 		var parsed struct {
-			Model    string `json:"model"`
-			Messages []struct {
-				Content any `json:"content"`
-			} `json:"messages"`
+			Model  string `json:"model"`
+			Stream bool   `json:"stream"`
 		}
 		_ = json.Unmarshal(body, &parsed)
-		bodyText := string(body)
-
-		out := svc.Dispatch(r.Context(), ownerID, parsed.Model, bodyText, body)
+		if parsed.Stream {
+			svc.DispatchStream(r.Context(), w, ownerID, parsed.Model, body)
+			return
+		}
+		out := svc.Dispatch(r.Context(), ownerID, parsed.Model, string(body), body)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(out.Status)
 		_, _ = w.Write([]byte(out.Body))

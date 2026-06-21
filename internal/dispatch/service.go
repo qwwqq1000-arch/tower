@@ -3,6 +3,8 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
 	"sort"
 
 	"github.com/qwwqq1000-arch/tower/internal/billing"
@@ -200,4 +202,125 @@ func (s *Service) logErr(ctx context.Context, ownerID, model string, status int,
 		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: "node", ProfileID: "",
 		Status: "error", HttpStatus: int32(status), FallbackReason: reason,
 	})
+}
+
+// flushCopy streams src→dst, flushing after each chunk so SSE reaches the client live.
+func flushCopy(dst http.ResponseWriter, src io.Reader) {
+	fl, _ := dst.(http.Flusher)
+	buf := make([]byte, 16*1024)
+	for {
+		n, err := src.Read(buf)
+		if n > 0 {
+			if _, werr := dst.Write(buf[:n]); werr != nil {
+				return
+			}
+			if fl != nil {
+				fl.Flush()
+			}
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+// DispatchStream routes a streaming request: it may fail over to another account
+// before the first byte; once streaming to the client starts, it commits.
+func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, ownerID, model string, body []byte) Outcome {
+	cfg := s.resolveConfig(ctx)
+	breaker := state.BreakerCfg{
+		PersistStreak: cfg.BanPersistStreak, BaseMs: cfg.CooldownBaseMs,
+		MaxMs: cfg.CooldownMaxMs, Mult: cfg.CooldownMult,
+	}
+	order, resolver := s.buildCandidates(ctx, ownerID, cfg.MaxConcurrent)
+
+	attempts := 0
+	for _, key := range order {
+		if attempts >= 50 {
+			break
+		}
+		attempts++
+		ok, trial := s.Store.TryDispatchTrial(key, model, breaker)
+		if !ok {
+			continue
+		}
+		out, committed := s.streamOne(ctx, w, key, trial, resolver, breaker, body, cfg, ownerID, model)
+		if committed {
+			return out
+		}
+		// not committed → failed before first byte → failover
+	}
+
+	// exhausted → fallback channel stream, else 503
+	channels := s.enabledChannels(ctx, ownerID)
+	if cfg.FallbackEnabled && len(channels) > 0 {
+		if out, committed := s.streamChannel(ctx, w, channels[0], body, ownerID, model, "exhausted"); committed {
+			return out
+		}
+	}
+	w.WriteHeader(http.StatusServiceUnavailable)
+	_, _ = w.Write([]byte(`{"error":"no nodes available"}`))
+	s.logErr(ctx, ownerID, model, 503, "")
+	return Outcome{Status: 503, Target: "none"}
+}
+
+// streamOne attempts one account. committed=true means we wrote to the client
+// (success) and the caller must not fail over.
+func (s *Service) streamOne(ctx context.Context, w http.ResponseWriter, key string, trial bool, resolver Resolver, breaker state.BreakerCfg, body []byte, cfg policy.Config, ownerID, model string) (Outcome, bool) {
+	settled := false
+	settle := func(success bool) {
+		if settled {
+			return
+		}
+		settled = true
+		s.Store.Complete(key, cfg.SlotCooldownMinMs, cfg.SlotCooldownMaxMs)
+		if trial {
+			s.Store.OnTrialResult(key, breaker, success)
+		} else if success {
+			s.Store.OnSuccess(key)
+		} else {
+			s.Store.OnBanSignal(key, breaker)
+		}
+	}
+	defer func() { settle(false) }()
+
+	np := &NodeProxy{Body: body, Resolve: resolver, BanSignals: cfg.BanSignals}
+	st, err := np.OpenStream(ctx, key)
+	if err != nil {
+		return Outcome{}, false // connection error → failover
+	}
+	if st.Banned || st.Status >= 400 {
+		_ = st.Body.Close()
+		return Outcome{}, false // bad status before first byte → settle(false) via defer, failover
+	}
+	// commit: stream to client
+	CopyForwardableHeaders(w.Header(), st.Header)
+	w.WriteHeader(st.Status)
+	flushCopy(w, st.Body)
+	_ = st.Body.Close()
+	settle(true)
+	s.logOK(ctx, ownerID, model, ProxyResult{Status: st.Status}, "")
+	return Outcome{Status: st.Status, Target: "node"}, true
+}
+
+// streamChannel attempts a fallback channel stream. committed=true means we wrote to the client.
+func (s *Service) streamChannel(ctx context.Context, w http.ResponseWriter, ch sqlc.FallbackChannel, body []byte, ownerID, model, reason string) (Outcome, bool) {
+	cp := &ChannelProxy{Body: body, Ch: ChannelRef{BaseURL: ch.BaseUrl, APIKey: ch.ApiKey}}
+	st, err := cp.OpenStream(ctx, ch.ID)
+	if err != nil {
+		return Outcome{}, false
+	}
+	if st.Status >= 400 {
+		_ = st.Body.Close()
+		return Outcome{}, false
+	}
+	CopyForwardableHeaders(w.Header(), st.Header)
+	w.WriteHeader(st.Status)
+	flushCopy(w, st.Body)
+	_ = st.Body.Close()
+	_ = s.Q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{
+		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: "fallback:" + ch.ID,
+		Status: "ok", HttpStatus: int32(st.Status), FallbackReason: reason,
+	})
+	return Outcome{Status: st.Status, Target: "fallback:" + ch.ID, Reason: reason}, true
 }
