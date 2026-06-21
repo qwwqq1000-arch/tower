@@ -76,7 +76,7 @@ export const getDashboard = () =>
 export const listNodes = () =>
   api<NodeRecord[]>('GET', '/api/admin/nodes');
 
-export const createNode = (data: { name: string; baseUrl: string; apiKey?: string; ownerId?: string }) =>
+export const createNode = (data: { baseUrl: string; apiKey?: string; ownerId?: string }) =>
   api<NodeRecord>('POST', '/api/admin/nodes', data);
 
 export const deleteNode = (id: string) =>

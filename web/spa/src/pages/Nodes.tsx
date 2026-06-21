@@ -552,26 +552,26 @@ interface AddNodeFormProps {
 }
 
 function AddNodeForm({ onAdded }: AddNodeFormProps) {
-  const [name, setName] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
+  const [ownerId, setOwnerId] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!name.trim() || !baseUrl.trim()) return;
+    if (!baseUrl.trim()) return;
     setSubmitting(true);
     setErr(null);
     try {
       await createNode({
-        name: name.trim(),
         baseUrl: baseUrl.trim(),
         ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+        ...(ownerId.trim() ? { ownerId: ownerId.trim() } : {}),
       });
-      setName('');
       setBaseUrl('');
       setApiKey('');
+      setOwnerId('');
       onAdded();
     } catch (error) {
       setErr(error instanceof Error ? error.message : '添加失败');
@@ -589,15 +589,6 @@ function AddNodeForm({ onAdded }: AddNodeFormProps) {
       <div className="flex flex-col sm:flex-row gap-2">
         <input
           type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="节点名称 *"
-          required
-          className="flex-1 bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink
-                     placeholder:text-muted focus:outline-none focus:border-accent transition"
-        />
-        <input
-          type="text"
           value={baseUrl}
           onChange={(e) => setBaseUrl(e.target.value)}
           placeholder="接入地址 * (如 http://ip:3456)"
@@ -613,9 +604,17 @@ function AddNodeForm({ onAdded }: AddNodeFormProps) {
           className="flex-1 bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink
                      placeholder:text-muted focus:outline-none focus:border-accent transition"
         />
+        <input
+          type="text"
+          value={ownerId}
+          onChange={(e) => setOwnerId(e.target.value)}
+          placeholder="归属用户 ID（选填）"
+          className="flex-1 bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink
+                     placeholder:text-muted focus:outline-none focus:border-accent transition"
+        />
         <button
           type="submit"
-          disabled={submitting || !name.trim() || !baseUrl.trim()}
+          disabled={submitting || !baseUrl.trim()}
           className="px-4 py-2 text-sm font-medium bg-accent text-white rounded-lg
                      hover:bg-accent/80 disabled:opacity-50 disabled:cursor-not-allowed transition whitespace-nowrap"
         >
@@ -1196,7 +1195,7 @@ export default function Nodes() {
                       className="rounded border-line accent-accent cursor-pointer"
                     />
                   </th>
-                  <SortTh label="名称" col="name" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <SortTh label="节点ID" col="name" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <th className="px-4 py-3 font-medium text-xs text-muted uppercase tracking-wide">地址</th>
                   <th className="px-4 py-3 font-medium text-xs text-muted uppercase tracking-wide">邮箱</th>
                   <SortTh label="加入时间" col="createdAt" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />

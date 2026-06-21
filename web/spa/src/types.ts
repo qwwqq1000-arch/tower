@@ -107,7 +107,6 @@ export interface ProvisionRequest {
   host: string;
   user?: string;
   password: string;
-  name: string;
   ownerId?: string;
 }
 

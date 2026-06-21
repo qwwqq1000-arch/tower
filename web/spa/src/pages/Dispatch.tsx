@@ -115,6 +115,14 @@ function FallbackChannelsPanel({ channels }: { channels: DispatchFallbackChannel
     return `$${usd.toFixed(6)}`;
   }
 
+  function formatBalance(usd: number | undefined): string {
+    if (usd == null || usd === 0) return '—';
+    if (usd >= 100) return `$${usd.toFixed(0)}`;
+    if (usd >= 1) return `$${usd.toFixed(2)}`;
+    if (usd >= 0.01) return `$${usd.toFixed(4)}`;
+    return `$${usd.toFixed(6)}`;
+  }
+
   return (
     <div className="bg-surface border border-line rounded-xl overflow-hidden mb-6">
       <div className="px-4 py-3 border-b border-line text-sm font-medium text-ink">保底渠道</div>
@@ -129,7 +137,7 @@ function FallbackChannelsPanel({ channels }: { channels: DispatchFallbackChannel
                 <th className="px-4 py-2 font-medium">状态</th>
                 <th className="px-4 py-2 font-medium text-right">优先级</th>
                 <th className="px-4 py-2 font-medium text-right">权重</th>
-                <th className="px-4 py-2 font-medium text-right">今日请求</th>
+                <th className="px-4 py-2 font-medium text-right">余额</th>
                 <th className="px-4 py-2 font-medium text-right">今日消费</th>
                 <th className="px-4 py-2 font-medium text-right">并发中</th>
                 <th className="px-4 py-2 font-medium text-right">可用</th>
@@ -148,7 +156,7 @@ function FallbackChannelsPanel({ channels }: { channels: DispatchFallbackChannel
                   </td>
                   <td className="px-4 py-2 text-right tabular-nums">{ch.priority}</td>
                   <td className="px-4 py-2 text-right tabular-nums">{ch.weight}</td>
-                  <td className="px-4 py-2 text-right tabular-nums">{ch.todayRequests.toLocaleString()}</td>
+                  <td className="px-4 py-2 text-right tabular-nums">{formatBalance(ch.balanceUsd)}</td>
                   <td className="px-4 py-2 text-right tabular-nums">{formatCost(ch.todayCostUsd)}</td>
                   <td className="px-4 py-2 text-right tabular-nums">{ch.inflight ?? '—'}</td>
                   <td className="px-4 py-2 text-right tabular-nums">{ch.available ?? '—'}</td>
