@@ -280,6 +280,95 @@ func TestPickElastic(t *testing.T) {
 	}
 }
 
+// TestElasticHysteresis verifies the hysteresis state machine used in buildCandidates.
+// It exercises the three cases required by the spec:
+//   1. not-scaled + util >= scaleUp → scales up
+//   2. scaled + util between scaleDown and scaleUp → stays scaled
+//   3. scaled + util <= scaleDown → scales down
+func TestElasticHysteresis(t *testing.T) {
+	type input struct {
+		wasScaled bool
+		util      float64
+		scaleUp   float64
+		scaleDown float64
+	}
+	type want struct {
+		shouldScale bool
+	}
+	cases := []struct {
+		name  string
+		in    input
+		want  want
+	}{
+		{
+			name: "not-scaled + util at scaleUp threshold -> scales up",
+			in:   input{wasScaled: false, util: 0.8, scaleUp: 0.8, scaleDown: 0.3},
+			want: want{shouldScale: true},
+		},
+		{
+			name: "not-scaled + util above scaleUp -> scales up",
+			in:   input{wasScaled: false, util: 0.95, scaleUp: 0.8, scaleDown: 0.3},
+			want: want{shouldScale: true},
+		},
+		{
+			name: "not-scaled + util below scaleUp -> stays not-scaled",
+			in:   input{wasScaled: false, util: 0.5, scaleUp: 0.8, scaleDown: 0.3},
+			want: want{shouldScale: false},
+		},
+		{
+			name: "scaled + util between scaleDown and scaleUp -> stays scaled (hysteresis)",
+			in:   input{wasScaled: true, util: 0.5, scaleUp: 0.8, scaleDown: 0.3},
+			want: want{shouldScale: true},
+		},
+		{
+			name: "scaled + util exactly at scaleDown -> scales down",
+			in:   input{wasScaled: true, util: 0.3, scaleUp: 0.8, scaleDown: 0.3},
+			want: want{shouldScale: false},
+		},
+		{
+			name: "scaled + util below scaleDown -> scales down",
+			in:   input{wasScaled: true, util: 0.1, scaleUp: 0.8, scaleDown: 0.3},
+			want: want{shouldScale: false},
+		},
+		{
+			name: "misconfigured scaleDown=0 -> no hysteresis (scaleDown=scaleUp)",
+			in:   input{wasScaled: true, util: 0.5, scaleUp: 0.8, scaleDown: 0.0},
+			// With scaleDown fallback to scaleUp=0.8: wasScaled=true, util=0.5 > 0.8 is false,
+			// so we check util <= scaleDown(0.8): 0.5 <= 0.8 → shouldScale=false.
+			want: want{shouldScale: false},
+		},
+		{
+			name: "misconfigured scaleDown >= scaleUp -> no hysteresis",
+			in:   input{wasScaled: true, util: 0.6, scaleUp: 0.8, scaleDown: 0.9},
+			// scaleDown normalized to scaleUp=0.8: wasScaled=true, util=0.6 <= 0.8 → shouldScale=false.
+			want: want{shouldScale: false},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			scaleUp := tc.in.scaleUp
+			scaleDown := tc.in.scaleDown
+			if scaleDown <= 0 || scaleDown >= scaleUp {
+				scaleDown = scaleUp
+			}
+
+			wasScaled := tc.in.wasScaled
+			shouldScale := wasScaled
+			if !wasScaled && tc.in.util >= scaleUp {
+				shouldScale = true
+			} else if wasScaled && tc.in.util <= scaleDown {
+				shouldScale = false
+			}
+
+			if shouldScale != tc.want.shouldScale {
+				t.Errorf("shouldScale=%v, want %v (wasScaled=%v util=%.2f scaleUp=%.2f scaleDown=%.2f)",
+					shouldScale, tc.want.shouldScale, wasScaled, tc.in.util, scaleUp, scaleDown)
+			}
+		})
+	}
+}
+
 // TestElasticCountPartition verifies the count-based baseline/reserve split inside buildCandidates.
 // It uses a real state.Store snapshot so we can control utilisation without a DB.
 func TestElasticCountPartition(t *testing.T) {

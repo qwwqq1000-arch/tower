@@ -34,6 +34,7 @@ type Config struct {
 	ElasticEnabled        bool
 	ElasticBaselineCount  int     // number of accounts that form the active baseline; default 1
 	ElasticScaleUpUtil    float64 // utilisation threshold to activate reserves (0.0–1.0); default 0.8
+	ElasticScaleDownUtil  float64 // utilisation threshold to release reserves (hysteresis); default 0.3
 	ElasticMaxReserve     int     // cap on reserve accounts added per evaluation; default 1000
 
 	// Session exile: route a conversation to fallback after this many consecutive
@@ -75,6 +76,7 @@ func Defaults() Config {
 		ElasticEnabled:            false,
 		ElasticBaselineCount:      1,
 		ElasticScaleUpUtil:        0.8,
+		ElasticScaleDownUtil:      0.3,
 		ElasticMaxReserve:         1000,
 		SessionErrorThreshold:     0,
 		SessionCooldownSec:        300,
@@ -108,6 +110,7 @@ type Patch struct {
 	ElasticEnabled       *bool
 	ElasticBaselineCount *int
 	ElasticScaleUpUtil   *float64
+	ElasticScaleDownUtil *float64
 	ElasticMaxReserve    *int
 	SessionErrorThreshold     *int
 	SessionCooldownSec        *int
@@ -189,6 +192,9 @@ func apply(c *Config, p Patch) {
 	if p.ElasticScaleUpUtil != nil {
 		c.ElasticScaleUpUtil = *p.ElasticScaleUpUtil
 	}
+	if p.ElasticScaleDownUtil != nil {
+		c.ElasticScaleDownUtil = *p.ElasticScaleDownUtil
+	}
 	if p.ElasticMaxReserve != nil {
 		c.ElasticMaxReserve = *p.ElasticMaxReserve
 	}
@@ -255,6 +261,7 @@ func DryRun(base Config, patches ...Patch) (Config, []Diff) {
 	add("ElasticEnabled", base.ElasticEnabled, final.ElasticEnabled)
 	add("ElasticBaselineCount", base.ElasticBaselineCount, final.ElasticBaselineCount)
 	add("ElasticScaleUpUtil", base.ElasticScaleUpUtil, final.ElasticScaleUpUtil)
+	add("ElasticScaleDownUtil", base.ElasticScaleDownUtil, final.ElasticScaleDownUtil)
 	add("ElasticMaxReserve", base.ElasticMaxReserve, final.ElasticMaxReserve)
 	add("SessionErrorThreshold", base.SessionErrorThreshold, final.SessionErrorThreshold)
 	add("SessionCooldownSec", base.SessionCooldownSec, final.SessionCooldownSec)

@@ -352,34 +352,51 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 		util = float64(totalInflight) / float64(totalCapacity)
 	}
 
-	threshold := cfg.ElasticScaleUpUtil
-	order := pickElastic(baseline, reserve, util, threshold, cfg.ElasticMaxReserve)
-
-	// Deduplicated scale_up / scale_down events.
-	nReserve := len(order) - len(baseline)
-	if nReserve < 0 {
-		nReserve = 0
+	scaleUp := cfg.ElasticScaleUpUtil
+	scaleDown := cfg.ElasticScaleDownUtil
+	if scaleDown <= 0 || scaleDown >= scaleUp {
+		scaleDown = scaleUp // no hysteresis if misconfigured
 	}
+
 	s.scaledUpMu.Lock()
 	wasScaled := s.scaledUp[ownerID]
-	if nReserve > 0 && !wasScaled {
+	shouldScale := wasScaled
+	if !wasScaled && util >= scaleUp {
+		shouldScale = true
+	} else if wasScaled && util <= scaleDown {
+		shouldScale = false
+	}
+	if shouldScale {
 		s.scaledUp[ownerID] = true
-		s.scaledUpMu.Unlock()
+	} else {
+		delete(s.scaledUp, ownerID)
+	}
+	s.scaledUpMu.Unlock()
+
+	var order []string
+	if shouldScale && len(reserve) > 0 {
+		nRes := len(reserve)
+		if cfg.ElasticMaxReserve > 0 && nRes > cfg.ElasticMaxReserve {
+			nRes = cfg.ElasticMaxReserve
+		}
+		order = append(append([]string{}, baseline...), reserve[:nRes]...)
+	} else {
+		order = baseline
+	}
+
+	// Deduplicated scale_up / scale_down events (recorded after unlocking).
+	if shouldScale && !wasScaled {
 		_ = events.Record(ctx, s.Q, nowMs, events.Event{
 			Type:    "scale_up",
-			Target:  fmt.Sprintf("reserves=%d", nReserve),
+			Target:  fmt.Sprintf("reserves=%d", len(order)-len(baseline)),
 			OwnerID: ownerID,
 		})
-	} else if nReserve == 0 && wasScaled {
-		delete(s.scaledUp, ownerID)
-		s.scaledUpMu.Unlock()
+	} else if !shouldScale && wasScaled {
 		_ = events.Record(ctx, s.Q, nowMs, events.Event{
 			Type:    "scale_down",
-			Target:  "reserves=0",
+			Target:  "",
 			OwnerID: ownerID,
 		})
-	} else {
-		s.scaledUpMu.Unlock()
 	}
 
 	resolver := func(key string) (NodeRef, bool) { r, ok := refs[key]; return r, ok }
