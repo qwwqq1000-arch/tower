@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
+	"github.com/qwwqq1000-arch/tower/internal/nodeclient"
 )
 
 func nodeFeaturesGetHandler(q *sqlc.Queries) http.HandlerFunc {
@@ -70,5 +71,39 @@ func nodeEnableHandler(q *sqlc.Queries) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, 200, map[string]string{"ok": "true"})
+	}
+}
+
+func nodeTelemetryHandler(q *sqlc.Queries) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		cl, _, ok := nodeClientFor(q, r, r.PathValue("id"))
+		if !ok {
+			writeJSON(w, 404, map[string]string{"error": "node not found"})
+			return
+		}
+
+		health, healthErr := cl.Health(r.Context())
+		var healthOut any
+		if healthErr == nil {
+			healthOut = map[string]any{
+				"version":          health.Version,
+				"loggedIn":         health.Auth.LoggedIn,
+				"email":            health.Auth.Email,
+				"subscriptionType": health.Auth.SubscriptionType,
+				"mode":             health.Mode,
+			}
+		} else {
+			healthOut = nil
+		}
+
+		var telemetryOut *nodeclient.TelemetrySummary
+		if ts, err := cl.TelemetrySummary(r.Context()); err == nil {
+			telemetryOut = &ts
+		}
+
+		writeJSON(w, 200, map[string]any{
+			"health":    healthOut,
+			"telemetry": telemetryOut,
+		})
 	}
 }

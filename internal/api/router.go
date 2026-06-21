@@ -57,6 +57,7 @@ func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc
 		mux.HandleFunc("PATCH /api/admin/nodes/{id}/features/{adapter}", requireAdmin(secret, nodeFeaturesPatchHandler(q)))
 		mux.HandleFunc("POST /api/admin/nodes/{id}/refresh", requireAdmin(secret, nodeRefreshHandler(q)))
 		mux.HandleFunc("PATCH /api/admin/nodes/{id}/enabled", requireAdmin(secret, nodeEnableHandler(q)))
+		mux.HandleFunc("GET /api/admin/nodes/{id}/telemetry", requireAdmin(secret, nodeTelemetryHandler(q)))
 		mux.HandleFunc("GET /api/admin/ban-analysis", requireAdmin(secret, banAnalysisHandler(q)))
 		mux.HandleFunc("GET /api/admin/fallback-channels", requireAdmin(secret, listFallbackHandler(q)))
 		mux.HandleFunc("POST /api/admin/fallback-channels", requireAdmin(secret, createFallbackHandler(q)))
