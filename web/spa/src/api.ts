@@ -19,6 +19,10 @@ import type {
   SettleRequest,
   SettleResult,
   LedgerEntry,
+  AccountRow,
+  NodeProfile,
+  OAuthStartResult,
+  OAuthExchangeResult,
 } from './types';
 
 // ------------------------------------------------------------------
@@ -145,3 +149,23 @@ export const getLedger = (tenantId: string) => {
   const qs = '?' + new URLSearchParams({ tenantId }).toString();
   return api<LedgerEntry[]>('GET', `/api/admin/ledger${qs}`);
 };
+
+// ------------------------------------------------------------------
+// Accounts (号库)
+// ------------------------------------------------------------------
+export const listAccounts = () =>
+  api<AccountRow[]>('GET', '/api/admin/accounts');
+
+export const unassignAccount = (nodeId: string, accountId: string) =>
+  api<void>('DELETE', `/api/admin/accounts/${nodeId}/${accountId}`);
+
+export const listNodeProfiles = (nodeId: string) =>
+  api<NodeProfile[]>('GET', `/api/admin/nodes/${nodeId}/profiles`);
+
+export const oauthStart = (nodeId: string) =>
+  api<OAuthStartResult>('POST', `/api/admin/nodes/${nodeId}/oauth/start`);
+
+export const oauthExchange = (
+  nodeId: string,
+  payload: { codeVerifier: string; state: string; code: string },
+) => api<OAuthExchangeResult>('POST', `/api/admin/nodes/${nodeId}/oauth/exchange`, payload);

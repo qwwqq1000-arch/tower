@@ -174,3 +174,32 @@ export interface Page<T> {
   page: number;
   page_size: number;
 }
+
+// --- Accounts (号库) ---
+export interface AccountRow {
+  nodeId: string;
+  nodeName: string;
+  baseUrl: string;
+  accountId: string;
+  profileId: string;
+  enabled: boolean;
+  weight: number;
+  role: string;
+  egress: string;
+}
+
+export interface NodeProfile {
+  id: string;
+  email?: string;
+  name?: string;
+}
+
+export interface OAuthStartResult {
+  authorizeUrl: string;
+  codeVerifier: string;
+  state: string;
+}
+
+export interface OAuthExchangeResult {
+  accountId: string;
+}
