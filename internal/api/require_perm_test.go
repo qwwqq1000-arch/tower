@@ -36,6 +36,8 @@ func TestRequirePerm(t *testing.T) {
 		reached = false
 		r := httptest.NewRequest(http.MethodPost, "/api/admin/settle", nil)
 		r.AddCookie(&http.Cookie{Name: "tower_session", Value: auth.IssueSession(secret, "u_"+role, role, 0, nowUnix(), 3600)})
+		// CSRF header required on non-GET cookie-auth mutations.
+		r.Header.Set("X-Requested-With", "tower")
 		rec := httptest.NewRecorder()
 		h(rec, r)
 		return rec.Code, reached

@@ -42,10 +42,17 @@ export async function api<T = unknown>(
   path: string,
   body?: unknown,
 ): Promise<T> {
+  // CSRF guard: the server requires X-Requested-With: tower on all cookie-auth
+  // mutations (any method other than GET/HEAD). Cross-origin attackers cannot
+  // set custom headers, so this header acts as a lightweight CSRF token.
+  const isMutation = method !== 'GET' && method !== 'HEAD';
+  const csrfHeader: Record<string, string> = isMutation ? { 'X-Requested-With': 'tower' } : {};
   const res = await fetch(path, {
     method,
     credentials: 'include',
-    headers: body ? { 'Content-Type': 'application/json' } : {},
+    headers: body
+      ? { 'Content-Type': 'application/json', ...csrfHeader }
+      : { ...csrfHeader },
     body: body ? JSON.stringify(body) : undefined,
   });
   if (res.status === 401) throw new Error('unauthorized');

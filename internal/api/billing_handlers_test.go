@@ -38,6 +38,9 @@ func TestSettleRequiresSuperadmin(t *testing.T) {
 				Name:  "tower_session",
 				Value: auth.IssueSession(secret, "some-user", tc.role, 0, nowUnix(), 3600),
 			})
+			// CSRF header required on non-GET cookie-auth mutations; include it so
+			// the test exercises the auth gate, not the CSRF gate.
+			r.Header.Set("X-Requested-With", "tower")
 			rec := httptest.NewRecorder()
 			handler.ServeHTTP(rec, r)
 			if rec.Code != tc.want {

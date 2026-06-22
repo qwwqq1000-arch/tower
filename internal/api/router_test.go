@@ -80,6 +80,10 @@ func TestPolicyRoutesSuperadminOnly(t *testing.T) {
 			Name:  "tower_session",
 			Value: auth.IssueSession(secret, sub, role, 0, nowUnix(), 3600),
 		})
+		// CSRF header required on non-GET cookie-auth mutations.
+		if method != http.MethodGet && method != http.MethodHead {
+			r.Header.Set("X-Requested-With", "tower")
+		}
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, r)
 		return rec.Code
