@@ -20,7 +20,7 @@ func TestSettleRequiresSuperadmin(t *testing.T) {
 	const secret = "test-secret-padding-to-32-chars!"
 
 	// Build the handler the same way the router does.
-	handler := requireSuperadmin(secret, settleHandler(nil, nil))
+	handler := requireSuperadmin(secret, nil, settleHandler(nil, nil))
 
 	cases := []struct {
 		role string
@@ -36,7 +36,7 @@ func TestSettleRequiresSuperadmin(t *testing.T) {
 			r := httptest.NewRequest(http.MethodPost, "/api/admin/settle", strings.NewReader(body))
 			r.AddCookie(&http.Cookie{
 				Name:  "tower_session",
-				Value: auth.IssueSession(secret, "some-user", tc.role, nowUnix(), 3600),
+				Value: auth.IssueSession(secret, "some-user", tc.role, 0, nowUnix(), 3600),
 			})
 			rec := httptest.NewRecorder()
 			handler.ServeHTTP(rec, r)

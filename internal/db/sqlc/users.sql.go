@@ -9,6 +9,15 @@ import (
 	"context"
 )
 
+const bumpSessionEpoch = `-- name: BumpSessionEpoch :exec
+UPDATE tenants SET session_epoch = session_epoch + 1 WHERE id = $1
+`
+
+func (q *Queries) BumpSessionEpoch(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, bumpSessionEpoch, id)
+	return err
+}
+
 const deleteTenant = `-- name: DeleteTenant :exec
 DELETE FROM tenants WHERE id = $1
 `
@@ -16,6 +25,17 @@ DELETE FROM tenants WHERE id = $1
 func (q *Queries) DeleteTenant(ctx context.Context, id string) error {
 	_, err := q.db.Exec(ctx, deleteTenant, id)
 	return err
+}
+
+const getSessionEpoch = `-- name: GetSessionEpoch :one
+SELECT session_epoch FROM tenants WHERE id = $1
+`
+
+func (q *Queries) GetSessionEpoch(ctx context.Context, id string) (int64, error) {
+	row := q.db.QueryRow(ctx, getSessionEpoch, id)
+	var session_epoch int64
+	err := row.Scan(&session_epoch)
+	return session_epoch, err
 }
 
 const setTenantChannelRate = `-- name: SetTenantChannelRate :exec

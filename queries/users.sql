@@ -12,3 +12,9 @@ UPDATE tenants SET channel_rate = $2 WHERE id = $1;
 
 -- name: SetTenantFallbackLimit :exec
 UPDATE tenants SET fallback_limit = $2 WHERE id = $1;
+
+-- name: GetSessionEpoch :one
+SELECT session_epoch FROM tenants WHERE id = $1;
+
+-- name: BumpSessionEpoch :exec
+UPDATE tenants SET session_epoch = session_epoch + 1 WHERE id = $1;

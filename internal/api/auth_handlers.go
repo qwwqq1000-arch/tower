@@ -47,7 +47,7 @@ func loginHandler(pool *pgxpool.Pool, secret string, throttle *auth.Throttle) ht
 			return
 		}
 		throttle.Reset(key)
-		tok := auth.IssueSession(secret, u.ID, u.Role, nowUnix(), sessionTTLSec)
+		tok := auth.IssueSession(secret, u.ID, u.Role, u.SessionEpoch, nowUnix(), sessionTTLSec)
 		http.SetCookie(w, &http.Cookie{
 			Name: "tower_session", Value: tok, Path: "/",
 			HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: sessionTTLSec,

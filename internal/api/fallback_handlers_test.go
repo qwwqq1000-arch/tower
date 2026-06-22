@@ -8,14 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/qwwqq1000-arch/tower/internal/auth"
 	"github.com/qwwqq1000-arch/tower/internal/db"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 )
-
-func authIssueViewer(secret string) string {
-	return auth.IssueSession(secret, "u", "viewer", nowUnix(), 3600)
-}
 
 func TestFallbackChannelCRUD(t *testing.T) {
 	url := os.Getenv("TEST_DATABASE_URL")
@@ -34,7 +29,7 @@ func TestFallbackChannelCRUD(t *testing.T) {
 	q := sqlc.New(pool)
 	const secret = "test-secret-padding-to-32-chars!"
 	router := NewRouter(pool, secret, nil, q)
-	ck := adminCookie(t, secret)
+	ck := adminCookie(t, ctx, q, secret)
 	do := func(m, p, b string) *httptest.ResponseRecorder {
 		var r *http.Request
 		if b != "" {
@@ -78,10 +73,10 @@ func TestFallbackChannelCRUD(t *testing.T) {
 	if len(rows2) != 0 {
 		t.Fatalf("after delete rows=%d", len(rows2))
 	}
-	// 403 for viewer
-	tok := authIssueViewer(secret)
+	// 403 for viewer (seeded real user so the epoch check passes and the role
+	// gate is what rejects it).
 	r5 := httptest.NewRequest("GET", "/api/admin/fallback-channels", nil)
-	r5.AddCookie(&http.Cookie{Name: "tower_session", Value: tok})
+	r5.AddCookie(seedSessionCookie(t, ctx, q, secret, "u", "viewer"))
 	rec5 := httptest.NewRecorder()
 	router.ServeHTTP(rec5, r5)
 	if rec5.Code != 403 {

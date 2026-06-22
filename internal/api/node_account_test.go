@@ -27,7 +27,7 @@ func TestUpdateNodeAccount(t *testing.T) {
 	const secret = "test-secret-padding-to-32-chars!"
 	router := NewRouter(pool, secret, nil, q)
 	req := httptest.NewRequest("PATCH", "/api/admin/accounts/"+nid+"/"+aid, strings.NewReader(`{"egress":"1.2.3.4","weight":50,"role":"reserve","enabled":false}`))
-	req.AddCookie(adminCookie(t, secret))
+	req.AddCookie(adminCookie(t, ctx, q, secret))
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	if rec.Code != 200 { t.Fatalf("patch=%d %s", rec.Code, rec.Body) }

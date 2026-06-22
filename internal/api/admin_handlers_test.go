@@ -14,13 +14,32 @@ import (
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 )
 
+// seedSessionCookie upserts a real tenant row for sub (session_epoch reset to 0)
+// and returns a cookie carrying a token issued at epoch 0. Sessions must
+// correspond to a live user row at the matching epoch now that requireSession
+// validates the token's epoch against the DB (auth-session-1); test helpers seed
+// the subject so the middleware accepts the session.
+func seedSessionCookie(t *testing.T, ctx context.Context, q *sqlc.Queries, secret, sub, role string) *http.Cookie {
+	t.Helper()
+	if _, err := q.CreateTenant(ctx, sqlc.CreateTenantParams{
+		ID: sub, Username: sub, PwHash: "h", Salt: "s", Role: role, IngestKey: "ik_" + sub,
+	}); err != nil {
+		// Already exists from a previous test/iteration; ensure the role matches.
+		_ = q.SetTenantRole(ctx, sqlc.SetTenantRoleParams{ID: sub, Role: role})
+	}
+	// Issue the token at the row's current epoch so the middleware's epoch check
+	// accepts it even if a prior test bumped the epoch.
+	epoch, _ := q.GetSessionEpoch(ctx, sub)
+	tok := auth.IssueSession(secret, sub, role, epoch, nowUnix(), 3600)
+	return &http.Cookie{Name: "tower_session", Value: tok}
+}
+
 // adminCookie issues a superadmin session — the all-access role used by tests
 // that exercise global management. Owner-scoping (admin sees only own) is tested
 // separately with explicit non-superadmin sessions.
-func adminCookie(t *testing.T, secret string) *http.Cookie {
+func adminCookie(t *testing.T, ctx context.Context, q *sqlc.Queries, secret string) *http.Cookie {
 	t.Helper()
-	tok := auth.IssueSession(secret, "u_admin", "superadmin", nowUnix(), 3600)
-	return &http.Cookie{Name: "tower_session", Value: tok}
+	return seedSessionCookie(t, ctx, q, secret, "u_admin", "superadmin")
 }
 
 func TestAdminNodesAndKeys(t *testing.T) {
@@ -41,7 +60,7 @@ func TestAdminNodesAndKeys(t *testing.T) {
 
 	const secret = "test-secret-padding-to-32-chars!"
 	router := NewRouter(pool, secret, nil, q)
-	ck := adminCookie(t, secret)
+	ck := adminCookie(t, ctx, q, secret)
 
 	// create node
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/nodes", strings.NewReader(`{"name":"n1","baseUrl":"http://x:3456","apiKey":"k"}`))
@@ -81,10 +100,10 @@ func TestAdminNodesAndKeys(t *testing.T) {
 		t.Fatalf("no cookie status=%d, want 401", rec4.Code)
 	}
 
-	// non-admin role → 403
-	tok := auth.IssueSession(secret, "u_v", "viewer", nowUnix(), 3600)
+	// non-admin role → 403 (viewer is a real seeded user so the session passes
+	// the epoch check and the role gate is what rejects it).
 	req5 := httptest.NewRequest(http.MethodGet, "/api/admin/nodes", nil)
-	req5.AddCookie(&http.Cookie{Name: "tower_session", Value: tok})
+	req5.AddCookie(seedSessionCookie(t, ctx, q, secret, "u_v", "viewer"))
 	rec5 := httptest.NewRecorder()
 	router.ServeHTTP(rec5, req5)
 	if rec5.Code != http.StatusForbidden {

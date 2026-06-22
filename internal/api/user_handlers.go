@@ -83,6 +83,9 @@ func setUserRoleHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		// Revoke any outstanding sessions: the new role must not be carried by a
+		// token issued under the old role.
+		_ = q.BumpSessionEpoch(r.Context(), r.PathValue("id"))
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }
@@ -132,7 +135,7 @@ func setUserFallbackLimitHandler(q *sqlc.Queries) http.HandlerFunc {
 	}
 }
 
-func changePasswordHandler(q *sqlc.Queries) http.HandlerFunc {
+func changePasswordHandler(secret string, q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p, ok := sessionFrom(r)
 		if !ok {
@@ -163,6 +166,17 @@ func changePasswordHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		// Bump the session epoch so every previously issued token (e.g. on other
+		// devices, or one stolen with the old password) is revoked. Re-issue this
+		// caller's cookie at the new epoch so the device that just changed the
+		// password stays logged in.
+		_ = q.BumpSessionEpoch(r.Context(), p.Sub)
+		newEpoch := u.SessionEpoch + 1
+		tok := auth.IssueSession(secret, p.Sub, p.Role, newEpoch, nowUnix(), sessionTTLSec)
+		http.SetCookie(w, &http.Cookie{
+			Name: "tower_session", Value: tok, Path: "/",
+			HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: sessionTTLSec,
+		})
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }

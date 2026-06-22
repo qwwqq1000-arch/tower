@@ -29,7 +29,7 @@ func TestConsoleAPIs(t *testing.T) {
 	q := sqlc.New(pool)
 	const secret = "test-secret-padding-to-32-chars!"
 	router := NewRouter(pool, secret, nil, q)
-	ck := adminCookie(t, secret)
+	ck := adminCookie(t, ctx, q, secret)
 
 	do := func(method, path, body string) *httptest.ResponseRecorder {
 		var r *http.Request

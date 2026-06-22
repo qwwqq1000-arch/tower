@@ -14,6 +14,10 @@ type SessionPayload struct {
 	Sub  string `json:"sub"`
 	Role string `json:"role"`
 	Exp  int64  `json:"exp"`
+	// Epoch is the user's session epoch at issue time. The middleware compares
+	// it against the user's current session_epoch in the DB; a mismatch (after a
+	// role or password change bumps the epoch) revokes the token.
+	Epoch int64 `json:"epoch"`
 }
 
 func sign(secret, msg string) string {
@@ -23,8 +27,8 @@ func sign(secret, msg string) string {
 }
 
 // IssueSession builds a signed token: base64url(payload) + "." + hex(HMAC).
-func IssueSession(secret, sub, role string, nowUnix, ttlSec int64) string {
-	p := SessionPayload{Sub: sub, Role: role, Exp: nowUnix + ttlSec}
+func IssueSession(secret, sub, role string, epoch, nowUnix, ttlSec int64) string {
+	p := SessionPayload{Sub: sub, Role: role, Exp: nowUnix + ttlSec, Epoch: epoch}
 	raw, err := json.Marshal(p)
 	if err != nil {
 		panic("auth: IssueSession marshal: " + err.Error())

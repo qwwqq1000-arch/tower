@@ -31,7 +31,14 @@ const ctxKeySession ctxKey = "session"
 
 // requireSession rejects requests without a valid tower_session cookie and
 // injects the verified payload into the request context.
-func requireSession(secret string, next http.HandlerFunc) http.HandlerFunc {
+//
+// q may be nil (test/partial setups that wire requireSession without a DB); in
+// that case only the token's signature and expiry are checked. When q is
+// present, the token's epoch is additionally compared against the user's current
+// session_epoch in the DB so that a role or password change (which bumps the
+// epoch) immediately revokes outstanding tokens, and a deleted user (no row) is
+// rejected.
+func requireSession(secret string, q *sqlc.Queries, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie("tower_session")
 		if err != nil {
@@ -42,6 +49,13 @@ func requireSession(secret string, next http.HandlerFunc) http.HandlerFunc {
 		if !ok {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 			return
+		}
+		if q != nil {
+			epoch, err := q.GetSessionEpoch(r.Context(), p.Sub)
+			if err != nil || epoch != p.Epoch {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+				return
+			}
 		}
 		ctx := context.WithValue(r.Context(), ctxKeySession, p)
 		next(w, r.WithContext(ctx))
@@ -71,8 +85,8 @@ func scope(r *http.Request) (ownerID string, all bool) {
 // requireAdmin wraps requireSession and additionally requires an admin role.
 // Role hierarchy: superadmin >= admin >= operator all get full admin access.
 // Tenant and viewer roles are handled by future scoped endpoints.
-func requireAdmin(secret string, next http.HandlerFunc) http.HandlerFunc {
-	return requireSession(secret, func(w http.ResponseWriter, r *http.Request) {
+func requireAdmin(secret string, q *sqlc.Queries, next http.HandlerFunc) http.HandlerFunc {
+	return requireSession(secret, q, func(w http.ResponseWriter, r *http.Request) {
 		p, ok := sessionFrom(r)
 		if !ok || (p.Role != "superadmin" && p.Role != "admin" && p.Role != "operator") {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
@@ -86,8 +100,8 @@ func requireAdmin(secret string, next http.HandlerFunc) http.HandlerFunc {
 // non-owner-scoped management (user/tenant administration) where an owner_id
 // basis does not exist and where allowing admin/operator would permit privilege
 // escalation (e.g. promoting oneself to superadmin).
-func requireSuperadmin(secret string, next http.HandlerFunc) http.HandlerFunc {
-	return requireSession(secret, func(w http.ResponseWriter, r *http.Request) {
+func requireSuperadmin(secret string, q *sqlc.Queries, next http.HandlerFunc) http.HandlerFunc {
+	return requireSession(secret, q, func(w http.ResponseWriter, r *http.Request) {
 		p, ok := sessionFrom(r)
 		if !ok || p.Role != "superadmin" {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "superadmin required"})

@@ -268,4 +268,5 @@ type Tenant struct {
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	ChannelRate   float64            `json:"channel_rate"`
 	FallbackLimit int32              `json:"fallback_limit"`
+	SessionEpoch  int64              `json:"session_epoch"`
 }

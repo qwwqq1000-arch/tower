@@ -36,7 +36,7 @@ func TestDispatchStatusJSON(t *testing.T) {
 	const secret = "test-secret-padding-to-32-chars!"
 	router := NewRouter(pool, secret, svc, q)
 	req := httptest.NewRequest("GET", "/api/admin/dispatch/status", nil)
-	req.AddCookie(adminCookie(t, secret))
+	req.AddCookie(adminCookie(t, ctx, q, secret))
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	if rec.Code != 200 {
