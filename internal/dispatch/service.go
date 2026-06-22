@@ -134,10 +134,12 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 		if maxFailover <= 0 {
 			maxFailover = 50
 		}
-		orch := &Orchestrator{Store: s.Store, Cfg: breaker, CooldownMin: cfg.SlotCooldownMinMs, CooldownMax: cfg.SlotCooldownMaxMs, MaxAttempts: maxFailover, OnBan: s.recordBan,
+		orch := &Orchestrator{Store: s.Store, Cfg: breaker, CooldownMin: cfg.SlotCooldownMinMs, CooldownMax: cfg.SlotCooldownMaxMs, MaxAttempts: maxFailover,
+			OnBan: func(key string, status int) { s.recordBan(ctx, ownerID, key, status) },
 			OnAttempt: func(key string, status int, ok bool, banned bool) {
 				if !ok {
 					s.logAttemptErr(ctx, ownerID, model, key, status)
+					s.recordRetry(ctx, ownerID, model, key, status, banned)
 				}
 			},
 		}
@@ -434,7 +436,7 @@ func (s *Service) enabledChannels(ctx context.Context, ownerID string) []sqlc.Fa
 func fbSlotKey(id string) string { return "fb:" + id }
 
 func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []byte, ch sqlc.FallbackChannel, reason string, latencyMs int64) Outcome {
-	_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: "fallback", Target: reason, OwnerID: ownerID, Detail: map[string]string{"channel": ch.ID}})
+	_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: "fallback", Target: ch.ID, OwnerID: ownerID, Detail: map[string]any{"reason": reason, "channelId": ch.ID, "channelName": ch.Name}})
 	cap := int(ch.MaxConcurrent)
 	if cap <= 0 {
 		cap = 1000
@@ -688,6 +690,7 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 		}
 		// not committed → failed before first byte → log per-attempt error + failover
 		s.logAttemptErr(ctx, ownerID, model, key, out.Status)
+		s.recordRetry(ctx, ownerID, model, key, out.Status, ClassifyBanned(out.Status, "", cfg.BanSignals, nil))
 		if justExiled := s.sess.RecordError(conv, int64(cfg.SessionErrorThreshold), int64(cfg.SessionCooldownSec)*1000, nowMs); justExiled {
 			_ = events.Record(ctx, s.Q, nowMs, events.Event{Type: "session_exile", Target: "session", OwnerID: ownerID})
 		}
@@ -728,6 +731,7 @@ func (s *Service) streamOne(ctx context.Context, w http.ResponseWriter, key stri
 func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, key string, trial bool, resolver Resolver, breaker state.BreakerCfg, body []byte, cfg policy.Config, ownerID, model string) (Outcome, bool, string) {
 	settled := false
 	sendReturned := false
+	lastStatus := 0
 	settle := func(success bool) {
 		if settled {
 			return
@@ -740,13 +744,13 @@ func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, 
 		if trial {
 			s.Store.OnTrialResult(key, breaker, success)
 			if !success {
-				s.recordBan(key)
+				s.recordBan(ctx, ownerID, key, lastStatus)
 			}
 		} else if success {
 			s.Store.OnSuccess(key)
 		} else {
 			if s.Store.OnBanSignal(key, breaker) {
-				s.recordBan(key)
+				s.recordBan(ctx, ownerID, key, lastStatus)
 			}
 		}
 	}
@@ -758,6 +762,7 @@ func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, 
 	if err != nil {
 		return Outcome{}, false, "" // connection error → failover
 	}
+	lastStatus = st.Status
 	if st.Banned || st.Status < 200 || st.Status >= 300 {
 		httpStatus := st.Status
 		_ = st.Body.Close()
@@ -777,14 +782,33 @@ func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, 
 }
 
 // recordBan records a ban episode and event for the given key (node:profile).
-func (s *Service) recordBan(key string) {
+// recordBan records a ban-control event (ban_detected, or ban_permanent when the
+// account was permanently banned) with the triggering account, streak, and
+// HTTP status, plus a durable ban_episode. ownerID/status give the event context.
+func (s *Service) recordBan(ctx context.Context, ownerID, key string, status int) {
 	node, profile, found := splitKey(key)
 	if !found {
 		return
 	}
-	ctx := context.Background()
-	_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: "ban", Target: key})
-	_ = s.Q.InsertBanEpisode(ctx, sqlc.InsertBanEpisodeParams{NodeID: node, ProfileID: profile, BannedAt: s.Now(), Detail: []byte("{}")})
+	permanent := s.Store.IsPermanent(key)
+	streak := s.Store.BanStreak(key)
+	typ := "ban_detected"
+	if permanent {
+		typ = "ban_permanent"
+	}
+	detail := map[string]any{"account": key, "status": status, "streak": streak, "permanent": permanent}
+	_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: typ, Target: key, OwnerID: ownerID, Detail: detail})
+	db, _ := json.Marshal(detail)
+	_ = s.Q.InsertBanEpisode(ctx, sqlc.InsertBanEpisodeParams{NodeID: node, ProfileID: profile, BannedAt: s.Now(), Detail: db})
+}
+
+// recordRetry records a failover event: an attempt to account `key` failed
+// (status / banned), so dispatch moves on to the next candidate.
+func (s *Service) recordRetry(ctx context.Context, ownerID, model, key string, status int, banned bool) {
+	_ = events.Record(ctx, s.Q, s.Now(), events.Event{
+		Type: "retry", Target: key, OwnerID: ownerID,
+		Detail: map[string]any{"account": key, "model": model, "status": status, "banned": banned},
+	})
 }
 
 func splitKey(key string) (node, profile string, ok bool) {
@@ -849,7 +873,7 @@ func lastUserText(body []byte) string {
 
 // streamChannel attempts a fallback channel stream. committed=true means we wrote to the client.
 func (s *Service) streamChannel(ctx context.Context, w http.ResponseWriter, ch sqlc.FallbackChannel, body []byte, ownerID, model, reason string) (Outcome, bool) {
-	_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: "fallback", Target: reason, OwnerID: ownerID, Detail: map[string]string{"channel": ch.ID}})
+	_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: "fallback", Target: ch.ID, OwnerID: ownerID, Detail: map[string]any{"reason": reason, "channelId": ch.ID, "channelName": ch.Name}})
 	cap := int(ch.MaxConcurrent)
 	if cap <= 0 {
 		cap = 1000

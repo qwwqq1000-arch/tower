@@ -153,6 +153,17 @@ func (s *Store) IsPermanent(key string) bool {
 	return false
 }
 
+// BanStreak returns the account's current consecutive ban-signal streak.
+func (s *Store) BanStreak(key string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if a := s.accts[key]; a != nil {
+		_, streak, _ := a.Breaker.Snapshot()
+		return streak
+	}
+	return 0
+}
+
 // Recover clears all ban/failure state (including a permanent ban) and re-enables
 // the account. Used by the manual "recover" admin action.
 func (s *Store) Recover(key string) {

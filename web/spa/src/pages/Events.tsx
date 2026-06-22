@@ -19,6 +19,10 @@ const TYPE_STYLES: Record<string, { dot: string; badge: string; label?: string }
   node_up:        { dot: 'bg-ok',     badge: 'bg-ok/10 text-ok border-ok/30' },
   node_down:      { dot: 'bg-err',    badge: 'bg-err/10 text-err border-err/30' },
   ban:            { dot: 'bg-err',    badge: 'bg-err/10 text-err border-err/30',     label: '封控' },
+  ban_detected:   { dot: 'bg-err',    badge: 'bg-err/10 text-err border-err/30',     label: '封禁触发' },
+  ban_permanent:  { dot: 'bg-err',    badge: 'bg-err/20 text-err border-err/50',     label: '永久封禁' },
+  retry:          { dot: 'bg-warn',   badge: 'bg-warn/10 text-warn border-warn/30',  label: '失败转移' },
+  account_recovered: { dot: 'bg-ok',  badge: 'bg-ok/10 text-ok border-ok/30',        label: '账户恢复' },
   unban:          { dot: 'bg-ok',     badge: 'bg-ok/10 text-ok border-ok/30' },
   recover:        { dot: 'bg-warn',   badge: 'bg-warn/10 text-warn border-warn/30',  label: '恢复' },
   dispatch_ok:    { dot: 'bg-ok',     badge: 'bg-ok/10 text-ok border-ok/30',        label: '派单成功' },
@@ -78,10 +82,33 @@ function renderTargetText(
     const email = accountMap.get(target);
     return email ? `封控 · ${email}` : `封控 · ${target || '节点'}`;
   }
+  if (type === 'ban_detected' || type === 'ban_permanent') {
+    const email = accountMap.get(target) ?? target;
+    const status = typeof detail['status'] === 'number' ? detail['status'] : undefined;
+    const streak = typeof detail['streak'] === 'number' ? detail['streak'] : undefined;
+    const head = type === 'ban_permanent' ? '永久封禁' : '封禁触发';
+    const parts = [head, email];
+    if (status) parts.push(`HTTP ${status}`);
+    if (streak !== undefined) parts.push(`连续${streak}次`);
+    return parts.filter(Boolean).join(' · ');
+  }
+  if (type === 'retry') {
+    const email = accountMap.get(target) ?? target;
+    const status = typeof detail['status'] === 'number' ? detail['status'] : undefined;
+    return status ? `失败转移 · ${email} · HTTP ${status}` : `失败转移 · ${email}`;
+  }
+  if (type === 'account_recovered') {
+    const email = accountMap.get(target) ?? target;
+    return `账户恢复 · ${email}`;
+  }
   if (type === 'fallback') {
-    const cn = FALLBACK_REASON_CN[target] ?? target;
-    const channelId = typeof detail['channel'] === 'string' ? detail['channel'] : '';
-    const channelName = channelId ? channelMap.get(channelId) : undefined;
+    const reason = typeof detail['reason'] === 'string' ? detail['reason'] : target;
+    const cn = FALLBACK_REASON_CN[reason] ?? reason;
+    const channelId = typeof detail['channelId'] === 'string' ? detail['channelId']
+      : (typeof detail['channel'] === 'string' ? detail['channel'] : '');
+    const channelName = (typeof detail['channelName'] === 'string' && detail['channelName'])
+      ? (detail['channelName'] as string)
+      : (channelId ? channelMap.get(channelId) : undefined);
     const base = cn ? `保底触发 · ${cn}` : '保底触发';
     return channelName ? `${base} · ${channelName}` : base;
   }
