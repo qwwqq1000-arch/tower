@@ -8,6 +8,7 @@ import (
 
 	"github.com/qwwqq1000-arch/tower/internal/auth"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
+	"github.com/qwwqq1000-arch/tower/internal/rbac"
 )
 
 // clientIP extracts the caller's source IP: the first hop of X-Forwarded-For
@@ -105,6 +106,32 @@ func requireSuperadmin(secret string, q *sqlc.Queries, next http.HandlerFunc) ht
 		p, ok := sessionFrom(r)
 		if !ok || p.Role != "superadmin" {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "superadmin required"})
+			return
+		}
+		next(w, r)
+	})
+}
+
+// permLoader returns the capability strings granted to a role. It is a seam so
+// requirePerm can be exercised without a database; the router passes the
+// DB-backed loadPerms.
+type permLoader func(r *http.Request, role string) []string
+
+// requirePerm wraps requireSession and additionally enforces that the caller's
+// seeded role permissions grant capability via rbac.Can. This turns the
+// otherwise-decorative role permissions into real server-side authz
+// (defense in depth atop the coarse role gates). superadmin holds the "*"
+// wildcard and so passes any capability; a role lacking the capability gets 403.
+func requirePerm(secret string, q *sqlc.Queries, load permLoader, capability string, next http.HandlerFunc) http.HandlerFunc {
+	return requireSession(secret, q, func(w http.ResponseWriter, r *http.Request) {
+		p, ok := sessionFrom(r)
+		if !ok {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+			return
+		}
+		perms := load(r, p.Role)
+		if !rbac.Can(perms, capability, rbac.Scope{IsAdmin: p.Role == "superadmin"}) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
 			return
 		}
 		next(w, r)

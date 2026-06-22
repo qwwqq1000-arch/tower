@@ -20,6 +20,9 @@ import (
 func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc.Queries, secureCookies bool) http.Handler {
 	mux := http.NewServeMux()
 	loginThrottle := auth.NewThrottle(5, time.Minute, 15*time.Minute)
+	// DB-backed permission loader for requirePerm (turns the seeded role
+	// permissions into real server-side authz on the sensitive routes below).
+	loadRolePerms := func(r *http.Request, role string) []string { return loadPerms(pool, r, role) }
 	mux.HandleFunc("GET /healthz", healthzHandler(pool))
 	mux.HandleFunc("POST /auth/login", loginHandler(pool, secret, loginThrottle, secureCookies))
 	mux.HandleFunc("POST /auth/logout", logoutHandler())
@@ -38,7 +41,7 @@ func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc
 		mux.HandleFunc("GET /api/dashboard", requireAdmin(secret, q, dashboardHandler(q, svc)))
 		mux.HandleFunc("POST /api/admin/provision", requireAdmin(secret, q, startProvisionHandler(q)))
 		mux.HandleFunc("GET /api/admin/provision/{id}", requireAdmin(secret, q, getProvisionHandler(q)))
-		mux.HandleFunc("POST /api/admin/settle", requireSuperadmin(secret, q, settleHandler(pool, q)))
+		mux.HandleFunc("POST /api/admin/settle", requireSuperadmin(secret, q, requirePerm(secret, q, loadRolePerms, "billing:settle", settleHandler(pool, q))))
 		mux.HandleFunc("GET /api/admin/ledger", requireAdmin(secret, q, ledgerHandler(q)))
 		mux.HandleFunc("GET /api/admin/policies", requireAdmin(secret, q, listPoliciesHandler(q)))
 		mux.HandleFunc("PUT /api/admin/policies/global", requireAdmin(secret, q, putGlobalPolicyHandler(q)))
@@ -78,9 +81,9 @@ func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc
 		mux.HandleFunc("DELETE /api/admin/fallback-channels/{id}", requireAdmin(secret, q, deleteFallbackHandler(q)))
 		mux.HandleFunc("POST /api/admin/fallback-channels/{id}/balance", requireAdmin(secret, q, fetchFallbackBalanceHandler(q)))
 		mux.HandleFunc("GET /api/admin/users", requireSuperadmin(secret, q, listUsersHandler(q)))
-		mux.HandleFunc("POST /api/admin/users", requireSuperadmin(secret, q, createUserHandler(q)))
-		mux.HandleFunc("DELETE /api/admin/users/{id}", requireSuperadmin(secret, q, deleteUserHandler(q)))
-		mux.HandleFunc("PATCH /api/admin/users/{id}/role", requireSuperadmin(secret, q, setUserRoleHandler(q)))
+		mux.HandleFunc("POST /api/admin/users", requireSuperadmin(secret, q, requirePerm(secret, q, loadRolePerms, "users:manage", createUserHandler(q))))
+		mux.HandleFunc("DELETE /api/admin/users/{id}", requireSuperadmin(secret, q, requirePerm(secret, q, loadRolePerms, "users:manage", deleteUserHandler(q))))
+		mux.HandleFunc("PATCH /api/admin/users/{id}/role", requireSuperadmin(secret, q, requirePerm(secret, q, loadRolePerms, "users:manage", setUserRoleHandler(q))))
 		mux.HandleFunc("PATCH /api/admin/users/{id}/hosting-rate", requireSuperadmin(secret, q, setUserHostingRateHandler(q)))
 		mux.HandleFunc("PATCH /api/admin/users/{id}/channel-rate", requireSuperadmin(secret, q, setUserChannelRateHandler(q)))
 		mux.HandleFunc("PATCH /api/admin/users/{id}/fallback-limit", requireSuperadmin(secret, q, setUserFallbackLimitHandler(q)))
