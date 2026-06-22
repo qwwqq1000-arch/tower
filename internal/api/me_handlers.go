@@ -7,6 +7,7 @@ import (
 
 	"github.com/qwwqq1000-arch/tower/internal/auth"
 	"github.com/qwwqq1000-arch/tower/internal/billing"
+	"github.com/qwwqq1000-arch/tower/internal/crypto"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 	"github.com/qwwqq1000-arch/tower/internal/dispatch"
 )
@@ -308,7 +309,7 @@ func meListFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 
 // meCreateFallbackHandler creates a fallback channel owned by the caller.
 // owner_id is forced to the session sub — the request body cannot override it.
-func meCreateFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
+func meCreateFallbackHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		owner, ok := ownerFrom(r)
 		if !ok {
@@ -329,20 +330,21 @@ func meCreateFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "fallback channel limit reached"})
 			return
 		}
+		// Encrypt channel secrets at rest (vault-crypto-3); nil cipher = no-op.
 		c, err := q.CreateFallbackChannel(r.Context(), sqlc.CreateFallbackChannelParams{
 			ID:              randHex("fc_"),
 			OwnerID:         owner, // forced — never trust body ownerId
 			GroupID:         b.GroupId,
 			Name:            b.Name,
 			BaseUrl:         b.BaseUrl,
-			ApiKey:          b.ApiKey,
+			ApiKey:          cipher.EncryptStr(b.ApiKey),
 			Priority:        b.Priority,
 			Weight:          b.Weight,
 			MaxConcurrent:   b.MaxConcurrent,
 			CooldownMs:      b.CooldownMs,
 			PriceThreshold:  b.PriceThreshold,
 			ModelAllowlist:  b.ModelAllowlist,
-			BalanceToken:    b.BalanceToken,
+			BalanceToken:    cipher.EncryptStr(b.BalanceToken),
 			BalanceUserID:   b.BalanceUserId,
 			BalanceAlertUsd: b.BalanceAlertUsd,
 		})
@@ -374,7 +376,7 @@ func meOwnFallback(q *sqlc.Queries, w http.ResponseWriter, r *http.Request) (sql
 	return ch, owner, true
 }
 
-func meUpdateFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
+func meUpdateFallbackHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ch, _, ok := meOwnFallback(q, w, r)
 		if !ok {
@@ -385,25 +387,28 @@ func meUpdateFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 400, map[string]string{"error": "bad body"})
 			return
 		}
-		// Preserve existing secrets when blank (留空表示不更改).
+		// Secrets at rest (vault-crypto-3): non-blank → freshly encrypted; blank
+		// (留空表示不更改) → preserve the stored ciphertext verbatim (do NOT re-encrypt).
+		apiKeyEnc := cipher.EncryptStr(b.ApiKey)
 		if b.ApiKey == "" {
-			b.ApiKey = ch.ApiKey
+			apiKeyEnc = ch.ApiKey
 		}
+		balTokenEnc := cipher.EncryptStr(b.BalanceToken)
 		if b.BalanceToken == "" {
-			b.BalanceToken = ch.BalanceToken
+			balTokenEnc = ch.BalanceToken
 		}
 		if err := q.UpdateFallbackChannel(r.Context(), sqlc.UpdateFallbackChannelParams{
 			ID:              ch.ID,
 			Name:            b.Name,
 			BaseUrl:         b.BaseUrl,
-			ApiKey:          b.ApiKey,
+			ApiKey:          apiKeyEnc,
 			Priority:        b.Priority,
 			Weight:          b.Weight,
 			MaxConcurrent:   b.MaxConcurrent,
 			CooldownMs:      b.CooldownMs,
 			PriceThreshold:  b.PriceThreshold,
 			ModelAllowlist:  b.ModelAllowlist,
-			BalanceToken:    b.BalanceToken,
+			BalanceToken:    balTokenEnc,
 			BalanceUserID:   b.BalanceUserId,
 			BalanceAlertUsd: b.BalanceAlertUsd,
 		}); err != nil {

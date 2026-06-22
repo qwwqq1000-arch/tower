@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/qwwqq1000-arch/tower/internal/crypto"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 	"github.com/qwwqq1000-arch/tower/internal/events"
 	"github.com/qwwqq1000-arch/tower/internal/nodeclient"
@@ -21,6 +22,10 @@ type Poller struct {
 	DefaultTTLMs int64
 	Capacity     int
 	Now          func() int64
+
+	// Cipher decrypts a node's stored api_key before building the meridian
+	// client (vault-crypto-3). May be nil when secrets are stored as plaintext.
+	Cipher *crypto.Cipher
 
 	// limitedMu guards lastLimited — the per-key last-known limited state used
 	// to detect false→true transitions and emit quota_limited events exactly once.
@@ -53,7 +58,7 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 		if err != nil || len(accs) == 0 {
 			continue
 		}
-		cl := nodeclient.New(n.BaseUrl, n.ApiKey)
+		cl := nodeclient.New(n.BaseUrl, p.Cipher.DecryptOrPlaintext(n.ApiKey))
 		health, healthErr := cl.Health(ctx)
 		offline := OfflineFromHealth(health, healthErr)
 

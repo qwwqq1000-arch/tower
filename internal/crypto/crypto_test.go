@@ -62,3 +62,45 @@ func TestDecrypt_WrongKeyFails(t *testing.T) {
 		t.Fatal("expected error decrypting with wrong key")
 	}
 }
+
+// TestDecryptOrPlaintext_RoundTrip: ciphertext written by the same cipher reads
+// back as plaintext through the transparent shim (vault-crypto-3).
+func TestDecryptOrPlaintext_RoundTrip(t *testing.T) {
+	c, _ := NewCipher(newKeyB64(t))
+	enc := c.EncryptStr("mgmt-secret-xyz")
+	if enc == "mgmt-secret-xyz" {
+		t.Fatal("EncryptStr returned plaintext")
+	}
+	if got := c.DecryptOrPlaintext(enc); got != "mgmt-secret-xyz" {
+		t.Fatalf("DecryptOrPlaintext(enc) = %q, want plaintext", got)
+	}
+}
+
+// TestDecryptOrPlaintext_LegacyPlaintext: a legacy plaintext row (not our
+// ciphertext) is returned unchanged so un-migrated rows keep working.
+func TestDecryptOrPlaintext_LegacyPlaintext(t *testing.T) {
+	c, _ := NewCipher(newKeyB64(t))
+	if got := c.DecryptOrPlaintext("sk-legacy-plaintext"); got != "sk-legacy-plaintext" {
+		t.Fatalf("legacy plaintext = %q, want unchanged", got)
+	}
+	// Ciphertext from a different key must NOT be returned as garbage plaintext
+	// silently mangled — it is not decryptable, so it is treated as plaintext.
+	other, _ := NewCipher(newKeyB64(t))
+	foreign := other.EncryptStr("foreign")
+	if got := c.DecryptOrPlaintext(foreign); got != foreign {
+		t.Fatalf("foreign ciphertext = %q, want unchanged (treated as plaintext)", got)
+	}
+}
+
+// TestNilCipher_PassThrough: a nil Cipher (plaintext-mode / no master key) is a
+// transparent pass-through on both write and read so handlers can call it
+// unconditionally.
+func TestNilCipher_PassThrough(t *testing.T) {
+	var c *Cipher
+	if got := c.EncryptStr("plain"); got != "plain" {
+		t.Fatalf("nil EncryptStr = %q, want pass-through", got)
+	}
+	if got := c.DecryptOrPlaintext("plain"); got != "plain" {
+		t.Fatalf("nil DecryptOrPlaintext = %q, want pass-through", got)
+	}
+}

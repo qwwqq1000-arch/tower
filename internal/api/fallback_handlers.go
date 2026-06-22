@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/qwwqq1000-arch/tower/internal/crypto"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 	"github.com/qwwqq1000-arch/tower/internal/dispatch"
 )
@@ -72,7 +73,7 @@ func listFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 	}
 }
 
-func createFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
+func createFallbackHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var b fallbackBody
 		if err := json.NewDecoder(r.Body).Decode(&b); err != nil || b.BaseUrl == "" {
@@ -98,20 +99,23 @@ func createFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 				return
 			}
 		}
+		// Encrypt channel secrets at rest (vault-crypto-3): the upstream api_key and
+		// the balance-query token are stored as ciphertext; read paths decrypt
+		// transparently. A nil cipher (plaintext-mode) is a no-op.
 		c, err := q.CreateFallbackChannel(r.Context(), sqlc.CreateFallbackChannelParams{
 			ID:              randHex("fc_"),
 			OwnerID:         b.OwnerId,
 			GroupID:         b.GroupId,
 			Name:            b.Name,
 			BaseUrl:         b.BaseUrl,
-			ApiKey:          b.ApiKey,
+			ApiKey:          cipher.EncryptStr(b.ApiKey),
 			Priority:        b.Priority,
 			Weight:          b.Weight,
 			MaxConcurrent:   b.MaxConcurrent,
 			CooldownMs:      b.CooldownMs,
 			PriceThreshold:  b.PriceThreshold,
 			ModelAllowlist:  b.ModelAllowlist,
-			BalanceToken:    b.BalanceToken,
+			BalanceToken:    cipher.EncryptStr(b.BalanceToken),
 			BalanceUserID:   b.BalanceUserId,
 			BalanceAlertUsd: b.BalanceAlertUsd,
 		})
@@ -123,7 +127,7 @@ func createFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 	}
 }
 
-func updateFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
+func updateFallbackHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !ownsFallbackID(r, q, r.PathValue("id")) {
 			writeJSON(w, 403, map[string]string{"error": "forbidden"})
@@ -134,27 +138,31 @@ func updateFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 400, map[string]string{"error": "bad body"})
 			return
 		}
-		// Preserve existing secrets when the incoming value is blank (留空表示不更改).
+		// Secrets at rest (vault-crypto-3): a non-blank incoming value is freshly
+		// encrypted; a blank value (留空表示不更改) preserves the stored ciphertext
+		// as-is (cur.* is already encrypted, so re-store verbatim — do NOT re-encrypt).
+		apiKeyEnc := cipher.EncryptStr(b.ApiKey)
+		balTokenEnc := cipher.EncryptStr(b.BalanceToken)
 		if cur, err := q.GetFallbackChannel(r.Context(), r.PathValue("id")); err == nil {
 			if b.ApiKey == "" {
-				b.ApiKey = cur.ApiKey
+				apiKeyEnc = cur.ApiKey
 			}
 			if b.BalanceToken == "" {
-				b.BalanceToken = cur.BalanceToken
+				balTokenEnc = cur.BalanceToken
 			}
 		}
 		if err := q.UpdateFallbackChannel(r.Context(), sqlc.UpdateFallbackChannelParams{
 			ID:              r.PathValue("id"),
 			Name:            b.Name,
 			BaseUrl:         b.BaseUrl,
-			ApiKey:          b.ApiKey,
+			ApiKey:          apiKeyEnc,
 			Priority:        b.Priority,
 			Weight:          b.Weight,
 			MaxConcurrent:   b.MaxConcurrent,
 			CooldownMs:      b.CooldownMs,
 			PriceThreshold:  b.PriceThreshold,
 			ModelAllowlist:  b.ModelAllowlist,
-			BalanceToken:    b.BalanceToken,
+			BalanceToken:    balTokenEnc,
 			BalanceUserID:   b.BalanceUserId,
 			BalanceAlertUsd: b.BalanceAlertUsd,
 		}); err != nil {
@@ -201,7 +209,7 @@ func deleteFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 	}
 }
 
-func fetchFallbackBalanceHandler(q *sqlc.Queries) http.HandlerFunc {
+func fetchFallbackBalanceHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		ch, err := q.GetFallbackChannel(r.Context(), id)
@@ -215,7 +223,8 @@ func fetchFallbackBalanceHandler(q *sqlc.Queries) http.HandlerFunc {
 		}
 
 		now := time.Now().UnixMilli()
-		usd, fetchErr := dispatch.FetchChannelBalance(r.Context(), ch.BaseUrl, ch.BalanceToken, ch.BalanceUserID)
+		// Decrypt the balance token transparently for the upstream balance query.
+		usd, fetchErr := dispatch.FetchChannelBalance(r.Context(), ch.BaseUrl, cipher.DecryptOrPlaintext(ch.BalanceToken), ch.BalanceUserID)
 
 		errStr := ""
 		if fetchErr != nil {

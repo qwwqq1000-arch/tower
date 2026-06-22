@@ -371,7 +371,9 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 				continue
 			}
 			key := n.ID + ":" + na.ProfileID
-			refs[key] = NodeRef{BaseURL: n.BaseUrl, APIKey: n.ApiKey, ProfileID: na.ProfileID, Kind: n.Kind}
+			// Decrypt the node api_key transparently (vault-crypto-3): ciphertext
+			// rows decrypt, legacy plaintext rows pass through unchanged.
+			refs[key] = NodeRef{BaseURL: n.BaseUrl, APIKey: s.Cipher.DecryptOrPlaintext(n.ApiKey), ProfileID: na.ProfileID, Kind: n.Kind}
 			s.Store.Ensure(key, cfg.MaxConcurrent)
 			s.Store.SetCapacity(key, cfg.MaxConcurrent)
 			// Apply or clear warmup cap.
@@ -569,7 +571,8 @@ func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []
 
 	_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: "fallback", Target: ch.ID, OwnerID: ownerID, Detail: map[string]any{"reason": reason, "channelId": ch.ID, "channelName": ch.Name}})
 
-	cp := &ChannelProxy{Body: body, Ch: ChannelRef{BaseURL: ch.BaseUrl, APIKey: ch.ApiKey}}
+	// Decrypt the channel api_key transparently before forwarding (vault-crypto-3).
+	cp := &ChannelProxy{Body: body, Ch: ChannelRef{BaseURL: ch.BaseUrl, APIKey: s.Cipher.DecryptOrPlaintext(ch.ApiKey)}}
 	res, err := cp.Send(ctx, ch.ID)
 	if err != nil {
 		s.logErr(ctx, ownerID, model, 502, latencyMs, reason)
@@ -1101,7 +1104,8 @@ func (s *Service) streamChannel(ctx context.Context, w http.ResponseWriter, ch s
 
 	_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: "fallback", Target: ch.ID, OwnerID: ownerID, Detail: map[string]any{"reason": reason, "channelId": ch.ID, "channelName": ch.Name}})
 
-	cp := &ChannelProxy{Body: body, Ch: ChannelRef{BaseURL: ch.BaseUrl, APIKey: ch.ApiKey}}
+	// Decrypt the channel api_key transparently before forwarding (vault-crypto-3).
+	cp := &ChannelProxy{Body: body, Ch: ChannelRef{BaseURL: ch.BaseUrl, APIKey: s.Cipher.DecryptOrPlaintext(ch.ApiKey)}}
 	st, err := cp.OpenStream(ctx, ch.ID)
 	if err != nil {
 		return Outcome{}, false

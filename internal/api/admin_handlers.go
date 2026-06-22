@@ -14,6 +14,7 @@ import (
 
 	"github.com/qwwqq1000-arch/tower/internal/auth"
 	"github.com/qwwqq1000-arch/tower/internal/billing"
+	"github.com/qwwqq1000-arch/tower/internal/crypto"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 	"github.com/qwwqq1000-arch/tower/internal/dispatch"
 	"github.com/qwwqq1000-arch/tower/internal/nodeclient"
@@ -38,7 +39,7 @@ func nextNodeName(ctx context.Context, q *sqlc.Queries) string {
 	return strconv.Itoa(max + 1)
 }
 
-func createNodeHandler(q *sqlc.Queries) http.HandlerFunc {
+func createNodeHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct{ Name, BaseUrl, ApiKey, OwnerId, Kind, MgmtKey string }
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.BaseUrl == "" {
@@ -59,9 +60,12 @@ func createNodeHandler(q *sqlc.Queries) http.HandlerFunc {
 		if owner, all := scope(r); !all {
 			body.OwnerId = owner
 		}
+		// Encrypt secrets at rest (vault-crypto-3). The meridian api_key and the
+		// CPA mgmt_key are stored as ciphertext; read paths decrypt transparently
+		// via cipher.DecryptOrPlaintext. A nil cipher (plaintext-mode) is a no-op.
 		n, err := q.CreateNode(r.Context(), sqlc.CreateNodeParams{
-			ID: randHex("n_"), Name: body.Name, BaseUrl: body.BaseUrl, ApiKey: body.ApiKey,
-			MgmtKey: body.MgmtKey, OwnerID: body.OwnerId, Kind: kind,
+			ID: randHex("n_"), Name: body.Name, BaseUrl: body.BaseUrl, ApiKey: cipher.EncryptStr(body.ApiKey),
+			MgmtKey: cipher.EncryptStr(body.MgmtKey), OwnerID: body.OwnerId, Kind: kind,
 		})
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -71,7 +75,7 @@ func createNodeHandler(q *sqlc.Queries) http.HandlerFunc {
 	}
 }
 
-func listNodesHandler(q *sqlc.Queries) http.HandlerFunc {
+func listNodesHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		owner, all := scope(r)
 		allRows, err := q.ListNodes(r.Context())
@@ -111,6 +115,9 @@ func listNodesHandler(q *sqlc.Queries) http.HandlerFunc {
 				continue
 			}
 			wg.Add(1)
+			// Decrypt the stored api_key transparently for the health probe
+			// (vault-crypto-3): ciphertext rows decrypt, legacy plaintext rows
+			// pass through unchanged.
 			go func(idx int, baseURL, apiKey string) {
 				defer wg.Done()
 				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -125,7 +132,7 @@ func listNodesHandler(q *sqlc.Queries) http.HandlerFunc {
 					email:       h.Auth.Email,
 					liveVersion: h.Version,
 				}
-			}(i, n.BaseUrl, n.ApiKey)
+			}(i, n.BaseUrl, cipher.DecryptOrPlaintext(n.ApiKey))
 		}
 		wg.Wait()
 

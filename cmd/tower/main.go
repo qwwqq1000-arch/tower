@@ -74,10 +74,10 @@ func main() {
 		}
 	}()
 
-	poller := &telemetry.Poller{Q: q, Store: store, Threshold: 0.95, DefaultTTLMs: 3600000, Capacity: base.MaxConcurrent, Now: nowMs}
+	poller := &telemetry.Poller{Q: q, Store: store, Threshold: 0.95, DefaultTTLMs: 3600000, Capacity: base.MaxConcurrent, Now: nowMs, Cipher: cipher}
 	go poller.Run(context.Background(), 60*time.Second)
 
-	go (&reconcile.Reconciler{Q: q}).Run(context.Background(), 120*time.Second)
+	go (&reconcile.Reconciler{Q: q, Cipher: cipher}).Run(context.Background(), 120*time.Second)
 
 	// Every 60s: discover accounts on CPA (CLIProxyAPI) nodes into the pool and
 	// project their quota utilization into the live store so saturated CPA

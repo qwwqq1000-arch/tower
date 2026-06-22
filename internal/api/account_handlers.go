@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/qwwqq1000-arch/tower/internal/crypto"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 	"github.com/qwwqq1000-arch/tower/internal/dispatch"
 	"github.com/qwwqq1000-arch/tower/internal/events"
@@ -28,7 +29,7 @@ func effectiveProfiles(ctx context.Context, cl *nodeclient.Client) ([]nodeclient
 	return ps, nil
 }
 
-func nodeClientFor(q *sqlc.Queries, r *http.Request, id string) (*nodeclient.Client, sqlc.Node, bool) {
+func nodeClientFor(q *sqlc.Queries, cipher *crypto.Cipher, r *http.Request, id string) (*nodeclient.Client, sqlc.Node, bool) {
 	n, err := q.GetNode(r.Context(), id)
 	if err != nil {
 		return nil, sqlc.Node{}, false
@@ -37,12 +38,14 @@ func nodeClientFor(q *sqlc.Queries, r *http.Request, id string) (*nodeclient.Cli
 	if owner, all := scope(r); !all && n.OwnerID != owner {
 		return nil, sqlc.Node{}, false
 	}
-	return nodeclient.New(n.BaseUrl, n.ApiKey), n, true
+	// Decrypt the stored api_key transparently (vault-crypto-3): ciphertext rows
+	// decrypt, legacy plaintext rows pass through unchanged.
+	return nodeclient.New(n.BaseUrl, cipher.DecryptOrPlaintext(n.ApiKey)), n, true
 }
 
-func oauthStartHandler(q *sqlc.Queries) http.HandlerFunc {
+func oauthStartHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cl, _, ok := nodeClientFor(q, r, r.PathValue("id"))
+		cl, _, ok := nodeClientFor(q, cipher, r, r.PathValue("id"))
 		if !ok {
 			writeJSON(w, 404, map[string]string{"error": "node not found"})
 			return
@@ -56,9 +59,9 @@ func oauthStartHandler(q *sqlc.Queries) http.HandlerFunc {
 	}
 }
 
-func oauthExchangeHandler(q *sqlc.Queries) http.HandlerFunc {
+func oauthExchangeHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cl, n, ok := nodeClientFor(q, r, r.PathValue("id"))
+		cl, n, ok := nodeClientFor(q, cipher, r, r.PathValue("id"))
 		if !ok {
 			writeJSON(w, 404, map[string]string{"error": "node not found"})
 			return
@@ -123,7 +126,7 @@ func oauthExchangeHandler(q *sqlc.Queries) http.HandlerFunc {
 	}
 }
 
-func importProfileHandler(q *sqlc.Queries) http.HandlerFunc {
+func importProfileHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		nodeID := r.PathValue("id")
 		n, err := q.GetNode(r.Context(), nodeID)
@@ -142,7 +145,7 @@ func importProfileHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 400, map[string]string{"error": "profileId required"})
 			return
 		}
-		cl := nodeclient.New(n.BaseUrl, n.ApiKey)
+		cl := nodeclient.New(n.BaseUrl, cipher.DecryptOrPlaintext(n.ApiKey))
 		profiles, _ := effectiveProfiles(r.Context(), cl)
 		var matched *nodeclient.Profile
 		for i := range profiles {
@@ -193,9 +196,9 @@ func importProfileHandler(q *sqlc.Queries) http.HandlerFunc {
 	}
 }
 
-func listProfilesHandler(q *sqlc.Queries) http.HandlerFunc {
+func listProfilesHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cl, _, ok := nodeClientFor(q, r, r.PathValue("id"))
+		cl, _, ok := nodeClientFor(q, cipher, r, r.PathValue("id"))
 		if !ok {
 			writeJSON(w, 404, map[string]string{"error": "node not found"})
 			return

@@ -4,13 +4,14 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/qwwqq1000-arch/tower/internal/crypto"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 	"github.com/qwwqq1000-arch/tower/internal/nodeclient"
 )
 
-func nodeFeaturesGetHandler(q *sqlc.Queries) http.HandlerFunc {
+func nodeFeaturesGetHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cl, _, ok := nodeClientFor(q, r, r.PathValue("id"))
+		cl, _, ok := nodeClientFor(q, cipher, r, r.PathValue("id"))
 		if !ok {
 			writeJSON(w, 404, map[string]string{"error": "node not found"})
 			return
@@ -24,9 +25,9 @@ func nodeFeaturesGetHandler(q *sqlc.Queries) http.HandlerFunc {
 	}
 }
 
-func nodeFeaturesPatchHandler(q *sqlc.Queries) http.HandlerFunc {
+func nodeFeaturesPatchHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cl, _, ok := nodeClientFor(q, r, r.PathValue("id"))
+		cl, _, ok := nodeClientFor(q, cipher, r, r.PathValue("id"))
 		if !ok {
 			writeJSON(w, 404, map[string]string{"error": "node not found"})
 			return
@@ -44,9 +45,9 @@ func nodeFeaturesPatchHandler(q *sqlc.Queries) http.HandlerFunc {
 	}
 }
 
-func nodeRefreshHandler(q *sqlc.Queries) http.HandlerFunc {
+func nodeRefreshHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cl, _, ok := nodeClientFor(q, r, r.PathValue("id"))
+		cl, _, ok := nodeClientFor(q, cipher, r, r.PathValue("id"))
 		if !ok {
 			writeJSON(w, 404, map[string]string{"error": "node not found"})
 			return
@@ -78,9 +79,9 @@ func nodeEnableHandler(q *sqlc.Queries) http.HandlerFunc {
 	}
 }
 
-func nodeQuotaHandler(q *sqlc.Queries) http.HandlerFunc {
+func nodeQuotaHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cl, _, ok := nodeClientFor(q, r, r.PathValue("id"))
+		cl, _, ok := nodeClientFor(q, cipher, r, r.PathValue("id"))
 		if !ok {
 			writeJSON(w, 404, map[string]string{"error": "node not found"})
 			return
@@ -94,9 +95,9 @@ func nodeQuotaHandler(q *sqlc.Queries) http.HandlerFunc {
 	}
 }
 
-func nodeTelemetryHandler(q *sqlc.Queries) http.HandlerFunc {
+func nodeTelemetryHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cl, _, ok := nodeClientFor(q, r, r.PathValue("id"))
+		cl, _, ok := nodeClientFor(q, cipher, r, r.PathValue("id"))
 		if !ok {
 			writeJSON(w, 404, map[string]string{"error": "node not found"})
 			return

@@ -135,7 +135,14 @@ func Sync(ctx context.Context, q *sqlc.Queries, node sqlc.Node, rot *RotateConfi
 	if !strings.EqualFold(node.Kind, "cpa") || strings.TrimSpace(node.MgmtKey) == "" || !node.Enabled {
 		return 0, nil
 	}
-	c := New(node.BaseUrl, node.MgmtKey)
+	// Decrypt the stored mgmt_key transparently before building the CPA client
+	// (vault-crypto-3): ciphertext rows decrypt, legacy plaintext rows pass
+	// through unchanged. A nil cipher (plaintext-mode) is a no-op.
+	var cipher *crypto.Cipher
+	if rot != nil {
+		cipher = rot.Cipher
+	}
+	c := New(node.BaseUrl, cipher.DecryptOrPlaintext(node.MgmtKey))
 	accounts, err := c.ListAccounts(ctx)
 	if err != nil {
 		return 0, err
