@@ -104,6 +104,39 @@ func TestAccount_CanDispatch_ModelLimited(t *testing.T) {
 	}
 }
 
+func TestAccount_CanDispatch_ClassLimited(t *testing.T) {
+	// LimitedUntil keyed by class ("opus"), full model id ("claude-opus-4-8") must match.
+	a := NewAccount(1)
+	c := BreakerCfg{PersistStreak: 3, BaseMs: 1000, MaxMs: 9999, Mult: 2}
+	a.LimitedUntil = map[string]int64{"opus": 5000}
+	if ok, _ := a.CanDispatch(1000, "claude-opus-4-8", c); ok {
+		t.Fatal("opus class limited → deny claude-opus-4-8")
+	}
+	if ok, _ := a.CanDispatch(1000, "claude-haiku-3-5", c); !ok {
+		t.Fatal("opus class limited → should not deny haiku")
+	}
+	if ok, _ := a.CanDispatch(5000, "claude-opus-4-8", c); !ok {
+		t.Fatal("opus limit expired → allow claude-opus-4-8")
+	}
+}
+
+func TestClassOf(t *testing.T) {
+	cases := []struct{ model, want string }{
+		{"claude-opus-4-8", "opus"},
+		{"claude-opus-4-5", "opus"},
+		{"claude-sonnet-4-5", "sonnet"},
+		{"claude-haiku-3-5", "haiku"},
+		{"gpt-4", "all"},
+		{"opus", "opus"},
+		{"sonnet", "sonnet"},
+	}
+	for _, tc := range cases {
+		if got := classOf(tc.model); got != tc.want {
+			t.Errorf("classOf(%q) = %q, want %q", tc.model, got, tc.want)
+		}
+	}
+}
+
 func TestAccount_CanDispatch_AllLimited(t *testing.T) {
 	a := NewAccount(1)
 	c := BreakerCfg{PersistStreak: 3, BaseMs: 1000, MaxMs: 9999, Mult: 2}

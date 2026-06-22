@@ -1,5 +1,25 @@
 package state
 
+import "strings"
+
+// classOf maps a model identifier to its rate-limit class ("opus", "sonnet",
+// "haiku", or "all" for unknown/unrecognized models). The comparison is
+// case-insensitive substring matching so both raw class names ("opus") and
+// full model IDs ("claude-opus-4-8") resolve to the same class.
+func classOf(model string) string {
+	m := strings.ToLower(model)
+	switch {
+	case strings.Contains(m, "opus"):
+		return "opus"
+	case strings.Contains(m, "sonnet"):
+		return "sonnet"
+	case strings.Contains(m, "haiku"):
+		return "haiku"
+	default:
+		return "all"
+	}
+}
+
 // Account aggregates the operational state of one (node, profile) account.
 type Account struct {
 	Breaker      Breaker
@@ -45,6 +65,9 @@ func (a *Account) Status(now int64) string {
 }
 
 // limitedFor reports whether the model class is rate-limited at now.
+// It checks the "all" key (applies to every model), the exact model string
+// (for backward compatibility), and the normalized class returned by classOf
+// so that a limit keyed by "opus" matches full model IDs like "claude-opus-4-8".
 func (a *Account) limitedFor(now int64, model string) bool {
 	if a.LimitedUntil == nil {
 		return false
@@ -54,6 +77,11 @@ func (a *Account) limitedFor(now int64, model string) bool {
 	}
 	if until, ok := a.LimitedUntil[model]; ok && now < until {
 		return true
+	}
+	if cls := classOf(model); cls != model {
+		if until, ok := a.LimitedUntil[cls]; ok && now < until {
+			return true
+		}
 	}
 	return false
 }
