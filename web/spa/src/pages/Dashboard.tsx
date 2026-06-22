@@ -28,16 +28,33 @@ function fmtPct(rate: number): string {
 // ------------------------------------------------------------------
 // Stat card
 // ------------------------------------------------------------------
+// ------------------------------------------------------------------
+// Quota helpers
+// ------------------------------------------------------------------
+function fmtQuota(v: number | undefined): string {
+  if (v == null) return '—';
+  return `${(v * 100).toFixed(0)}%`;
+}
+
+function quotaValueClass(v: number | undefined): string {
+  if (v == null || v === 0) return 'text-ink';
+  if (v >= 0.9) return 'text-err';
+  if (v >= 0.7) return 'text-warn';
+  return 'text-ok';
+}
+
+// ------------------------------------------------------------------
 interface StatCardProps {
   label: string;
   value: string | number;
   sub?: string;
   accent?: boolean;
   warn?: boolean;
+  valueClass?: string;
 }
 
-function StatCard({ label, value, sub, accent, warn }: StatCardProps) {
-  const valueClass = accent ? 'text-accent' : warn ? 'text-warn' : 'text-ink';
+function StatCard({ label, value, sub, accent, warn, valueClass: valueClassProp }: StatCardProps) {
+  const valueClass = valueClassProp ?? (accent ? 'text-accent' : warn ? 'text-warn' : 'text-ink');
   return (
     <div className="bg-surface border border-line rounded-xl p-4 flex flex-col gap-1">
       <span className="text-xs text-muted uppercase tracking-wide">{label}</span>
@@ -176,7 +193,7 @@ function AdminDashboard() {
 
   if (!data) return null;
 
-  const { nodes, accounts, today, hosting, totalCostUsd } = data;
+  const { nodes, accounts, today, hosting, totalCostUsd, quota5hAvg, quota7dAvg } = data;
   const byStatus = nodes.byStatus ?? {};
 
   return (
@@ -215,12 +232,14 @@ function AdminDashboard() {
             value={fmtCost(totalCostUsd)}
           />
           <StatCard
-            label="今日入 Token"
-            value={fmtTokens(today.tokensIn)}
+            label="5h 均额度"
+            value={fmtQuota(quota5hAvg)}
+            valueClass={quotaValueClass(quota5hAvg)}
           />
           <StatCard
-            label="今日出 Token"
-            value={fmtTokens(today.tokensOut)}
+            label="7d 均额度"
+            value={fmtQuota(quota7dAvg)}
+            valueClass={quotaValueClass(quota7dAvg)}
           />
         </div>
       </section>

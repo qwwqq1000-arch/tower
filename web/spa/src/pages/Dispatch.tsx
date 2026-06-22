@@ -175,14 +175,26 @@ function FallbackChannelsPanel({ channels }: { channels: DispatchFallbackChannel
 // ------------------------------------------------------------------
 // Traffic panel
 // ------------------------------------------------------------------
+function fmtQuota(v: number | undefined): string {
+  if (v == null) return '—';
+  return `${(v * 100).toFixed(0)}%`;
+}
+
+function quotaCls(v: number | undefined): string {
+  if (v == null || v === 0) return 'text-ink';
+  if (v >= 0.9) return 'text-red-400';
+  if (v >= 0.7) return 'text-yellow-400';
+  return 'text-green-400';
+}
+
 function TrafficPanel({ data }: { data: DispatchStatus }) {
   const { traffic } = data;
   const items = [
     { label: '总请求', value: traffic.total.toLocaleString() },
     { label: '成功', value: traffic.ok.toLocaleString(), cls: 'text-green-400' },
     { label: '错误', value: traffic.error.toLocaleString(), cls: 'text-red-400' },
-    { label: 'Tokens 入', value: traffic.tokensIn.toLocaleString() },
-    { label: 'Tokens 出', value: traffic.tokensOut.toLocaleString() },
+    { label: '5h 均额度', value: fmtQuota(data.quota5hAvg), cls: quotaCls(data.quota5hAvg) },
+    { label: '7d 均额度', value: fmtQuota(data.quota7dAvg), cls: quotaCls(data.quota7dAvg) },
   ];
 
   return (

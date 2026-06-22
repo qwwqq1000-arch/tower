@@ -100,6 +100,8 @@ export interface DashboardData {
   };
   hosting: DashboardHostingRow[];
   totalCostUsd: number;
+  quota5hAvg?: number;
+  quota7dAvg?: number;
 }
 
 // --- Provision ---
@@ -435,6 +437,8 @@ export interface DispatchStatus {
   nodes: { total: number; enabled: number };
   asOf: number;
   fallbackChannels?: DispatchFallbackChannel[];
+  quota5hAvg?: number;
+  quota7dAvg?: number;
 }
 
 // --- Slots (时段槽位) ---
