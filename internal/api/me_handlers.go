@@ -163,7 +163,8 @@ func meDashboardHandler(q *sqlc.Queries) http.HandlerFunc {
 		}
 		consumption, _ := q.SumCostForOwner(ctx, owner)
 		rate, _ := q.GetHostingRate(ctx, owner)
-		unsettled, accumulated := billing.ComputeHostingFee(consumption, 0, rate)
+		settled, _ := q.SumSettledForOwner(ctx, owner)
+		unsettled, accumulated := billing.ComputeHostingFee(consumption, settled, rate)
 		// separate channel hosting billing at the tenant's channel_rate.
 		channelConsumption, _ := q.SumFallbackSpendByOwner(ctx, owner)
 		var channelRate float64
@@ -174,13 +175,13 @@ func meDashboardHandler(q *sqlc.Queries) http.HandlerFunc {
 		writeJSON(w, 200, map[string]any{
 			"accounts": map[string]any{"total": accTotal, "active": accActive},
 			"today":    map[string]any{"requests": todayReq, "costUsd": todayCost},
-			"consumptionUsd":        consumption,
+			"consumptionUsd":        billing.RoundUSD(consumption),
 			"hostingRate":           rate,
-			"unsettledUsd":          unsettled,
-			"accumulatedUsd":        accumulated,
-			"channelConsumptionUsd": channelConsumption,
+			"unsettledUsd":          billing.RoundUSD(unsettled),
+			"accumulatedUsd":        billing.RoundUSD(accumulated),
+			"channelConsumptionUsd": billing.RoundUSD(channelConsumption),
 			"channelRate":           channelRate,
-			"channelHostingFeeUsd":  channelHostingFee,
+			"channelHostingFeeUsd":  billing.RoundUSD(channelHostingFee),
 		})
 	}
 }

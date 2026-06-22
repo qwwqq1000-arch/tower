@@ -514,6 +514,9 @@ func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []
 func (s *Service) logOK(ctx context.Context, ownerID, model string, res ProxyResult, key string, latencyMs int64, reason string) {
 	in, out, cacheRead, cache5m, cache1h := parseUsage(res.Body)
 	cost := billing.CostUsdFull(model, in, out, cacheRead, cache5m, cache1h)
+	if reason == "" && !billing.KnownModel(model) {
+		reason = "unknown-model-pricing"
+	}
 	_ = s.Q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{
 		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: key, ProfileID: "",
 		Status: "ok", HttpStatus: int32(res.Status), LatencyMs: latencyMs, TokensIn: in, TokensOut: out,
@@ -629,10 +632,15 @@ func (s *Service) logStream(ctx context.Context, ownerID, model, key string, sta
 		httpStatus = "error"
 	}
 	cost := billing.CostUsdFull(model, in, out, cacheRead, cache5m, cache1h)
+	streamReason := ""
+	if !billing.KnownModel(model) {
+		streamReason = "unknown-model-pricing"
+	}
 	_ = s.Q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{
 		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: key, ProfileID: "",
 		Status: httpStatus, HttpStatus: int32(status), LatencyMs: latencyMs,
 		TokensIn: in, TokensOut: out, TtfbMs: ttfbMs, Stream: true, CostUsd: cost,
+		FallbackReason: streamReason,
 	})
 	if in > 0 || out > 0 {
 		_ = s.Q.AddCostRollup(ctx, sqlc.AddCostRollupParams{

@@ -40,3 +40,11 @@ func CostUsdFull(model string, inTok, outTok, cacheReadTok, cache5mTok, cache1hT
 func CostUsd(model string, inTok, outTok, cacheReadTok, cacheCreateTok int64) float64 {
 	return CostUsdFull(model, inTok, outTok, cacheReadTok, cacheCreateTok, 0)
 }
+
+// KnownModel reports whether the model maps to an explicit price family
+// (opus/haiku/sonnet). Unknown models fall back to sonnet pricing in ModelPrice;
+// callers should surface that fallback rather than bill silently.
+func KnownModel(model string) bool {
+	m := strings.ToLower(model)
+	return strings.Contains(m, "opus") || strings.Contains(m, "haiku") || strings.Contains(m, "sonnet")
+}
