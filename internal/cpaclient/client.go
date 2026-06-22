@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -72,6 +73,46 @@ func (c *Client) ListAccounts(ctx context.Context) ([]Account, error) {
 		return nil, fmt.Errorf("cpa auth-files: decode: %w", err)
 	}
 	return out.Files, nil
+}
+
+// UsageWindow is one rolling rate-limit window from the Anthropic OAuth usage API.
+type UsageWindow struct {
+	Utilization float64 `json:"utilization"`
+	ResetsAt    string  `json:"resets_at"`
+}
+
+// Usage is a Claude account's subscription rate-limit state (the data shown in
+// the CPA panel: 5h / 7天 / 7天 Sonnet).
+type Usage struct {
+	FiveHour       *UsageWindow `json:"five_hour"`
+	SevenDay       *UsageWindow `json:"seven_day"`
+	SevenDayOpus   *UsageWindow `json:"seven_day_opus"`
+	SevenDaySonnet *UsageWindow `json:"seven_day_sonnet"`
+}
+
+// Usage fetches one account's rate-limit windows via the CPA management API
+// (which proxies the Anthropic OAuth usage endpoint using the account's token).
+// selector is the account id / auth_index / email.
+func (c *Client) Usage(ctx context.Context, selector string) (*Usage, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/v0/management/account-usage?id="+url.QueryEscape(selector), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.mgmtKey)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("cpa account-usage: status %d: %s", resp.StatusCode, truncate(data, 200))
+	}
+	var out Usage
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("cpa account-usage: decode: %w", err)
+	}
+	return &out, nil
 }
 
 // DispatchSelector returns the value Tower should send in the X-CLIProxy-Account

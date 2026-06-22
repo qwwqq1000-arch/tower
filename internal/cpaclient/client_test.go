@@ -51,3 +51,27 @@ func TestListAccounts_AuthRequired(t *testing.T) {
 		t.Fatal("expected error on 401")
 	}
 }
+
+func TestUsage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v0/management/account-usage" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"five_hour":{"utilization":0.0,"resets_at":"2026-06-22T17:20:00Z"},"seven_day":{"utilization":53.0,"resets_at":"2026-06-26T12:00:00Z"},"seven_day_opus":null,"seven_day_sonnet":{"utilization":8.0,"resets_at":"2026-06-26T12:00:00Z"}}`))
+	}))
+	defer srv.Close()
+	u, err := New(srv.URL, "k").Usage(context.Background(), "claude-a@gmail.com.json")
+	if err != nil {
+		t.Fatalf("usage: %v", err)
+	}
+	if u.SevenDay == nil || u.SevenDay.Utilization != 53.0 {
+		t.Fatalf("seven_day = %+v, want 53", u.SevenDay)
+	}
+	if u.SevenDaySonnet == nil || u.SevenDaySonnet.Utilization != 8.0 {
+		t.Fatalf("seven_day_sonnet = %+v, want 8", u.SevenDaySonnet)
+	}
+	if u.SevenDayOpus != nil {
+		t.Fatalf("seven_day_opus should be nil")
+	}
+}

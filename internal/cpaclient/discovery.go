@@ -3,9 +3,28 @@ package cpaclient
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 )
+
+// quotaParams maps a CPA Usage payload to the DB upsert params.
+func quotaParams(accountID string, u *Usage, now int64) sqlc.UpsertCpaQuotaParams {
+	p := sqlc.UpsertCpaQuotaParams{AccountID: accountID, UpdatedAt: now}
+	if u.FiveHour != nil {
+		p.FiveHourUtil = u.FiveHour.Utilization
+		p.FiveHourResetsAt = u.FiveHour.ResetsAt
+	}
+	if u.SevenDay != nil {
+		p.SevenDayUtil = u.SevenDay.Utilization
+		p.SevenDayResetsAt = u.SevenDay.ResetsAt
+	}
+	if u.SevenDaySonnet != nil {
+		p.SevenDaySonnetUtil = u.SevenDaySonnet.Utilization
+		p.SevenDaySonnetResetsAt = u.SevenDaySonnet.ResetsAt
+	}
+	return p
+}
 
 // statusFor maps a CPA account's reported state to a Tower account status.
 func statusFor(a Account) string {
@@ -34,7 +53,8 @@ func Sync(ctx context.Context, q *sqlc.Queries, node sqlc.Node) (int, error) {
 	if !strings.EqualFold(node.Kind, "cpa") || strings.TrimSpace(node.MgmtKey) == "" {
 		return 0, nil
 	}
-	accounts, err := New(node.BaseUrl, node.MgmtKey).ListAccounts(ctx)
+	c := New(node.BaseUrl, node.MgmtKey)
+	accounts, err := c.ListAccounts(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -60,6 +80,10 @@ func Sync(ctx context.Context, q *sqlc.Queries, node sqlc.Node) (int, error) {
 			Enabled:   !a.Disabled,
 		}); err != nil {
 			return 0, err
+		}
+		// Best-effort quota refresh (only for claude/anthropic accounts).
+		if u, uerr := c.Usage(ctx, a.DispatchSelector()); uerr == nil && u != nil {
+			_ = q.UpsertCpaQuota(ctx, quotaParams(aid, u, time.Now().UnixMilli()))
 		}
 	}
 	return len(accounts), nil

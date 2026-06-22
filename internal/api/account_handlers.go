@@ -210,6 +210,13 @@ func listAccountsHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFun
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		// CPA per-account quota (5h/7d/7d-sonnet utilization), keyed by account id.
+		quotaByAccount := map[string]sqlc.CpaAccountQuotum{}
+		if qrows, qerr := q.ListCpaQuota(ctx); qerr == nil {
+			for _, qr := range qrows {
+				quotaByAccount[qr.AccountID] = qr
+			}
+		}
 		// Live status overlay (banned/half_open/permanent/...) from the in-memory store.
 		liveStatus := map[string]string{}
 		if svc != nil && svc.Store != nil {
@@ -245,6 +252,15 @@ func listAccountsHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFun
 			if ls, ok := liveStatus[key]; ok {
 				status = ls // live ban/half_open/permanent state wins over stored value
 			}
+			var quota map[string]any
+			if qr, ok := quotaByAccount[a.AccountID]; ok {
+				quota = map[string]any{
+					"fiveHourUtil": qr.FiveHourUtil, "fiveHourResetsAt": qr.FiveHourResetsAt,
+					"sevenDayUtil": qr.SevenDayUtil, "sevenDayResetsAt": qr.SevenDayResetsAt,
+					"sevenDaySonnetUtil": qr.SevenDaySonnetUtil, "sevenDaySonnetResetsAt": qr.SevenDaySonnetResetsAt,
+					"updatedAt": qr.UpdatedAt,
+				}
+			}
 			out = append(out, map[string]any{
 				"nodeId":           a.NodeID,
 				"nodeName":         a.NodeName,
@@ -262,6 +278,7 @@ func listAccountsHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFun
 				"expiresAt":        a.ExpiresAt,
 				"subscriptionType": a.SubscriptionType,
 				"ownerId":          a.AcctOwnerID,
+				"cpaQuota":         quota,
 			})
 		}
 		writeJSON(w, 200, out)

@@ -276,6 +276,17 @@ export interface AccountRow {
   expiresAt?: number;        // unix ms
   ownerId?: string;          // tenant owner id ("" = shared)
   subscriptionType?: string; // e.g. "claude_max_5x"
+  cpaQuota?: CpaQuota | null; // CPA account rate-limit usage (5h/7d/7d-sonnet)
+}
+
+export interface CpaQuota {
+  fiveHourUtil: number;
+  fiveHourResetsAt: string;
+  sevenDayUtil: number;
+  sevenDayResetsAt: string;
+  sevenDaySonnetUtil: number;
+  sevenDaySonnetResetsAt: string;
+  updatedAt: number;
 }
 
 // --- Node Quota ---

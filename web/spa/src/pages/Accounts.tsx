@@ -14,7 +14,7 @@ import {
   recoverAccount,
   listUsers,
 } from '../api';
-import type { AccountRow, QuotaAll, Slot, UserRow } from '../types';
+import type { AccountRow, CpaQuota, QuotaAll, Slot, UserRow } from '../types';
 import { useAuth } from '../auth';
 import { statusColor, statusLabel } from '../lib/status';
 import { TenantAccounts } from './tenant';
@@ -132,6 +132,22 @@ function QuotaCell({
       {w7d && (
         <QuotaBadge utilization={w7d.utilization} label="7d" resetsAt={w7d.resetsAt} />
       )}
+    </div>
+  );
+}
+
+// CPA account quota cell — utilization is 0–100, resets_at is an ISO string.
+function CpaQuotaCell({ q }: { q: CpaQuota }) {
+  const toMs = (s: string): number | undefined => {
+    if (!s) return undefined;
+    const t = Date.parse(s);
+    return isNaN(t) ? undefined : t;
+  };
+  return (
+    <div className="flex items-start gap-2 flex-wrap">
+      <QuotaBadge utilization={(q.fiveHourUtil ?? 0) / 100} label="5h" resetsAt={toMs(q.fiveHourResetsAt)} />
+      <QuotaBadge utilization={(q.sevenDayUtil ?? 0) / 100} label="7d" resetsAt={toMs(q.sevenDayResetsAt)} />
+      <QuotaBadge utilization={(q.sevenDaySonnetUtil ?? 0) / 100} label="7dS" resetsAt={toMs(q.sevenDaySonnetResetsAt)} />
     </div>
   );
 }
@@ -485,7 +501,7 @@ function AccountTableRow({
         </td>
         <td className="px-4 py-3 text-xs text-muted">{account.subscriptionType || '—'}</td>
         <td className="px-4 py-3">
-          <QuotaCell nodeId={account.nodeId} profileId={account.profileId} quotaMap={quotaMap} />
+          {account.cpaQuota ? <CpaQuotaCell q={account.cpaQuota} /> : <QuotaCell nodeId={account.nodeId} profileId={account.profileId} quotaMap={quotaMap} />}
         </td>
         <td className="px-4 py-3 text-sm text-muted">{account.weight}</td>
         <td className="px-4 py-3 text-xs text-muted">{account.role || '—'}</td>
@@ -653,7 +669,7 @@ function AccountMobileCard({
           <ExpiryCell expiresAt={account.expiresAt} />
         )}
 
-        <QuotaCell nodeId={account.nodeId} profileId={account.profileId} quotaMap={quotaMap} />
+        {account.cpaQuota ? <CpaQuotaCell q={account.cpaQuota} /> : <QuotaCell nodeId={account.nodeId} profileId={account.profileId} quotaMap={quotaMap} />}
       </div>
       {editing && (
         <AccountEditModal

@@ -75,6 +75,17 @@ type CostRollup struct {
 	CostUsd   float64 `json:"cost_usd"`
 }
 
+type CpaAccountQuotum struct {
+	AccountID              string  `json:"account_id"`
+	FiveHourUtil           float64 `json:"five_hour_util"`
+	FiveHourResetsAt       string  `json:"five_hour_resets_at"`
+	SevenDayUtil           float64 `json:"seven_day_util"`
+	SevenDayResetsAt       string  `json:"seven_day_resets_at"`
+	SevenDaySonnetUtil     float64 `json:"seven_day_sonnet_util"`
+	SevenDaySonnetResetsAt string  `json:"seven_day_sonnet_resets_at"`
+	UpdatedAt              int64   `json:"updated_at"`
+}
+
 type DesiredFeature struct {
 	ID        int32  `json:"id"`
 	Features  []byte `json:"features"`
