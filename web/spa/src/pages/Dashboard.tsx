@@ -6,6 +6,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { getDashboard } from '../api';
 import type { DashboardData, DashboardNodeItem, DashboardByModel, DashboardHostingRow } from '../types';
 import { useAuth } from '../auth';
+import { statusLabel } from '../lib/status';
 import { TenantDashboard } from './tenant';
 
 // ------------------------------------------------------------------
@@ -71,6 +72,7 @@ const STATUS_COLOR: Record<string, string> = {
   active: 'bg-ok/20 text-ok border-ok/30',
   banned: 'bg-err/20 text-err border-err/30',
   half_open: 'bg-warn/20 text-warn border-warn/30',
+  permanent: 'bg-err/30 text-err border-err/50',
   offline: 'bg-muted/20 text-muted border-muted/30',
   disabled: 'bg-muted/10 text-muted border-muted/20',
 };
@@ -79,7 +81,7 @@ function StatusBadge({ status, count }: { status: string; count: number }) {
   const cls = STATUS_COLOR[status] ?? 'bg-muted/10 text-muted border-muted/20';
   return (
     <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border ${cls}`}>
-      {status}
+      {statusLabel(status)}
       <span className="font-bold">{count}</span>
     </span>
   );
@@ -99,7 +101,7 @@ function NodeRow({ node }: { node: DashboardNodeItem }) {
       <td className="py-2 pr-3 text-xs text-muted truncate max-w-[180px]">{node.baseUrl}</td>
       <td className="py-2 pr-3">
         <span className={`inline-block text-xs font-medium px-2 py-0.5 rounded-full border ${cls}`}>
-          {node.status || (node.enabled ? 'active' : 'disabled')}
+          {node.status ? statusLabel(node.status) : statusLabel(node.enabled ? 'active' : 'disabled')}
         </span>
       </td>
       <td className="py-2 text-xs text-muted">{node.version || '—'}</td>

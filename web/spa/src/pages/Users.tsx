@@ -13,6 +13,8 @@ import {
   deleteUser,
   setUserRole,
   setUserHostingRate,
+  setUserChannelRate,
+  setUserFallbackLimit,
 } from '../api';
 import type { UserRow } from '../types';
 
@@ -67,13 +69,18 @@ function RoleSelect({ userId, current, onChanged }: RoleSelectProps) {
 // ------------------------------------------------------------------
 // Inline rate editor
 // ------------------------------------------------------------------
-interface RateEditorProps {
+interface NumberEditorProps {
   userId: string;
   current: number;
-  onChanged: (id: string, rate: number) => void;
+  onChanged: (id: string, val: number) => void;
+  save: (id: string, val: number) => Promise<unknown>;
+  format: (val: number) => string;
+  step?: string;
+  title?: string;
+  integer?: boolean;
 }
 
-function RateEditor({ userId, current, onChanged }: RateEditorProps) {
+function NumberEditor({ userId, current, onChanged, save, format, step = '0.01', title, integer = false }: NumberEditorProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(String(current));
   const [busy, setBusy] = useState(false);
@@ -83,12 +90,14 @@ function RateEditor({ userId, current, onChanged }: RateEditorProps) {
     if (!editing) setDraft(String(current));
   }, [current, editing]);
 
-  async function save() {
-    const val = parseFloat(draft);
+  async function commit() {
+    // Integer fields (e.g. fallback channel count → Go int32) must not send a
+    // fractional value, which the backend would reject with a 400.
+    const val = integer ? Math.round(parseFloat(draft)) : parseFloat(draft);
     if (isNaN(val)) { setEditing(false); setDraft(String(current)); return; }
     setBusy(true);
     try {
-      await setUserHostingRate(userId, val);
+      await save(userId, val);
       onChanged(userId, val);
       setEditing(false);
     } catch {
@@ -106,18 +115,18 @@ function RateEditor({ userId, current, onChanged }: RateEditorProps) {
         <input
           autoFocus
           type="number"
-          step="0.01"
+          step={step}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') { void save(); }
+            if (e.key === 'Enter') { void commit(); }
             if (e.key === 'Escape') { setEditing(false); setDraft(String(current)); }
           }}
           disabled={busy}
           className="w-20 bg-bg border border-accent rounded px-2 py-0.5 text-xs text-ink focus:outline-none"
         />
         <button
-          onClick={() => { void save(); }}
+          onClick={() => { void commit(); }}
           disabled={busy}
           className="text-xs text-accent hover:underline"
         >
@@ -131,9 +140,9 @@ function RateEditor({ userId, current, onChanged }: RateEditorProps) {
     <button
       onClick={() => setEditing(true)}
       className="text-xs text-ink hover:text-accent hover:underline tabular-nums"
-      title="点击编辑费率"
+      title={title ?? '点击编辑'}
     >
-      {current.toFixed(4)}
+      {format(current)}
     </button>
   );
 }
@@ -223,6 +232,14 @@ export default function Users() {
     setUsers((prev) => prev.map((u) => u.id === id ? { ...u, rate: newRate } : u));
   }
 
+  function handleChannelRateChanged(id: string, val: number) {
+    setUsers((prev) => prev.map((u) => u.id === id ? { ...u, channelRate: val } : u));
+  }
+
+  function handleFallbackLimitChanged(id: string, val: number) {
+    setUsers((prev) => prev.map((u) => u.id === id ? { ...u, fallbackLimit: val } : u));
+  }
+
   // ------------------------------------------------------------------
   // Shared input class
   // ------------------------------------------------------------------
@@ -284,6 +301,8 @@ export default function Users() {
                       <th className="px-4 py-3 font-medium">用户名</th>
                       <th className="px-4 py-3 font-medium">角色</th>
                       <th className="px-4 py-3 font-medium text-right">托管费率</th>
+                      <th className="px-4 py-3 font-medium text-right">渠道倍率</th>
+                      <th className="px-4 py-3 font-medium text-right">保底上限</th>
                       <th className="px-4 py-3 font-medium">操作</th>
                     </tr>
                   </thead>
@@ -299,10 +318,35 @@ export default function Users() {
                           />
                         </td>
                         <td className="px-4 py-3 text-right">
-                          <RateEditor
+                          <NumberEditor
                             userId={u.id}
                             current={u.rate}
                             onChanged={handleRateChanged}
+                            save={setUserHostingRate}
+                            format={(v) => v.toFixed(4)}
+                            title="点击编辑托管费率"
+                          />
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <NumberEditor
+                            userId={u.id}
+                            current={u.channelRate ?? 0}
+                            onChanged={handleChannelRateChanged}
+                            save={setUserChannelRate}
+                            format={(v) => v.toFixed(4)}
+                            title="点击编辑渠道中转倍率"
+                          />
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <NumberEditor
+                            userId={u.id}
+                            current={u.fallbackLimit ?? 0}
+                            onChanged={handleFallbackLimitChanged}
+                            save={setUserFallbackLimit}
+                            format={(v) => String(v)}
+                            step="1"
+                            integer
+                            title="点击编辑保底渠道数量上限"
                           />
                         </td>
                         <td className="px-4 py-3">
@@ -343,10 +387,37 @@ export default function Users() {
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-muted">费率</span>
-                        <RateEditor
+                        <NumberEditor
                           userId={u.id}
                           current={u.rate}
                           onChanged={handleRateChanged}
+                          save={setUserHostingRate}
+                          format={(v) => v.toFixed(4)}
+                          title="点击编辑托管费率"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-muted">渠道倍率</span>
+                        <NumberEditor
+                          userId={u.id}
+                          current={u.channelRate ?? 0}
+                          onChanged={handleChannelRateChanged}
+                          save={setUserChannelRate}
+                          format={(v) => v.toFixed(4)}
+                          title="点击编辑渠道中转倍率"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-muted">保底上限</span>
+                        <NumberEditor
+                          userId={u.id}
+                          current={u.fallbackLimit ?? 0}
+                          onChanged={handleFallbackLimitChanged}
+                          save={setUserFallbackLimit}
+                          format={(v) => String(v)}
+                          step="1"
+                            integer
+                          title="点击编辑保底渠道数量上限"
                         />
                       </div>
                     </div>

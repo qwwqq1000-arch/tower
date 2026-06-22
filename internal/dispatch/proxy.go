@@ -23,6 +23,27 @@ type NodeRef struct {
 	BaseURL   string
 	APIKey    string
 	ProfileID string
+	Kind      string // "meridian" (default) or "cpa"
+}
+
+// setNodeAuthHeaders applies the per-kind auth/account-selection headers.
+//   - meridian: x-api-key + x-meridian-profile (selects the profile on the node)
+//   - cpa:      Authorization: Bearer + X-CLIProxy-Account (pins the account via
+//     Tower's CPA fork)
+func setNodeAuthHeaders(h http.Header, ref NodeRef) {
+	if ref.Kind == "cpa" {
+		if ref.APIKey != "" {
+			h.Set("Authorization", "Bearer "+ref.APIKey)
+		}
+		if ref.ProfileID != "" {
+			h.Set("X-CLIProxy-Account", ref.ProfileID)
+		}
+		return
+	}
+	h.Set("x-api-key", ref.APIKey)
+	if ref.ProfileID != "" {
+		h.Set("x-meridian-profile", ref.ProfileID)
+	}
 }
 
 // Resolver maps an account key to its node connection info.
@@ -55,10 +76,7 @@ func (p *NodeProxy) Send(ctx context.Context, key string) (ProxyResult, error) {
 		return ProxyResult{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", ref.APIKey)
-	if ref.ProfileID != "" {
-		req.Header.Set("x-meridian-profile", ref.ProfileID)
-	}
+	setNodeAuthHeaders(req.Header, ref)
 	resp, err := p.client().Do(req)
 	if err != nil {
 		return ProxyResult{}, err
@@ -134,10 +152,7 @@ func (p *NodeProxy) OpenStream(ctx context.Context, key string) (*Stream, error)
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", ref.APIKey)
-	if ref.ProfileID != "" {
-		req.Header.Set("x-meridian-profile", ref.ProfileID)
-	}
+	setNodeAuthHeaders(req.Header, ref)
 	ForgeClaudeCodeHeaders(req.Header)
 	resp, err := streamClient.Do(req)
 	if err != nil {

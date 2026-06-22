@@ -11,10 +11,12 @@ import {
   listSlots,
   setAccountExpiry,
   setAccountOwner,
+  recoverAccount,
   listUsers,
 } from '../api';
-import type { AccountRow, QuotaAll, Slot, UserRow } from '../types';
+import type { AccountRow, CpaQuota, QuotaAll, Slot, UserRow } from '../types';
 import { useAuth } from '../auth';
+import { statusColor, statusLabel } from '../lib/status';
 import { TenantAccounts } from './tenant';
 
 // ------------------------------------------------------------------
@@ -130,6 +132,22 @@ function QuotaCell({
       {w7d && (
         <QuotaBadge utilization={w7d.utilization} label="7d" resetsAt={w7d.resetsAt} />
       )}
+    </div>
+  );
+}
+
+// CPA account quota cell — utilization is 0–100, resets_at is an ISO string.
+function CpaQuotaCell({ q }: { q: CpaQuota }) {
+  const toMs = (s: string): number | undefined => {
+    if (!s) return undefined;
+    const t = Date.parse(s);
+    return isNaN(t) ? undefined : t;
+  };
+  return (
+    <div className="flex items-start gap-2 flex-wrap">
+      <QuotaBadge utilization={(q.fiveHourUtil ?? 0) / 100} label="5h" resetsAt={toMs(q.fiveHourResetsAt)} />
+      <QuotaBadge utilization={(q.sevenDayUtil ?? 0) / 100} label="7d" resetsAt={toMs(q.sevenDayResetsAt)} />
+      <QuotaBadge utilization={(q.sevenDaySonnetUtil ?? 0) / 100} label="7dS" resetsAt={toMs(q.sevenDaySonnetResetsAt)} />
     </div>
   );
 }
@@ -456,6 +474,18 @@ function AccountTableRow({
     }
   }
 
+  const [recovering, setRecovering] = useState(false);
+  const banned = account.status === 'permanent' || account.status === 'banned' || account.status === 'half_open';
+  async function handleRecover() {
+    setRecovering(true);
+    try {
+      await recoverAccount(account.accountId);
+      onRefresh();
+    } finally {
+      setRecovering(false);
+    }
+  }
+
   return (
     <>
       <tr className="border-t border-line hover:bg-line/30 transition">
@@ -463,10 +493,15 @@ function AccountTableRow({
         <td className="px-4 py-3">
           <p className="text-xs text-ink">{account.email || '—'}</p>
           <p className="text-[10px] text-muted font-mono mt-0.5">{account.profileId || '—'}</p>
+          {account.status && (
+            <span className={`inline-flex items-center mt-1 px-1.5 py-0.5 rounded border text-[10px] font-mono ${statusColor(account.status)}`}>
+              {statusLabel(account.status)}
+            </span>
+          )}
         </td>
         <td className="px-4 py-3 text-xs text-muted">{account.subscriptionType || '—'}</td>
         <td className="px-4 py-3">
-          <QuotaCell nodeId={account.nodeId} profileId={account.profileId} quotaMap={quotaMap} />
+          {account.cpaQuota ? <CpaQuotaCell q={account.cpaQuota} /> : <QuotaCell nodeId={account.nodeId} profileId={account.profileId} quotaMap={quotaMap} />}
         </td>
         <td className="px-4 py-3 text-sm text-muted">{account.weight}</td>
         <td className="px-4 py-3 text-xs text-muted">{account.role || '—'}</td>
@@ -495,6 +530,16 @@ function AccountTableRow({
             >
               {toggling ? '…' : account.enabled ? '暂停' : '启用'}
             </button>
+            {banned && (
+              <button
+                onClick={() => { void handleRecover(); }}
+                disabled={recovering}
+                className="text-xs text-ok hover:text-ok/70 disabled:opacity-50 transition"
+                title="清除封禁/冷却/永久封禁状态并重新启用"
+              >
+                {recovering ? '恢复中…' : '恢复'}
+              </button>
+            )}
             <button
               onClick={() => { void handleUnassign(); }}
               disabled={removing}
@@ -624,7 +669,7 @@ function AccountMobileCard({
           <ExpiryCell expiresAt={account.expiresAt} />
         )}
 
-        <QuotaCell nodeId={account.nodeId} profileId={account.profileId} quotaMap={quotaMap} />
+        {account.cpaQuota ? <CpaQuotaCell q={account.cpaQuota} /> : <QuotaCell nodeId={account.nodeId} profileId={account.profileId} quotaMap={quotaMap} />}
       </div>
       {editing && (
         <AccountEditModal

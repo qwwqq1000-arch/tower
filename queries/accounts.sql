@@ -23,3 +23,13 @@ UPDATE accounts SET owner_id=$2 WHERE id=$1;
 
 -- name: ListAccountOwners :many
 SELECT id, owner_id FROM accounts;
+
+-- name: UpsertCpaAccount :exec
+-- owner_id is set on first INSERT only; discovery must NOT overwrite an admin's
+-- later owner reassignment (PATCH /accounts/{id}/owner) on subsequent ticks.
+INSERT INTO accounts (id, owner_id, email, subscription_type, status)
+VALUES ($1,$2,$3,$4,$5)
+ON CONFLICT (id) DO UPDATE SET
+  email = EXCLUDED.email,
+  subscription_type = EXCLUDED.subscription_type,
+  status = EXCLUDED.status;

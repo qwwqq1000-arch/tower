@@ -12,6 +12,7 @@ import (
 	"github.com/qwwqq1000-arch/tower/internal/api"
 	"github.com/qwwqq1000-arch/tower/internal/bootstrap"
 	"github.com/qwwqq1000-arch/tower/internal/config"
+	"github.com/qwwqq1000-arch/tower/internal/cpaclient"
 	"github.com/qwwqq1000-arch/tower/internal/crypto"
 	"github.com/qwwqq1000-arch/tower/internal/db"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
@@ -76,6 +77,21 @@ func main() {
 	go poller.Run(context.Background(), 60*time.Second)
 
 	go (&reconcile.Reconciler{Q: q}).Run(context.Background(), 120*time.Second)
+
+	// Every 60s: discover accounts on CPA (CLIProxyAPI) nodes into the pool.
+	go func() {
+		// Run once shortly after startup, then on a ticker.
+		if err := cpaclient.SyncAll(context.Background(), q); err != nil {
+			log.Printf("cpa discovery: %v", err)
+		}
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := cpaclient.SyncAll(context.Background(), q); err != nil {
+				log.Printf("cpa discovery: %v", err)
+			}
+		}
+	}()
 
 	// Every 60s: poll balance for all channels that have balance credentials.
 	go func() {

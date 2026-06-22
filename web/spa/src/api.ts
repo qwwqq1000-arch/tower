@@ -76,7 +76,7 @@ export const getDashboard = () =>
 export const listNodes = () =>
   api<NodeRecord[]>('GET', '/api/admin/nodes');
 
-export const createNode = (data: { baseUrl: string; apiKey?: string; ownerId?: string }) =>
+export const createNode = (data: { baseUrl: string; apiKey?: string; ownerId?: string; kind?: string; mgmtKey?: string }) =>
   api<NodeRecord>('POST', '/api/admin/nodes', data);
 
 export const deleteNode = (id: string) =>
@@ -183,6 +183,9 @@ export const setAccountExpiry = (accountId: string, expiresAt: number) =>
 export const setAccountOwner = (accountId: string, ownerId: string) =>
   api<{ ok: string }>('PATCH', `/api/admin/accounts/${accountId}/owner`, { ownerId });
 
+export const recoverAccount = (accountId: string) =>
+  api<{ ok: boolean; accountId: string }>('POST', `/api/admin/accounts/${accountId}/recover`, {});
+
 export const listNodeProfiles = (nodeId: string) =>
   api<NodeProfile[]>('GET', `/api/admin/nodes/${nodeId}/profiles`);
 
@@ -284,6 +287,12 @@ export const setUserRole = (id: string, role: string) =>
 
 export const setUserHostingRate = (id: string, rate: number) =>
   api<{ ok: string }>('PATCH', `/api/admin/users/${id}/hosting-rate`, { rate });
+
+export const setUserChannelRate = (id: string, rate: number) =>
+  api<{ ok: string }>('PATCH', `/api/admin/users/${id}/channel-rate`, { rate });
+
+export const setUserFallbackLimit = (id: string, limit: number) =>
+  api<{ ok: string }>('PATCH', `/api/admin/users/${id}/fallback-limit`, { limit });
 
 export const changePassword = (body: { oldPassword: string; newPassword: string }) =>
   api<{ ok: string }>('POST', '/auth/change-password', body);

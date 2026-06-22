@@ -56,6 +56,10 @@ func getProvisionHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 			return
 		}
+		if owner, all := scope(r); !all && j.OwnerID != owner {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"id": j.ID, "host": j.Host, "name": j.Name, "status": j.Status, "step": j.Step, "log": j.Log})
 	}
 }

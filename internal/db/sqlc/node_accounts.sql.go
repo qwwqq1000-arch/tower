@@ -188,3 +188,28 @@ func (q *Queries) UpdateNodeAccount(ctx context.Context, arg UpdateNodeAccountPa
 	)
 	return err
 }
+
+const upsertCpaNodeAccount = `-- name: UpsertCpaNodeAccount :exec
+INSERT INTO node_accounts (node_id, account_id, profile_id, enabled, weight, role)
+VALUES ($1,$2,$3,$4,100,'baseline')
+ON CONFLICT (node_id, account_id) DO UPDATE SET
+  profile_id = EXCLUDED.profile_id,
+  enabled = EXCLUDED.enabled
+`
+
+type UpsertCpaNodeAccountParams struct {
+	NodeID    string `json:"node_id"`
+	AccountID string `json:"account_id"`
+	ProfileID string `json:"profile_id"`
+	Enabled   bool   `json:"enabled"`
+}
+
+func (q *Queries) UpsertCpaNodeAccount(ctx context.Context, arg UpsertCpaNodeAccountParams) error {
+	_, err := q.db.Exec(ctx, upsertCpaNodeAccount,
+		arg.NodeID,
+		arg.AccountID,
+		arg.ProfileID,
+		arg.Enabled,
+	)
+	return err
+}

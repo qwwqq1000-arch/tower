@@ -11,9 +11,10 @@ import (
 	"github.com/qwwqq1000-arch/tower/internal/dispatch"
 )
 
-func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Service, now int64) map[string]any {
-	// account labels
+func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Service, now int64, owner string, all bool) map[string]any {
+	// account labels + owner map (owner scoping: non-superadmin sees only own)
 	labels := map[string]string{}
+	keyOwner := map[string]string{}
 	if accs, err := q.ListNodeAccountsAll(ctx); err == nil {
 		for _, a := range accs {
 			label := a.NodeName
@@ -21,8 +22,10 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 				label = a.Email
 			}
 			labels[a.NodeID+":"+a.ProfileID] = label
+			keyOwner[a.NodeID+":"+a.ProfileID] = a.AcctOwnerID
 		}
 	}
+	visible := func(key string) bool { return all || keyOwner[key] == owner }
 	// Build today/total cost maps for accounts
 	todayCostMap := map[string]float64{}
 	if todayRows, err := q.CostByTargetSince(ctx, startOfTodayMs()); err == nil {
@@ -42,6 +45,9 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 			if strings.HasPrefix(s.Key, "fb:") {
 				continue
 			}
+			if !visible(s.Key) { // owner scoping
+				continue
+			}
 			accounts = append(accounts, map[string]any{
 				"key":          s.Key,
 				"label":        labels[s.Key],
@@ -55,36 +61,51 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 	}
 	// tokensIn/tokensOut come from the recent-200 window; ok/error/total/rpm are REAL totals.
 	var in, out int64
-	if logs, err := q.ListRecentDispatchLogs(ctx, 200); err == nil {
-		for _, l := range logs {
-			in += l.TokensIn
-			out += l.TokensOut
-		}
-	}
 	var total, rpm, okc, errc int64
-	if t, terr := q.CountDispatchLogs(ctx); terr == nil {
-		total = t
-	}
-	if r, rerr := q.CountDispatchLogsSince(ctx, now-60000); rerr == nil {
-		rpm = r
-	}
-	if c, cerr := q.CountDispatchLogsByStatus(ctx, "ok"); cerr == nil {
-		okc = c
-	}
-	if c, cerr := q.CountDispatchLogsByStatus(ctx, "error"); cerr == nil {
-		errc = c
+	if all {
+		if logs, err := q.ListRecentDispatchLogs(ctx, 200); err == nil {
+			for _, l := range logs {
+				in += l.TokensIn
+				out += l.TokensOut
+			}
+		}
+		if t, terr := q.CountDispatchLogs(ctx); terr == nil {
+			total = t
+		}
+		if r, rerr := q.CountDispatchLogsSince(ctx, now-60000); rerr == nil {
+			rpm = r
+		}
+		if c, cerr := q.CountDispatchLogsByStatus(ctx, "ok"); cerr == nil {
+			okc = c
+		}
+		if c, cerr := q.CountDispatchLogsByStatus(ctx, "error"); cerr == nil {
+			errc = c
+		}
+	} else {
+		// owner-scoped traffic (per-status / token breakdown is superadmin-only)
+		total, _ = q.CountDispatchLogsByOwner(ctx, owner)
+		rpm, _ = q.CountDispatchLogsByOwnerSince(ctx, sqlc.CountDispatchLogsByOwnerSinceParams{OwnerID: owner, Ts: now - 60000})
 	}
 	traffic := map[string]any{"total": total, "rpm": rpm, "ok": okc, "error": errc, "tokensIn": in, "tokensOut": out}
 	events := []map[string]any{}
-	if evs, err := q.ListRecentEvents(ctx, 20); err == nil {
+	if all {
+		if evs, err := q.ListRecentEvents(ctx, 20); err == nil {
+			for _, e := range evs {
+				events = append(events, map[string]any{"ts": e.Ts, "type": e.Type, "target": e.Target, "detail": json.RawMessage(e.Detail)})
+			}
+		}
+	} else if evs, err := q.ListEventsByOwner(ctx, sqlc.ListEventsByOwnerParams{OwnerID: owner, Limit: 20}); err == nil {
 		for _, e := range evs {
 			events = append(events, map[string]any{"ts": e.Ts, "type": e.Type, "target": e.Target, "detail": json.RawMessage(e.Detail)})
 		}
 	}
 	nodesTotal, nodesEnabled := 0, 0
 	if ns, err := q.ListNodes(ctx); err == nil {
-		nodesTotal = len(ns)
 		for _, n := range ns {
+			if !all && n.OwnerID != owner {
+				continue
+			}
+			nodesTotal++
 			if n.Enabled {
 				nodesEnabled++
 			}
@@ -99,7 +120,13 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 	}
 
 	fallbackChannels := []map[string]any{}
-	if chs, err := q.ListAllFallbackChannels(ctx); err == nil {
+	var chs []sqlc.FallbackChannel
+	if all {
+		chs, _ = q.ListAllFallbackChannels(ctx)
+	} else {
+		chs, _ = q.ListFallbackChannelsByOwner(ctx, owner)
+	}
+	{
 		today := todayDayStr()
 		for _, ch := range chs {
 			var todayReq int64
@@ -142,7 +169,8 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 
 func dispatchStatusHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, buildDispatchStatus(r.Context(), q, svc, time.Now().UnixMilli()))
+		owner, all := scope(r)
+		writeJSON(w, 200, buildDispatchStatus(r.Context(), q, svc, time.Now().UnixMilli(), owner, all))
 	}
 }
 
@@ -156,8 +184,9 @@ func dispatchStreamHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerF
 			writeJSON(w, 500, map[string]string{"error": "stream unsupported"})
 			return
 		}
+		owner, all := scope(r)
 		push := func() {
-			b, _ := json.Marshal(buildDispatchStatus(r.Context(), q, svc, time.Now().UnixMilli()))
+			b, _ := json.Marshal(buildDispatchStatus(r.Context(), q, svc, time.Now().UnixMilli(), owner, all))
 			_, _ = w.Write([]byte("data: "))
 			_, _ = w.Write(b)
 			_, _ = w.Write([]byte("\n\n"))

@@ -142,6 +142,7 @@ export default function Policies() {
   const slotCooldownMinMs = useField<number>(2000);
   const slotCooldownMaxMs = useField<number>(5000);
   const banPersistStreak = useField<number>(3);
+  const permanentBanStreak = useField<number>(5);
   const cooldownBaseMs = useField<number>(10000);
   const cooldownMaxMs = useField<number>(600000);
   const affinityTTLSec = useField<number>(300);
@@ -201,6 +202,7 @@ export default function Policies() {
         setNum(slotCooldownMinMs, 'SlotCooldownMinMs');
         setNum(slotCooldownMaxMs, 'SlotCooldownMaxMs');
         setNum(banPersistStreak, 'BanPersistStreak');
+        setNum(permanentBanStreak, 'PermanentBanStreak');
         setNum(cooldownBaseMs, 'CooldownBaseMs');
         setNum(cooldownMaxMs, 'CooldownMaxMs');
         setNum(cooldownMult, 'CooldownMult');
@@ -240,6 +242,7 @@ export default function Policies() {
     if (slotCooldownMinMs.enabled) patch.SlotCooldownMinMs = slotCooldownMinMs.value;
     if (slotCooldownMaxMs.enabled) patch.SlotCooldownMaxMs = slotCooldownMaxMs.value;
     if (banPersistStreak.enabled) patch.BanPersistStreak = banPersistStreak.value;
+    if (permanentBanStreak.enabled) patch.PermanentBanStreak = permanentBanStreak.value;
     if (cooldownBaseMs.enabled) patch.CooldownBaseMs = cooldownBaseMs.value;
     if (cooldownMaxMs.enabled) patch.CooldownMaxMs = cooldownMaxMs.value;
     if (cooldownMult.enabled) patch.CooldownMult = cooldownMult.value;
@@ -310,7 +313,7 @@ export default function Policies() {
   }
 
   const anyEnabled = [
-    maxConcurrent, slotCooldownMinMs, slotCooldownMaxMs, banPersistStreak,
+    maxConcurrent, slotCooldownMinMs, slotCooldownMaxMs, banPersistStreak, permanentBanStreak,
     cooldownBaseMs, cooldownMaxMs, cooldownMult, affinityTTLSec,
     fallbackEnabled, fallbackPriceThresholdUsd, fallbackKeywords, fallbackModels, fallbackProbeEnabled, banSignals, banKeywords,
     quotaRotateThreshold, maxFailover,
@@ -421,6 +424,20 @@ export default function Policies() {
             onChange={banPersistStreak.set}
             disabled={!banPersistStreak.enabled}
             min={1}
+          />
+        </FieldRow>
+
+        <FieldRow
+          label="PermanentBanStreak"
+          desc="连续 N 次封禁信号 → 永久封禁(不再半开恢复，需人工恢复)；0=关闭"
+          enabled={permanentBanStreak.enabled}
+          onToggle={permanentBanStreak.toggle}
+        >
+          <NumInput
+            value={permanentBanStreak.value}
+            onChange={permanentBanStreak.set}
+            disabled={!permanentBanStreak.enabled}
+            min={0}
           />
         </FieldRow>
 

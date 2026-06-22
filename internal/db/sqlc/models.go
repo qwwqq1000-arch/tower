@@ -30,6 +30,7 @@ type AccountState struct {
 	BanStreak     int32  `json:"ban_streak"`
 	FailCount     int32  `json:"fail_count"`
 	UpdatedAt     int64  `json:"updated_at"`
+	Permanent     bool   `json:"permanent"`
 }
 
 type AuditLog struct {
@@ -72,6 +73,17 @@ type CostRollup struct {
 	TokensIn  int64   `json:"tokens_in"`
 	TokensOut int64   `json:"tokens_out"`
 	CostUsd   float64 `json:"cost_usd"`
+}
+
+type CpaAccountQuotum struct {
+	AccountID              string  `json:"account_id"`
+	FiveHourUtil           float64 `json:"five_hour_util"`
+	FiveHourResetsAt       string  `json:"five_hour_resets_at"`
+	SevenDayUtil           float64 `json:"seven_day_util"`
+	SevenDayResetsAt       string  `json:"seven_day_resets_at"`
+	SevenDaySonnetUtil     float64 `json:"seven_day_sonnet_util"`
+	SevenDaySonnetResetsAt string  `json:"seven_day_sonnet_resets_at"`
+	UpdatedAt              int64   `json:"updated_at"`
 }
 
 type DesiredFeature struct {
@@ -176,6 +188,7 @@ type Node struct {
 	FingerprintSeed string             `json:"fingerprint_seed"`
 	Enabled         bool               `json:"enabled"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	Kind            string             `json:"kind"`
 }
 
 type NodeAccount struct {

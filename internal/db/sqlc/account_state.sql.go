@@ -10,7 +10,7 @@ import (
 )
 
 const listAccountState = `-- name: ListAccountState :many
-SELECT node_id, profile_id, status, cooldown_until, ban_streak, fail_count, updated_at FROM account_state
+SELECT node_id, profile_id, status, cooldown_until, ban_streak, fail_count, updated_at, permanent FROM account_state
 `
 
 func (q *Queries) ListAccountState(ctx context.Context) ([]AccountState, error) {
@@ -30,6 +30,7 @@ func (q *Queries) ListAccountState(ctx context.Context) ([]AccountState, error) 
 			&i.BanStreak,
 			&i.FailCount,
 			&i.UpdatedAt,
+			&i.Permanent,
 		); err != nil {
 			return nil, err
 		}
@@ -42,13 +43,14 @@ func (q *Queries) ListAccountState(ctx context.Context) ([]AccountState, error) 
 }
 
 const upsertAccountState = `-- name: UpsertAccountState :exec
-INSERT INTO account_state (node_id, profile_id, status, cooldown_until, ban_streak, fail_count, updated_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7)
+INSERT INTO account_state (node_id, profile_id, status, cooldown_until, ban_streak, fail_count, permanent, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 ON CONFLICT (node_id, profile_id) DO UPDATE SET
   status = EXCLUDED.status,
   cooldown_until = EXCLUDED.cooldown_until,
   ban_streak = EXCLUDED.ban_streak,
   fail_count = EXCLUDED.fail_count,
+  permanent = EXCLUDED.permanent,
   updated_at = EXCLUDED.updated_at
 `
 
@@ -59,6 +61,7 @@ type UpsertAccountStateParams struct {
 	CooldownUntil int64  `json:"cooldown_until"`
 	BanStreak     int32  `json:"ban_streak"`
 	FailCount     int32  `json:"fail_count"`
+	Permanent     bool   `json:"permanent"`
 	UpdatedAt     int64  `json:"updated_at"`
 }
 
@@ -70,6 +73,7 @@ func (q *Queries) UpsertAccountState(ctx context.Context, arg UpsertAccountState
 		arg.CooldownUntil,
 		arg.BanStreak,
 		arg.FailCount,
+		arg.Permanent,
 		arg.UpdatedAt,
 	)
 	return err

@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"time"
 
@@ -41,6 +42,12 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 	var cnt5h, cnt7d int
 	for _, n := range nodes {
 		if !n.Enabled {
+			continue
+		}
+		// CPA (CLIProxyAPI) nodes do not speak the meridian /health+/telemetry
+		// protocol; their account health is governed by dispatch ban-detection.
+		// Polling them with the meridian client would spuriously mark them offline.
+		if strings.EqualFold(n.Kind, "cpa") {
 			continue
 		}
 		accs, err := p.Q.ListNodeAccountsByNode(ctx, n.ID)

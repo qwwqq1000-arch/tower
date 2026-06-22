@@ -61,6 +61,10 @@ func nodeRefreshHandler(q *sqlc.Queries) http.HandlerFunc {
 
 func nodeEnableHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !ownsNodeID(r, q, r.PathValue("id")) {
+			writeJSON(w, 403, map[string]string{"error": "forbidden"})
+			return
+		}
 		var body struct{ Enabled bool }
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeJSON(w, 400, map[string]string{"error": "bad body"})

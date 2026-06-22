@@ -69,7 +69,7 @@ func (s *Store) WithLock(fn func()) {
 
 // RestoreBreaker warm-starts one account's durable verdict atomically (single lock).
 // Ephemeral state (slots, trial) is not affected. Intended for startup warm-start.
-func (s *Store) RestoreBreaker(key string, capacity int, openUntil int64, streak, failCount int) {
+func (s *Store) RestoreBreaker(key string, capacity int, openUntil int64, streak, failCount int, permanent bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	a := s.accts[key]
@@ -78,6 +78,7 @@ func (s *Store) RestoreBreaker(key string, capacity int, openUntil int64, streak
 		s.accts[key] = a
 	}
 	a.Breaker.Restore(openUntil, streak, failCount)
+	a.Breaker.SetPermanent(permanent)
 }
 
 // TryDispatch atomically checks eligibility and, if dispatchable, acquires a
@@ -142,6 +143,39 @@ func (s *Store) OnSuccess(key string) {
 	}
 }
 
+// IsPermanent reports whether the account is permanently banned.
+func (s *Store) IsPermanent(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if a := s.accts[key]; a != nil {
+		return a.Breaker.Permanent()
+	}
+	return false
+}
+
+// BanStreak returns the account's current consecutive ban-signal streak.
+func (s *Store) BanStreak(key string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if a := s.accts[key]; a != nil {
+		_, streak, _ := a.Breaker.Snapshot()
+		return streak
+	}
+	return 0
+}
+
+// Recover clears all ban/failure state (including a permanent ban) and re-enables
+// the account. Used by the manual "recover" admin action.
+func (s *Store) Recover(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if a := s.accts[key]; a != nil {
+		a.Breaker.OnSuccess()
+		a.Disabled = false
+		a.Offline = false
+	}
+}
+
 // SetClock replaces the clock (test/helper use; not for concurrent runtime swaps).
 func (s *Store) SetClock(clock func() int64) {
 	s.mu.Lock()
@@ -161,14 +195,14 @@ func (s *Store) OnBanSignal(key string, cfg BreakerCfg) bool {
 }
 
 // NodeStatus returns an aggregate status for all accounts whose key begins with
-// nodeID+":". Priority order: disabled > banned > half_open > active.
+// nodeID+":". Priority order: disabled > permanent > banned > half_open > active.
 // Returns "" if no accounts are found for the node.
 func (s *Store) NodeStatus(nodeID string) string {
 	prefix := nodeID + ":"
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
-	rank := map[string]int{"disabled": 3, "banned": 2, "half_open": 1, "active": 0}
+	rank := map[string]int{"disabled": 4, "permanent": 3, "banned": 2, "half_open": 1, "active": 0}
 	best := ""
 	for k, a := range s.accts {
 		if !strings.HasPrefix(k, prefix) {

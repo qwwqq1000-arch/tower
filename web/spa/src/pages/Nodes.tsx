@@ -41,6 +41,18 @@ function fmtDays(ms?: number): string {
 // ------------------------------------------------------------------
 // Status badge
 // ------------------------------------------------------------------
+function NodeKindBadge({ kind }: { kind?: string }) {
+  const isCpa = (kind ?? 'meridian').toLowerCase() === 'cpa';
+  const cls = isCpa
+    ? 'bg-purple-500/15 text-purple-400 border-purple-500/30'
+    : 'bg-sky-500/15 text-sky-400 border-sky-500/30';
+  return (
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-mono uppercase ${cls}`}>
+      {isCpa ? 'CPA' : 'MERIDIAN'}
+    </span>
+  );
+}
+
 function NodeStatusBadge({ node }: { node: NodeRecord }) {
   if (!node.enabled) {
     return (
@@ -555,6 +567,8 @@ function AddNodeForm({ onAdded }: AddNodeFormProps) {
   const [baseUrl, setBaseUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [ownerId, setOwnerId] = useState('');
+  const [kind, setKind] = useState<'meridian' | 'cpa'>('meridian');
+  const [mgmtKey, setMgmtKey] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -566,12 +580,15 @@ function AddNodeForm({ onAdded }: AddNodeFormProps) {
     try {
       await createNode({
         baseUrl: baseUrl.trim(),
+        kind,
         ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
         ...(ownerId.trim() ? { ownerId: ownerId.trim() } : {}),
+        ...(kind === 'cpa' && mgmtKey.trim() ? { mgmtKey: mgmtKey.trim() } : {}),
       });
       setBaseUrl('');
       setApiKey('');
       setOwnerId('');
+      setMgmtKey('');
       onAdded();
     } catch (error) {
       setErr(error instanceof Error ? error.message : '添加失败');
@@ -580,6 +597,10 @@ function AddNodeForm({ onAdded }: AddNodeFormProps) {
     }
   }
 
+  const inputCls =
+    'flex-1 bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink ' +
+    'placeholder:text-muted focus:outline-none focus:border-accent transition';
+
   return (
     <form
       onSubmit={(e) => { void handleSubmit(e); }}
@@ -587,30 +608,35 @@ function AddNodeForm({ onAdded }: AddNodeFormProps) {
     >
       <h2 className="text-sm font-semibold text-ink mb-3">添加节点</h2>
       <div className="flex flex-col sm:flex-row gap-2">
+        <select
+          value={kind}
+          onChange={(e) => setKind(e.target.value as 'meridian' | 'cpa')}
+          className="bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink focus:outline-none focus:border-accent transition"
+        >
+          <option value="meridian">MERIDIAN</option>
+          <option value="cpa">CPA</option>
+        </select>
         <input
           type="text"
           value={baseUrl}
           onChange={(e) => setBaseUrl(e.target.value)}
-          placeholder="接入地址 * (如 http://ip:3456)"
+          placeholder={kind === 'cpa' ? '接入地址 * (如 http://ip:8317)' : '接入地址 * (如 http://ip:3456)'}
           required
-          className="flex-1 bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink
-                     placeholder:text-muted focus:outline-none focus:border-accent transition"
+          className={inputCls}
         />
         <input
           type="text"
           value={apiKey}
           onChange={(e) => setApiKey(e.target.value)}
-          placeholder="API密钥（选填）"
-          className="flex-1 bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink
-                     placeholder:text-muted focus:outline-none focus:border-accent transition"
+          placeholder={kind === 'cpa' ? 'CPA api-key（推理）' : 'API密钥（选填）'}
+          className={inputCls}
         />
         <input
           type="text"
           value={ownerId}
           onChange={(e) => setOwnerId(e.target.value)}
           placeholder="归属用户 ID（选填）"
-          className="flex-1 bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink
-                     placeholder:text-muted focus:outline-none focus:border-accent transition"
+          className={inputCls}
         />
         <button
           type="submit"
@@ -621,6 +647,18 @@ function AddNodeForm({ onAdded }: AddNodeFormProps) {
           {submitting ? '添加中…' : '+ 添加'}
         </button>
       </div>
+      {kind === 'cpa' && (
+        <div className="mt-2">
+          <input
+            type="text"
+            value={mgmtKey}
+            onChange={(e) => setMgmtKey(e.target.value)}
+            placeholder="CPA 管理密钥 (management secret-key) — 用于读取号库与额度"
+            className="w-full bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition"
+          />
+          <p className="text-[11px] text-muted mt-1">CPA 节点会自动读取其下所有账户并显示在号库;调度时按账户单独路由(X-CLIProxy-Account)。</p>
+        </div>
+      )}
       {err && <p className="text-xs text-err mt-2">{err}</p>}
     </form>
   );
@@ -801,9 +839,12 @@ function NodeRow({
         />
       </td>
       <td className="px-4 py-3 text-sm font-medium">
-        <Link to={`/nodes/${node.id}`} className="text-accent hover:underline">
-          {node.name}
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link to={`/nodes/${node.id}`} className="text-accent hover:underline">
+            {node.name}
+          </Link>
+          <NodeKindBadge kind={node.kind} />
+        </div>
       </td>
       <td className="px-4 py-3 text-sm text-muted max-w-xs truncate">{node.baseUrl}</td>
       <td className="px-4 py-3 text-sm text-muted">{node.email ?? '—'}</td>
@@ -904,12 +945,15 @@ function NodeMobileCard({
             className="mt-0.5 rounded border-line accent-accent cursor-pointer shrink-0"
           />
           <div className="min-w-0">
-            <Link
-              to={`/nodes/${node.id}`}
-              className="text-sm font-semibold text-accent hover:underline truncate block"
-            >
-              {node.name}
-            </Link>
+            <div className="flex items-center gap-2">
+              <Link
+                to={`/nodes/${node.id}`}
+                className="text-sm font-semibold text-accent hover:underline truncate"
+              >
+                {node.name}
+              </Link>
+              <NodeKindBadge kind={node.kind} />
+            </div>
             <p className="text-xs text-muted mt-0.5 truncate">{node.baseUrl}</p>
             {node.email && <p className="text-xs text-muted truncate">{node.email}</p>}
           </div>

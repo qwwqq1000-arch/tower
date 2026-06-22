@@ -5,7 +5,8 @@ import "math"
 
 // BreakerCfg configures a circuit breaker's threshold and backoff.
 type BreakerCfg struct {
-	PersistStreak int     // consecutive ban signals before opening
+	PersistStreak int     // consecutive ban signals before opening (recoverable)
+	PermStreak    int     // consecutive ban signals before PERMANENT ban (0 = never); takes precedence
 	BaseMs        int64   // base cooldown
 	MaxMs         int64   // cooldown cap
 	Mult          float64 // backoff multiplier per reopen
@@ -17,6 +18,7 @@ type Breaker struct {
 	failCount int   // number of opens (drives backoff)
 	openUntil int64 // ms; 0 = closed
 	trial     bool  // a half-open trial is in flight
+	permanent bool  // permanently banned — never recovers, never half-opens
 }
 
 func backoffMs(cfg BreakerCfg, failCount int) int64 {
@@ -36,9 +38,19 @@ func (b *Breaker) open(cfg BreakerCfg, now int64) {
 	b.trial = false
 }
 
-// OnBanSignal records a ban signal; opens only once streak reaches PersistStreak.
+// OnBanSignal records a ban signal. Reaching PermStreak permanently bans the
+// account (never recovers); otherwise reaching PersistStreak opens a recoverable
+// breaker. Returns whether the breaker opened (either path).
 func (b *Breaker) OnBanSignal(cfg BreakerCfg, now int64) (opened bool) {
+	if b.permanent {
+		return false
+	}
 	b.streak++
+	if cfg.PermStreak > 0 && b.streak >= cfg.PermStreak {
+		b.permanent = true
+		b.open(cfg, now) // also set a cooldown verdict for persistence consistency
+		return true
+	}
 	if b.streak >= cfg.PersistStreak {
 		b.open(cfg, now)
 		return true
@@ -46,16 +58,25 @@ func (b *Breaker) OnBanSignal(cfg BreakerCfg, now int64) (opened bool) {
 	return false
 }
 
-// OnSuccess clears all failure state (closes the breaker).
+// Permanent reports whether the account is permanently banned.
+func (b *Breaker) Permanent() bool { return b.permanent }
+
+// OnSuccess clears all failure state (closes the breaker), including a permanent
+// ban — used by manual recovery.
 func (b *Breaker) OnSuccess() {
 	b.streak = 0
 	b.failCount = 0
 	b.openUntil = 0
 	b.trial = false
+	b.permanent = false
 }
 
-// State returns "closed", "open", or "half_open" at the given time.
+// State returns "permanent", "closed", "open", or "half_open" at the given time.
+// A permanently banned account is always "permanent" and never half-opens.
 func (b *Breaker) State(now int64) string {
+	if b.permanent {
+		return "permanent"
+	}
 	if b.openUntil == 0 {
 		return "closed"
 	}
@@ -74,11 +95,20 @@ func (b *Breaker) TakeTrial(now int64) bool {
 	return true
 }
 
-// OnTrialResult closes on success or reopens (bigger backoff) on failure.
+// OnTrialResult closes on success, or on failure escalates: a failed half-open
+// recovery trial is itself a ban signal, so it advances the streak and trips the
+// permanent ban once the streak reaches PermStreak (otherwise it reopens with a
+// bigger backoff). Without this, an account that opens recoverably could never
+// climb to a permanent ban, because after opening the only further signals come
+// through trials — see OnBanSignal which handles the still-closed case.
 func (b *Breaker) OnTrialResult(cfg BreakerCfg, now int64, ok bool) {
 	if ok {
 		b.OnSuccess()
 		return
+	}
+	b.streak++
+	if cfg.PermStreak > 0 && b.streak >= cfg.PermStreak {
+		b.permanent = true
 	}
 	b.open(cfg, now)
 }
@@ -95,3 +125,6 @@ func (b *Breaker) Restore(openUntil int64, streak, failCount int) {
 	b.failCount = failCount
 	b.trial = false
 }
+
+// SetPermanent sets the permanent-ban flag (used by warm-start restore).
+func (b *Breaker) SetPermanent(p bool) { b.permanent = p }

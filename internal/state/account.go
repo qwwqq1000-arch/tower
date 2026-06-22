@@ -15,7 +15,8 @@ func NewAccount(capacity int) *Account {
 	return &Account{Slots: NewSlots(capacity), LimitedUntil: map[string]int64{}}
 }
 
-// Status returns the account's headline state at now (priority: disabled > offline > banned > half_open > active).
+// Status returns the account's headline state at now
+// (priority: disabled > offline > permanent > banned > half_open > active).
 func (a *Account) Status(now int64) string {
 	if a.Disabled {
 		return "disabled"
@@ -24,6 +25,8 @@ func (a *Account) Status(now int64) string {
 		return "offline"
 	}
 	switch a.Breaker.State(now) {
+	case "permanent":
+		return "permanent"
 	case "open":
 		return "banned"
 	case "half_open":

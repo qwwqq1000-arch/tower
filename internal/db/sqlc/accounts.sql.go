@@ -205,3 +205,33 @@ func (q *Queries) UpdateAccountCreds(ctx context.Context, arg UpdateAccountCreds
 	)
 	return err
 }
+
+const upsertCpaAccount = `-- name: UpsertCpaAccount :exec
+INSERT INTO accounts (id, owner_id, email, subscription_type, status)
+VALUES ($1,$2,$3,$4,$5)
+ON CONFLICT (id) DO UPDATE SET
+  email = EXCLUDED.email,
+  subscription_type = EXCLUDED.subscription_type,
+  status = EXCLUDED.status
+`
+
+type UpsertCpaAccountParams struct {
+	ID               string `json:"id"`
+	OwnerID          string `json:"owner_id"`
+	Email            string `json:"email"`
+	SubscriptionType string `json:"subscription_type"`
+	Status           string `json:"status"`
+}
+
+// owner_id is set on first INSERT only; discovery must NOT overwrite an admin's
+// later owner reassignment (PATCH /accounts/{id}/owner) on subsequent ticks.
+func (q *Queries) UpsertCpaAccount(ctx context.Context, arg UpsertCpaAccountParams) error {
+	_, err := q.db.Exec(ctx, upsertCpaAccount,
+		arg.ID,
+		arg.OwnerID,
+		arg.Email,
+		arg.SubscriptionType,
+		arg.Status,
+	)
+	return err
+}

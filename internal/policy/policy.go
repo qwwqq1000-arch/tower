@@ -10,6 +10,7 @@ type Config struct {
 	SlotCooldownMinMs         int64
 	SlotCooldownMaxMs         int64
 	BanPersistStreak          int
+	PermanentBanStreak        int // consecutive ban signals → permanent ban (0 = never); takes precedence
 	CooldownBaseMs            int64
 	CooldownMaxMs             int64
 	CooldownMult              float64
@@ -57,6 +58,7 @@ func Defaults() Config {
 		SlotCooldownMinMs:         2000,
 		SlotCooldownMaxMs:         5000,
 		BanPersistStreak:          3,
+		PermanentBanStreak:        5,
 		CooldownBaseMs:            10000,
 		CooldownMaxMs:             600000,
 		CooldownMult:              2,
@@ -66,7 +68,7 @@ func Defaults() Config {
 		FallbackKeywords:          nil,
 		FallbackModels:            nil,
 		FallbackProbeEnabled:      false,
-		BanSignals:                []int{401, 403},
+		BanSignals:                []int{401},
 		BanKeywords:               []string{"authentication_error", "account_disabled", "account_suspended"},
 		QuotaRotateThreshold:      0.95,
 		MaxFailover:               50,
@@ -91,6 +93,7 @@ type Patch struct {
 	SlotCooldownMinMs         *int64
 	SlotCooldownMaxMs         *int64
 	BanPersistStreak          *int
+	PermanentBanStreak        *int
 	CooldownBaseMs            *int64
 	CooldownMaxMs             *int64
 	CooldownMult              *float64
@@ -130,6 +133,9 @@ func apply(c *Config, p Patch) {
 	}
 	if p.BanPersistStreak != nil {
 		c.BanPersistStreak = *p.BanPersistStreak
+	}
+	if p.PermanentBanStreak != nil {
+		c.PermanentBanStreak = *p.PermanentBanStreak
 	}
 	if p.CooldownBaseMs != nil {
 		c.CooldownBaseMs = *p.CooldownBaseMs
@@ -242,6 +248,7 @@ func DryRun(base Config, patches ...Patch) (Config, []Diff) {
 	add("SlotCooldownMinMs", base.SlotCooldownMinMs, final.SlotCooldownMinMs)
 	add("SlotCooldownMaxMs", base.SlotCooldownMaxMs, final.SlotCooldownMaxMs)
 	add("BanPersistStreak", base.BanPersistStreak, final.BanPersistStreak)
+	add("PermanentBanStreak", base.PermanentBanStreak, final.PermanentBanStreak)
 	add("CooldownBaseMs", base.CooldownBaseMs, final.CooldownBaseMs)
 	add("CooldownMaxMs", base.CooldownMaxMs, final.CooldownMaxMs)
 	add("CooldownMult", base.CooldownMult, final.CooldownMult)

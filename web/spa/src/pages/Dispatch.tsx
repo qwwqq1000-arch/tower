@@ -6,23 +6,16 @@ import { useEffect, useRef, useState } from 'react';
 import { getDispatchStatus, listFallbackChannels, listAccounts, getServerStatus } from '../api';
 import type { DispatchStatus, DispatchAccountSnapshot, DispatchEvent, DispatchFallbackChannel, ServerStatus } from '../types';
 import { useAuth } from '../auth';
+import { statusColor, statusLabel } from '../lib/status';
 import { TenantDispatch } from './tenant';
 
 // ------------------------------------------------------------------
 // Badge
 // ------------------------------------------------------------------
 function StatusBadge({ status }: { status: string }) {
-  const colorMap: Record<string, string> = {
-    active:    'bg-green-500/20 text-green-400 border-green-500/40',
-    banned:    'bg-red-500/20 text-red-400 border-red-500/40',
-    half_open: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/40',
-    offline:   'bg-gray-500/20 text-gray-400 border-gray-500/40',
-    disabled:  'bg-gray-500/10 text-gray-500 border-gray-500/20',
-  };
-  const cls = colorMap[status] ?? colorMap['offline'];
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded border text-xs font-mono ${cls}`}>
-      {status}
+    <span className={`inline-flex items-center px-2 py-0.5 rounded border text-xs font-mono ${statusColor(status)}`}>
+      {statusLabel(status)}
     </span>
   );
 }
@@ -232,6 +225,10 @@ export function getEventLabel(type: string): EventLabel {
   switch (type) {
     case 'dispatch_ok':   return { label: '派单成功',    cls: 'bg-green-500/20 text-green-400 border-green-500/40' };
     case 'ban':           return { label: '封控',        cls: 'bg-red-500/20 text-red-400 border-red-500/40' };
+    case 'ban_detected':  return { label: '封禁触发',    cls: 'bg-red-500/20 text-red-400 border-red-500/40' };
+    case 'ban_permanent': return { label: '永久封禁',    cls: 'bg-red-600/30 text-red-300 border-red-600/50' };
+    case 'retry':         return { label: '失败转移',    cls: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/40' };
+    case 'account_recovered': return { label: '账户恢复', cls: 'bg-green-500/20 text-green-400 border-green-500/40' };
     case 'recover':       return { label: '恢复',        cls: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/40' };
     case 'fallback':      return { label: '保底触发',    cls: 'bg-blue-500/20 text-blue-400 border-blue-500/40' };
     case 'quota_limited': return { label: '账户限额',    cls: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/40' };
@@ -269,16 +266,36 @@ export function renderEventDetail(
     const email = accountNames?.get(target);
     return email ?? (target && !target.startsWith('n_') && !target.startsWith('fc_') ? target : '');
   }
-  if (type === 'fallback') {
-    const cn = FALLBACK_REASON_CN[target] ?? target;
-    // Resolve channel name from detail.channel
-    let channelName: string | undefined;
+  if (type === 'ban_detected' || type === 'ban_permanent' || type === 'retry' || type === 'account_recovered') {
+    let status: number | undefined; let streak: number | undefined; let detailEmail: string | undefined;
     try {
       const d: any = typeof detail === 'string' ? JSON.parse(detail) : detail;
-      if (d && typeof d.channel === 'string' && d.channel) {
-        channelName = fallbackNames?.get(d.channel);
+      if (d && typeof d.status === 'number') status = d.status;
+      if (d && typeof d.streak === 'number') streak = d.streak;
+      if (d && typeof d.email === 'string' && d.email) detailEmail = d.email;
+    } catch { /* ignore */ }
+    // account_recovered's target is the raw account id (not node:profile), so the
+    // accountNames map misses — prefer the email carried in detail.
+    const email = detailEmail ?? accountNames?.get(target) ?? target;
+    const head = type === 'ban_permanent' ? '永久封禁' : type === 'retry' ? '失败转移' : type === 'account_recovered' ? '账户恢复' : '封禁触发';
+    const parts = [head, email];
+    if (status) parts.push(`HTTP ${status}`);
+    if (streak !== undefined && (type === 'ban_detected' || type === 'ban_permanent')) parts.push(`连续${streak}次`);
+    return parts.filter(Boolean).join(' · ');
+  }
+  if (type === 'fallback') {
+    // Resolve reason + channel from detail (new shape: reason/channelId/channelName).
+    let channelName: string | undefined; let reason = target;
+    try {
+      const d: any = typeof detail === 'string' ? JSON.parse(detail) : detail;
+      if (d && typeof d.reason === 'string' && d.reason) reason = d.reason;
+      if (d && typeof d.channelName === 'string' && d.channelName) channelName = d.channelName;
+      else {
+        const cid = d && (typeof d.channelId === 'string' ? d.channelId : (typeof d.channel === 'string' ? d.channel : ''));
+        if (cid) channelName = fallbackNames?.get(cid);
       }
     } catch { /* ignore */ }
+    const cn = FALLBACK_REASON_CN[reason] ?? reason;
     const parts = ['保底触发'];
     if (cn) parts.push(cn);
     if (channelName) parts.push(channelName);
