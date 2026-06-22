@@ -33,6 +33,10 @@ func nodeClientFor(q *sqlc.Queries, r *http.Request, id string) (*nodeclient.Cli
 	if err != nil {
 		return nil, sqlc.Node{}, false
 	}
+	// owner scoping: non-superadmin may only operate on nodes they own.
+	if owner, all := scope(r); !all && n.OwnerID != owner {
+		return nil, sqlc.Node{}, false
+	}
 	return nodeclient.New(n.BaseUrl, n.ApiKey), n, true
 }
 
@@ -125,6 +129,10 @@ func importProfileHandler(q *sqlc.Queries) http.HandlerFunc {
 		n, err := q.GetNode(r.Context(), nodeID)
 		if err != nil {
 			writeJSON(w, 404, map[string]string{"error": "node not found"})
+			return
+		}
+		if owner, all := scope(r); !all && n.OwnerID != owner {
+			writeJSON(w, 403, map[string]string{"error": "forbidden"})
 			return
 		}
 		var body struct {
@@ -305,18 +313,25 @@ func recoverAccountHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerF
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
-		if svc != nil && svc.Store != nil {
-			for _, na := range rows {
-				svc.Store.Recover(na.NodeID + ":" + na.ProfileID)
-			}
-		}
-		_ = q.SetNodeAccountEnabledByAccount(r.Context(), sqlc.SetNodeAccountEnabledByAccountParams{AccountID: accountID, Enabled: true})
-		_ = q.SetAccountStatus(r.Context(), sqlc.SetAccountStatusParams{ID: accountID, Status: "active"})
 		var now int64
 		if svc != nil && svc.Now != nil {
 			now = svc.Now()
 		}
-		_ = events.Record(r.Context(), q, now, events.Event{Type: "account_recovered", Target: accountID, OwnerID: acc.OwnerID})
+		if svc != nil && svc.Store != nil {
+			for _, na := range rows {
+				svc.Store.Recover(na.NodeID + ":" + na.ProfileID)
+				// Persist the cleared verdict immediately so a restart in the
+				// periodic-persist window cannot reload permanent=true and silently
+				// re-ban the account the operator just recovered.
+				_ = q.UpsertAccountState(r.Context(), sqlc.UpsertAccountStateParams{
+					NodeID: na.NodeID, ProfileID: na.ProfileID, Status: "active",
+					CooldownUntil: 0, BanStreak: 0, FailCount: 0, Permanent: false, UpdatedAt: now,
+				})
+			}
+		}
+		_ = q.SetNodeAccountEnabledByAccount(r.Context(), sqlc.SetNodeAccountEnabledByAccountParams{AccountID: accountID, Enabled: true})
+		_ = q.SetAccountStatus(r.Context(), sqlc.SetAccountStatusParams{ID: accountID, Status: "active"})
+		_ = events.Record(r.Context(), q, now, events.Event{Type: "account_recovered", Target: accountID, OwnerID: acc.OwnerID, Detail: map[string]any{"email": acc.Email}})
 		writeJSON(w, 200, map[string]any{"ok": true, "accountId": accountID})
 	}
 }
@@ -324,6 +339,10 @@ func recoverAccountHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerF
 func setAccountExpiryHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		accountID := r.PathValue("accountId")
+		if !ownsAccountID(r, q, accountID) {
+			writeJSON(w, 403, map[string]string{"error": "forbidden"})
+			return
+		}
 		var body struct {
 			ExpiresAt int64 `json:"expiresAt"`
 		}
@@ -344,6 +363,12 @@ func setAccountExpiryHandler(q *sqlc.Queries) http.HandlerFunc {
 
 func setAccountOwnerHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Reassigning ownership is a superadmin-only operation: allowing a
+		// non-superadmin to set an arbitrary owner_id is an account-theft vector.
+		if _, all := scope(r); !all {
+			writeJSON(w, 403, map[string]string{"error": "superadmin required"})
+			return
+		}
 		accountID := r.PathValue("accountId")
 		var body struct {
 			OwnerID string `json:"ownerId"`
@@ -365,6 +390,10 @@ func setAccountOwnerHandler(q *sqlc.Queries) http.HandlerFunc {
 
 func unassignAccountHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !ownsAccountID(r, q, r.PathValue("accountId")) {
+			writeJSON(w, 403, map[string]string{"error": "forbidden"})
+			return
+		}
 		if err := q.UnassignAccount(r.Context(), sqlc.UnassignAccountParams{
 			NodeID:    r.PathValue("nodeId"),
 			AccountID: r.PathValue("accountId"),

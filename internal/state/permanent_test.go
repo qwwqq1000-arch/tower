@@ -59,6 +59,40 @@ func TestAccount_PermanentDeniesDispatch(t *testing.T) {
 	}
 }
 
+// TestBreaker_PermanentViaTrialFailures reproduces the real dispatch path:
+// the breaker opens recoverably at PersistStreak, then repeated failed half-open
+// trials must escalate to a permanent ban once the streak reaches PermStreak.
+func TestBreaker_PermanentViaTrialFailures(t *testing.T) {
+	cfg := permCfg() // PersistStreak 3, PermStreak 5
+	var b Breaker
+	now := int64(1000)
+	// Open recoverably with 3 consecutive ban signals.
+	for i := 0; i < 3; i++ {
+		b.OnBanSignal(cfg, now)
+	}
+	if b.Permanent() {
+		t.Fatal("should not be permanent yet at streak 3")
+	}
+	// Drive failing half-open trials; each advances the streak by one.
+	for i := 0; i < 10 && !b.Permanent(); i++ {
+		// jump past the (growing) cooldown so the breaker is half_open
+		now = b.openUntil + 1
+		if b.State(now) != "half_open" {
+			t.Fatalf("expected half_open at now=%d, got %s", now, b.State(now))
+		}
+		if !b.TakeTrial(now) {
+			t.Fatal("expected to claim a trial")
+		}
+		b.OnTrialResult(cfg, now, false)
+	}
+	if !b.Permanent() {
+		t.Fatal("repeated failed trials must escalate to permanent ban")
+	}
+	if b.State(now+9_999_999) != "permanent" {
+		t.Fatalf("want permanent, got %s", b.State(now+9_999_999))
+	}
+}
+
 func TestBreaker_RecoverClearsPermanent(t *testing.T) {
 	cfg := permCfg()
 	var b Breaker

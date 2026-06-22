@@ -95,11 +95,20 @@ func (b *Breaker) TakeTrial(now int64) bool {
 	return true
 }
 
-// OnTrialResult closes on success or reopens (bigger backoff) on failure.
+// OnTrialResult closes on success, or on failure escalates: a failed half-open
+// recovery trial is itself a ban signal, so it advances the streak and trips the
+// permanent ban once the streak reaches PermStreak (otherwise it reopens with a
+// bigger backoff). Without this, an account that opens recoverably could never
+// climb to a permanent ban, because after opening the only further signals come
+// through trials — see OnBanSignal which handles the still-closed case.
 func (b *Breaker) OnTrialResult(cfg BreakerCfg, now int64, ok bool) {
 	if ok {
 		b.OnSuccess()
 		return
+	}
+	b.streak++
+	if cfg.PermStreak > 0 && b.streak >= cfg.PermStreak {
+		b.permanent = true
 	}
 	b.open(cfg, now)
 }

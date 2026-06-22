@@ -9,6 +9,10 @@ import (
 
 func updateNodeAccountHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !ownsAccountID(r, q, r.PathValue("accountId")) {
+			writeJSON(w, 403, map[string]string{"error": "forbidden"})
+			return
+		}
 		var b struct {
 			Egress  string
 			Weight  int32

@@ -34,6 +34,11 @@ func settleHandler(pool *pgxpool.Pool, q *sqlc.Queries) http.HandlerFunc {
 func ledgerHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tenant := r.URL.Query().Get("tenantId")
+		// owner scoping: a non-superadmin may only read their own ledger regardless
+		// of the tenantId query param.
+		if owner, all := scope(r); !all {
+			tenant = owner
+		}
 		if tenant == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenantId required"})
 			return

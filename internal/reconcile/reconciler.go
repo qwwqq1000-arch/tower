@@ -3,6 +3,7 @@ package reconcile
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
@@ -53,6 +54,11 @@ func (r *Reconciler) RunOnce(ctx context.Context) error {
 	}
 	for _, n := range nodes {
 		if !n.Enabled {
+			continue
+		}
+		// CPA nodes don't speak the meridian /settings feature protocol — skip
+		// them (mirrors the telemetry poller).
+		if strings.EqualFold(n.Kind, "cpa") {
 			continue
 		}
 		_, _ = ReconcileNode(ctx, nodeclient.New(n.BaseUrl, n.ApiKey), desired)

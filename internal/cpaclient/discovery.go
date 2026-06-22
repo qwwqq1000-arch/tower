@@ -50,7 +50,7 @@ func accountID(nodeID string, a Account) string {
 // (profile_id carries the X-CLIProxy-Account selector). Returns the number of
 // accounts discovered.
 func Sync(ctx context.Context, q *sqlc.Queries, node sqlc.Node) (int, error) {
-	if !strings.EqualFold(node.Kind, "cpa") || strings.TrimSpace(node.MgmtKey) == "" {
+	if !strings.EqualFold(node.Kind, "cpa") || strings.TrimSpace(node.MgmtKey) == "" || !node.Enabled {
 		return 0, nil
 	}
 	c := New(node.BaseUrl, node.MgmtKey)
@@ -81,9 +81,12 @@ func Sync(ctx context.Context, q *sqlc.Queries, node sqlc.Node) (int, error) {
 		}); err != nil {
 			return 0, err
 		}
-		// Best-effort quota refresh (only for claude/anthropic accounts).
-		if u, uerr := c.Usage(ctx, a.DispatchSelector()); uerr == nil && u != nil {
-			_ = q.UpsertCpaQuota(ctx, quotaParams(aid, u, time.Now().UnixMilli()))
+		// Best-effort quota refresh (only for claude/anthropic accounts — the usage
+		// endpoint is Anthropic OAuth-only).
+		if strings.EqualFold(a.Provider, "claude") || strings.EqualFold(a.Provider, "anthropic") {
+			if u, uerr := c.Usage(ctx, a.DispatchSelector()); uerr == nil && u != nil {
+				_ = q.UpsertCpaQuota(ctx, quotaParams(aid, u, time.Now().UnixMilli()))
+			}
 		}
 	}
 	return len(accounts), nil

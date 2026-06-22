@@ -98,7 +98,9 @@ function renderTargetText(
     return status ? `失败转移 · ${email} · HTTP ${status}` : `失败转移 · ${email}`;
   }
   if (type === 'account_recovered') {
-    const email = accountMap.get(target) ?? target;
+    const email = (typeof detail['email'] === 'string' && detail['email'])
+      ? (detail['email'] as string)
+      : (accountMap.get(target) ?? target);
     return `账户恢复 · ${email}`;
   }
   if (type === 'fallback') {

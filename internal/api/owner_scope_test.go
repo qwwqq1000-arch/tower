@@ -107,4 +107,35 @@ func TestOwnerScoping(t *testing.T) {
 	if !names(nodesC)["nodeC"] || !allOwnedBy(nodesC, "ownerC") {
 		t.Fatalf("admin ownerC nodes = %+v, want only ownerC-owned incl nodeC (auto-owned)", nodesC)
 	}
+
+	// --- write-path owner enforcement ---
+	do := func(method, path, sub, role string) int {
+		rr := httptest.NewRequest(method, path, nil)
+		rr.AddCookie(&http.Cookie{Name: "tower_session", Value: auth.IssueSession(secret, sub, role, nowUnix(), 3600)})
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, rr)
+		return rec.Code
+	}
+	// admin ownerB must NOT delete ownerA's node.
+	if code := do("DELETE", "/api/admin/nodes/"+nodeA, "ownerB", "admin"); code != 403 {
+		t.Fatalf("ownerB deleting nodeA: code=%d, want 403", code)
+	}
+	if !names(get("/api/admin/nodes", "root", "superadmin"))["nodeA"] {
+		t.Fatal("nodeA should still exist after forbidden delete")
+	}
+	// user management is superadmin-only (privilege-escalation guard).
+	if code := do("GET", "/api/admin/users", "ownerA", "admin"); code != 403 {
+		t.Fatalf("admin listing users: code=%d, want 403", code)
+	}
+	if code := do("GET", "/api/admin/users", "root", "superadmin"); code != 200 {
+		t.Fatalf("superadmin listing users: code=%d, want 200", code)
+	}
+	// reassigning account ownership is superadmin-only.
+	if code := do("PATCH", "/api/admin/accounts/whatever/owner", "ownerA", "admin"); code != 403 {
+		t.Fatalf("admin reassigning account owner: code=%d, want 403", code)
+	}
+	// superadmin CAN delete a node.
+	if code := do("DELETE", "/api/admin/nodes/"+nodeB, "root", "superadmin"); code != 200 {
+		t.Fatalf("superadmin deleting nodeB: code=%d, want 200", code)
+	}
 }

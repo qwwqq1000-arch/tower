@@ -77,9 +77,10 @@ interface NumberEditorProps {
   format: (val: number) => string;
   step?: string;
   title?: string;
+  integer?: boolean;
 }
 
-function NumberEditor({ userId, current, onChanged, save, format, step = '0.01', title }: NumberEditorProps) {
+function NumberEditor({ userId, current, onChanged, save, format, step = '0.01', title, integer = false }: NumberEditorProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(String(current));
   const [busy, setBusy] = useState(false);
@@ -90,7 +91,9 @@ function NumberEditor({ userId, current, onChanged, save, format, step = '0.01',
   }, [current, editing]);
 
   async function commit() {
-    const val = parseFloat(draft);
+    // Integer fields (e.g. fallback channel count → Go int32) must not send a
+    // fractional value, which the backend would reject with a 400.
+    const val = integer ? Math.round(parseFloat(draft)) : parseFloat(draft);
     if (isNaN(val)) { setEditing(false); setDraft(String(current)); return; }
     setBusy(true);
     try {
@@ -342,6 +345,7 @@ export default function Users() {
                             save={setUserFallbackLimit}
                             format={(v) => String(v)}
                             step="1"
+                            integer
                             title="点击编辑保底渠道数量上限"
                           />
                         </td>
@@ -412,6 +416,7 @@ export default function Users() {
                           save={setUserFallbackLimit}
                           format={(v) => String(v)}
                           step="1"
+                            integer
                           title="点击编辑保底渠道数量上限"
                         />
                       </div>

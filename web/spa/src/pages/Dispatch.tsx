@@ -267,13 +267,16 @@ export function renderEventDetail(
     return email ?? (target && !target.startsWith('n_') && !target.startsWith('fc_') ? target : '');
   }
   if (type === 'ban_detected' || type === 'ban_permanent' || type === 'retry' || type === 'account_recovered') {
-    const email = accountNames?.get(target) ?? target;
-    let status: number | undefined; let streak: number | undefined;
+    let status: number | undefined; let streak: number | undefined; let detailEmail: string | undefined;
     try {
       const d: any = typeof detail === 'string' ? JSON.parse(detail) : detail;
       if (d && typeof d.status === 'number') status = d.status;
       if (d && typeof d.streak === 'number') streak = d.streak;
+      if (d && typeof d.email === 'string' && d.email) detailEmail = d.email;
     } catch { /* ignore */ }
+    // account_recovered's target is the raw account id (not node:profile), so the
+    // accountNames map misses — prefer the email carried in detail.
+    const email = detailEmail ?? accountNames?.get(target) ?? target;
     const head = type === 'ban_permanent' ? '永久封禁' : type === 'retry' ? '失败转移' : type === 'account_recovered' ? '账户恢复' : '封禁触发';
     const parts = [head, email];
     if (status) parts.push(`HTTP ${status}`);

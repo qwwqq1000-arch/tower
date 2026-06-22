@@ -166,6 +166,12 @@ func listEventsHandler(q *sqlc.Queries) http.HandlerFunc {
 
 func listAuditHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// The audit log is a global record with no per-owner dimension; restrict
+		// it to superadmin rather than leaking cross-owner activity.
+		if _, all := scope(r); !all {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "superadmin required"})
+			return
+		}
 		rows, err := q.ListRecentAudit(r.Context(), limitParam(r, 100))
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})

@@ -31,12 +31,16 @@ type Orchestrator struct {
 	OnAttempt   func(key string, status int, ok bool, banned bool) // optional: fired after each attempt
 }
 
-// attempt sends one request to key with guaranteed settlement. ok reports a clean 2xx.
-func (o *Orchestrator) attempt(ctx context.Context, model, key string, px Proxy) (res ProxyResult, ok bool) {
-	dispatched, trial := o.Store.TryDispatchTrial(key, model, o.Cfg)
-	if !dispatched {
-		return ProxyResult{}, false
+// attempt sends one request to key with guaranteed settlement. ok reports a clean
+// 2xx; dispatched reports whether a slot was actually claimed and the request sent
+// (false means the account was not contacted — breaker open/permanent/slot busy/
+// rate-limited — so the caller must not log it as a failed attempt or count it).
+func (o *Orchestrator) attempt(ctx context.Context, model, key string, px Proxy) (res ProxyResult, ok, dispatched bool) {
+	d, trial := o.Store.TryDispatchTrial(key, model, o.Cfg)
+	if !d {
+		return ProxyResult{}, false, false
 	}
+	dispatched = true
 	// sendReturned tracks whether Send returned normally (vs panicked).
 	// On panic we release the slot but skip the ban signal — a proxy crash is
 	// not a ban signal and must not open the breaker.
@@ -71,12 +75,12 @@ func (o *Orchestrator) attempt(ctx context.Context, model, key string, px Proxy)
 	r, err := px.Send(ctx, key)
 	sendReturned = true
 	if err != nil {
-		return ProxyResult{}, false
+		return ProxyResult{}, false, true
 	}
 	if r.Status >= 200 && r.Status < 300 && !r.Banned {
-		return r, true
+		return r, true, true
 	}
-	return r, false
+	return r, false, true
 }
 
 // Dispatch tries accounts in order until one returns a clean 2xx or attempts run out.
@@ -88,8 +92,13 @@ func (o *Orchestrator) Dispatch(ctx context.Context, model string, order []strin
 		if attempts >= o.MaxAttempts {
 			break
 		}
+		res, ok, dispatched := o.attempt(ctx, model, key, px)
+		if !dispatched {
+			// account not contacted (breaker open/permanent/slot busy/limited) —
+			// not a real attempt: don't count it, log it, or emit a retry event.
+			continue
+		}
 		attempts++
-		res, ok := o.attempt(ctx, model, key, px)
 		if o.OnAttempt != nil {
 			o.OnAttempt(key, res.Status, ok, res.Banned)
 		}

@@ -210,7 +210,6 @@ const upsertCpaAccount = `-- name: UpsertCpaAccount :exec
 INSERT INTO accounts (id, owner_id, email, subscription_type, status)
 VALUES ($1,$2,$3,$4,$5)
 ON CONFLICT (id) DO UPDATE SET
-  owner_id = EXCLUDED.owner_id,
   email = EXCLUDED.email,
   subscription_type = EXCLUDED.subscription_type,
   status = EXCLUDED.status
@@ -224,6 +223,8 @@ type UpsertCpaAccountParams struct {
 	Status           string `json:"status"`
 }
 
+// owner_id is set on first INSERT only; discovery must NOT overwrite an admin's
+// later owner reassignment (PATCH /accounts/{id}/owner) on subsequent ticks.
 func (q *Queries) UpsertCpaAccount(ctx context.Context, arg UpsertCpaAccountParams) error {
 	_, err := q.db.Exec(ctx, upsertCpaAccount,
 		arg.ID,

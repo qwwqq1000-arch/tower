@@ -29,6 +29,7 @@ type fallbackBody struct {
 
 func listFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		owner, all := scope(r)
 		rows, err := q.ListAllFallbackChannels(r.Context())
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
@@ -37,6 +38,9 @@ func listFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 		today := todayDayStr()
 		out := make([]map[string]any, 0, len(rows))
 		for _, c := range rows {
+			if !all && c.OwnerID != owner { // owner scoping: non-superadmin sees only own
+				continue
+			}
 			todaySpend, _ := q.GetFallbackSpendToday(r.Context(), sqlc.GetFallbackSpendTodayParams{ChannelID: c.ID, Day: today})
 			totalSpend, _ := q.GetFallbackSpendTotal(r.Context(), c.ID)
 			out = append(out, map[string]any{
@@ -75,6 +79,11 @@ func createFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 400, map[string]string{"error": "name/baseUrl required"})
 			return
 		}
+		// owner default: a non-superadmin owns the channels it creates (cannot
+		// create channels for another tenant, bypassing per-tenant limits).
+		if owner, all := scope(r); !all {
+			b.OwnerId = owner
+		}
 		c, err := q.CreateFallbackChannel(r.Context(), sqlc.CreateFallbackChannelParams{
 			ID:              randHex("fc_"),
 			OwnerID:         b.OwnerId,
@@ -102,6 +111,10 @@ func createFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 
 func updateFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !ownsFallbackID(r, q, r.PathValue("id")) {
+			writeJSON(w, 403, map[string]string{"error": "forbidden"})
+			return
+		}
 		var b fallbackBody
 		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
 			writeJSON(w, 400, map[string]string{"error": "bad body"})
@@ -140,6 +153,10 @@ func updateFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 
 func enableFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !ownsFallbackID(r, q, r.PathValue("id")) {
+			writeJSON(w, 403, map[string]string{"error": "forbidden"})
+			return
+		}
 		var b struct{ Enabled bool }
 		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
 			writeJSON(w, 400, map[string]string{"error": "bad body"})
@@ -158,6 +175,10 @@ func enableFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 
 func deleteFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !ownsFallbackID(r, q, r.PathValue("id")) {
+			writeJSON(w, 403, map[string]string{"error": "forbidden"})
+			return
+		}
 		if err := q.DeleteFallbackChannel(r.Context(), r.PathValue("id")); err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
@@ -172,6 +193,10 @@ func fetchFallbackBalanceHandler(q *sqlc.Queries) http.HandlerFunc {
 		ch, err := q.GetFallbackChannel(r.Context(), id)
 		if err != nil {
 			writeJSON(w, 404, map[string]string{"error": "channel not found"})
+			return
+		}
+		if owner, all := scope(r); !all && ch.OwnerID != owner {
+			writeJSON(w, 403, map[string]string{"error": "forbidden"})
 			return
 		}
 

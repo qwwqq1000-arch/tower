@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/qwwqq1000-arch/tower/internal/auth"
+	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 )
 
 type ctxKey string
@@ -62,4 +63,59 @@ func requireAdmin(secret string, next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	})
+}
+
+// requireSuperadmin restricts a route to the superadmin role. Used for global,
+// non-owner-scoped management (user/tenant administration) where an owner_id
+// basis does not exist and where allowing admin/operator would permit privilege
+// escalation (e.g. promoting oneself to superadmin).
+func requireSuperadmin(secret string, next http.HandlerFunc) http.HandlerFunc {
+	return requireSession(secret, func(w http.ResponseWriter, r *http.Request) {
+		p, ok := sessionFrom(r)
+		if !ok || p.Role != "superadmin" {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "superadmin required"})
+			return
+		}
+		next(w, r)
+	})
+}
+
+// ownsNodeID reports whether the caller may act on the node: superadmin always,
+// otherwise only when the node's owner matches the caller. Missing node → false.
+func ownsNodeID(r *http.Request, q *sqlc.Queries, nodeID string) bool {
+	owner, all := scope(r)
+	if all {
+		return true
+	}
+	n, err := q.GetNode(r.Context(), nodeID)
+	if err != nil {
+		return false
+	}
+	return n.OwnerID == owner
+}
+
+// ownsAccountID reports whether the caller may act on the account (superadmin or owner).
+func ownsAccountID(r *http.Request, q *sqlc.Queries, accountID string) bool {
+	owner, all := scope(r)
+	if all {
+		return true
+	}
+	a, err := q.GetAccount(r.Context(), accountID)
+	if err != nil {
+		return false
+	}
+	return a.OwnerID == owner
+}
+
+// ownsFallbackID reports whether the caller may act on the fallback channel.
+func ownsFallbackID(r *http.Request, q *sqlc.Queries, id string) bool {
+	owner, all := scope(r)
+	if all {
+		return true
+	}
+	c, err := q.GetFallbackChannel(r.Context(), id)
+	if err != nil {
+		return false
+	}
+	return c.OwnerID == owner
 }

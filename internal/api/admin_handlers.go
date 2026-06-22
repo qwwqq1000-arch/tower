@@ -140,6 +140,10 @@ func listNodesHandler(q *sqlc.Queries) http.HandlerFunc {
 func deleteNodeHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
+		if !ownsNodeID(r, q, id) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+			return
+		}
 		if err := q.DeleteNode(r.Context(), id); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
@@ -152,6 +156,11 @@ func createDispatchKeyHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct{ Label, OwnerId string }
 		_ = json.NewDecoder(r.Body).Decode(&body)
+		// owner default: a non-superadmin owns the keys it creates (cannot mint
+		// keys for another tenant).
+		if owner, all := scope(r); !all {
+			body.OwnerId = owner
+		}
 		plaintext, prefix, hash, salt, err := auth.NewDispatchKey()
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -189,7 +198,27 @@ func listDispatchKeysHandler(q *sqlc.Queries) http.HandlerFunc {
 
 func deleteDispatchKeyHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if err := q.DisableDispatchKey(r.Context(), r.PathValue("id")); err != nil {
+		id := r.PathValue("id")
+		// owner scoping: non-superadmin may only disable keys they own.
+		if owner, all := scope(r); !all {
+			rows, err := q.ListAllDispatchKeys(r.Context())
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+			owned := false
+			for _, k := range rows {
+				if k.ID == id {
+					owned = k.OwnerID == owner
+					break
+				}
+			}
+			if !owned {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+				return
+			}
+		}
+		if err := q.DisableDispatchKey(r.Context(), id); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
@@ -245,10 +274,14 @@ func dashboardHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
 		}
 		nodes := map[string]any{"total": len(rows), "enabled": enabled, "byStatus": byStatus, "list": list}
 
-		// accounts count
+		// accounts count (owner-scoped for non-superadmin)
 		accTotal := 0
 		if accs, err := q.ListNodeAccountsAll(ctx); err == nil {
-			accTotal = len(accs)
+			for _, a := range accs {
+				if all || a.AcctOwnerID == owner {
+					accTotal++
+				}
+			}
 		}
 
 		// today consumption
@@ -257,15 +290,22 @@ func dashboardHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
 		var inTok, outTok int64
 		var cost float64
 		byModel := []map[string]any{}
-		if modelRows, err := q.TodayDispatchByModel(ctx, since); err == nil {
-			for _, mr := range modelRows {
-				reqN += int(mr.Requests)
-				okN += int(mr.Ok)
-				inTok += mr.TokensIn
-				outTok += mr.TokensOut
-				cost += mr.Cost
-				byModel = append(byModel, map[string]any{"model": mr.Model, "requests": mr.Requests, "tokensIn": mr.TokensIn, "tokensOut": mr.TokensOut, "costUsd": mr.Cost})
+		if all {
+			if modelRows, err := q.TodayDispatchByModel(ctx, since); err == nil {
+				for _, mr := range modelRows {
+					reqN += int(mr.Requests)
+					okN += int(mr.Ok)
+					inTok += mr.TokensIn
+					outTok += mr.TokensOut
+					cost += mr.Cost
+					byModel = append(byModel, map[string]any{"model": mr.Model, "requests": mr.Requests, "tokensIn": mr.TokensIn, "tokensOut": mr.TokensOut, "costUsd": mr.Cost})
+				}
 			}
+		} else if td, err := q.TodayDispatchForOwner(ctx, sqlc.TodayDispatchForOwnerParams{OwnerID: owner, Ts: since}); err == nil {
+			// owner-scoped totals (per-model breakdown is superadmin-only)
+			reqN = int(td.Requests)
+			okN = int(td.Requests)
+			cost = td.Cost
 		}
 		successRate := 0.0
 		if reqN > 0 {
@@ -273,8 +313,13 @@ func dashboardHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
 		}
 		today := map[string]any{"requests": reqN, "ok": okN, "successRate": successRate, "tokensIn": inTok, "tokensOut": outTok, "costUsd": cost, "byModel": byModel}
 
-		// total accumulated cost
-		totalCost, _ := q.SumAllCost(ctx)
+		// total accumulated cost (owner-scoped for non-superadmin)
+		var totalCost float64
+		if all {
+			totalCost, _ = q.SumAllCost(ctx)
+		} else {
+			totalCost, _ = q.SumCostForOwner(ctx, owner)
+		}
 
 		// hosting fees per tenant
 		hosting := []map[string]any{}
