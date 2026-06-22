@@ -71,6 +71,7 @@ func createNodeHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc 
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "node.create", "node:"+n.ID, nil, map[string]any{"name": n.Name, "baseUrl": n.BaseUrl, "ownerId": n.OwnerID, "kind": n.Kind})
 		writeJSON(w, http.StatusOK, map[string]any{"id": n.ID, "name": n.Name, "baseUrl": n.BaseUrl, "ownerId": n.OwnerID, "enabled": n.Enabled, "kind": n.Kind})
 	}
 }
@@ -175,6 +176,7 @@ func deleteNodeHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc 
 		if svc != nil && svc.Store != nil {
 			svc.Store.RemoveNode(id)
 		}
+		recordAudit(r, q, "node.delete", "node:"+id, nil, nil)
 		writeJSON(w, http.StatusOK, map[string]string{"ok": "true"})
 	}
 }
@@ -200,6 +202,7 @@ func createDispatchKeyHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "dispatchKey.create", "key:"+id, nil, map[string]any{"label": body.Label, "ownerId": body.OwnerId, "prefix": prefix})
 		writeJSON(w, http.StatusOK, map[string]string{"id": id, "key": plaintext})
 	}
 }
@@ -249,6 +252,7 @@ func deleteDispatchKeyHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "dispatchKey.delete", "key:"+id, nil, nil)
 		writeJSON(w, http.StatusOK, map[string]string{"ok": "true"})
 	}
 }

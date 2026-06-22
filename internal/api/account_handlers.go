@@ -341,6 +341,7 @@ func recoverAccountHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerF
 		_ = q.SetNodeAccountEnabledByAccount(r.Context(), sqlc.SetNodeAccountEnabledByAccountParams{AccountID: accountID, Enabled: true})
 		_ = q.SetAccountStatus(r.Context(), sqlc.SetAccountStatusParams{ID: accountID, Status: "active"})
 		_ = events.Record(r.Context(), q, now, events.Event{Type: "account_recovered", Target: accountID, OwnerID: acc.OwnerID, Detail: map[string]any{"email": acc.Email}})
+		recordAudit(r, q, "account.recover", "account:"+accountID, nil, map[string]any{"email": acc.Email})
 		writeJSON(w, 200, map[string]any{"ok": true, "accountId": accountID})
 	}
 }
@@ -366,6 +367,7 @@ func setAccountExpiryHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "account.expiry", "account:"+accountID, nil, map[string]any{"expiresAt": body.ExpiresAt})
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }
@@ -393,6 +395,7 @@ func setAccountOwnerHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "account.owner", "account:"+accountID, nil, map[string]any{"ownerId": body.OwnerID})
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }

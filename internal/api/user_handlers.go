@@ -53,6 +53,7 @@ func createUserHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "user.create", "tenant:"+id, nil, map[string]any{"username": b.Username, "role": b.Role})
 		writeJSON(w, 200, map[string]string{"id": id})
 	}
 }
@@ -68,6 +69,7 @@ func deleteUserHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "user.delete", "tenant:"+id, nil, nil)
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }
@@ -86,6 +88,7 @@ func setUserRoleHandler(q *sqlc.Queries) http.HandlerFunc {
 		// Revoke any outstanding sessions: the new role must not be carried by a
 		// token issued under the old role.
 		_ = q.BumpSessionEpoch(r.Context(), r.PathValue("id"))
+		recordAudit(r, q, "user.role", "tenant:"+r.PathValue("id"), nil, map[string]any{"role": b.Role})
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }
@@ -101,6 +104,7 @@ func setUserHostingRateHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "user.hostingRate", "tenant:"+r.PathValue("id"), nil, map[string]any{"rate": b.Rate})
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }
@@ -116,6 +120,7 @@ func setUserChannelRateHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "user.channelRate", "tenant:"+r.PathValue("id"), nil, map[string]any{"rate": b.Rate})
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }
@@ -131,6 +136,7 @@ func setUserFallbackLimitHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "user.fallbackLimit", "tenant:"+r.PathValue("id"), nil, map[string]any{"limit": b.Limit})
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }

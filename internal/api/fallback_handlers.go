@@ -123,6 +123,7 @@ func createFallbackHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerF
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "fallback.create", "channel:"+c.ID, nil, map[string]any{"name": b.Name, "baseUrl": b.BaseUrl, "ownerId": b.OwnerId})
 		writeJSON(w, 200, map[string]string{"id": c.ID})
 	}
 }
@@ -169,6 +170,7 @@ func updateFallbackHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerF
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "fallback.update", "channel:"+r.PathValue("id"), nil, map[string]any{"name": b.Name, "baseUrl": b.BaseUrl})
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }
@@ -191,6 +193,7 @@ func enableFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "fallback.enable", "channel:"+r.PathValue("id"), nil, map[string]any{"enabled": b.Enabled})
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }
@@ -205,6 +208,7 @@ func deleteFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "fallback.delete", "channel:"+r.PathValue("id"), nil, nil)
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }

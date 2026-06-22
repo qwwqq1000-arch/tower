@@ -74,6 +74,7 @@ func putGlobalPolicyHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "policy.update", "global", nil, json.RawMessage(out))
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }
