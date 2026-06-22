@@ -28,12 +28,9 @@ func fillChannelSlots(store *state.Store, channelID string, cap int) {
 // TestViaChannel_RejectsWhenSlotsFull asserts that when a fallback channel's
 // MaxConcurrent slot set is full, viaChannel does NOT forward the request to the
 // upstream channel and instead returns backpressure (503). Regression for
-// fallback-2: MaxConcurrent must actually cap concurrency. Uses a real DB because
-// the reject path logs a dispatch row; skips without TEST_DATABASE_URL.
+// fallback-2: MaxConcurrent must actually cap concurrency. Runs without a DB: the
+// reject path returns the 503 Outcome before any persistence (Q stays nil).
 func TestViaChannel_RejectsWhenSlotsFull(t *testing.T) {
-	q, closeDB := setupDB(t)
-	defer closeDB()
-
 	var hits int64
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt64(&hits, 1)
@@ -42,7 +39,7 @@ func TestViaChannel_RejectsWhenSlotsFull(t *testing.T) {
 	defer up.Close()
 
 	store := state.NewStore(func() int64 { return 0 }, func(min, max int64) int64 { return min })
-	svc := &Service{Q: q, Store: store, Base: policy.Defaults(), Now: func() int64 { return 0 }}
+	svc := &Service{Store: store, Base: policy.Defaults(), Now: func() int64 { return 0 }}
 
 	ch := sqlc.FallbackChannel{ID: "ch_full", Name: "full", BaseUrl: up.URL, ApiKey: "k", MaxConcurrent: 1}
 	fillChannelSlots(store, ch.ID, int(ch.MaxConcurrent))

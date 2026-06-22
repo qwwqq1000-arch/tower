@@ -525,9 +525,11 @@ func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []
 	bk := state.BreakerCfg{PersistStreak: 1 << 30, BaseMs: 0, MaxMs: 0, Mult: 1}
 	// TryDispatch returns false when the channel's slot set is full (MaxConcurrent
 	// reached). Reject with backpressure (503) rather than forwarding anyway, so
-	// the concurrency cap is actually enforced (fallback-2).
+	// the concurrency cap is actually enforced (fallback-2). Return the 503 Outcome
+	// before any Q persistence (mirrors streamChannel's reject path): the caller
+	// receiving this Outcome is responsible for its own logging, and keeping this
+	// path Q-free lets it be unit-tested without a database.
 	if !s.Store.TryDispatch(key, model, bk) {
-		s.logErr(ctx, ownerID, model, 503, latencyMs, reason)
 		return Outcome{Status: 503, Body: `{"error":"fallback channel at capacity"}`, Target: "fallback:" + ch.ID, Reason: reason}
 	}
 	defer s.Store.Complete(key, int64(ch.CooldownMs), int64(ch.CooldownMs))
