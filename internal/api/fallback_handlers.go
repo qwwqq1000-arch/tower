@@ -84,6 +84,20 @@ func createFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 		if owner, all := scope(r); !all {
 			b.OwnerId = owner
 		}
+		// Enforce per-tenant fallback channel limit when the channel is
+		// owner-scoped (b.OwnerId set). Default (or 0) = max 1. This mirrors
+		// meCreateFallbackHandler so a superadmin cannot bypass the limit on
+		// behalf of a tenant by using the admin endpoint.
+		if b.OwnerId != "" {
+			limit := int32(1)
+			if t, err := q.GetTenantByID(r.Context(), b.OwnerId); err == nil && t.FallbackLimit > 0 {
+				limit = t.FallbackLimit
+			}
+			if existing, err := q.ListFallbackChannelsByOwner(r.Context(), b.OwnerId); err == nil && int32(len(existing)) >= limit {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "fallback channel limit reached"})
+				return
+			}
+		}
 		c, err := q.CreateFallbackChannel(r.Context(), sqlc.CreateFallbackChannelParams{
 			ID:              randHex("fc_"),
 			OwnerID:         b.OwnerId,
