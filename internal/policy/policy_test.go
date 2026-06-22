@@ -27,6 +27,24 @@ func TestResolve_LayeredOverride(t *testing.T) {
 	}
 }
 
+func TestResolve_TenantOverGlobal(t *testing.T) {
+	base := Defaults()
+	global := Patch{MaxConcurrent: ptrI(5), FallbackEnabled: ptrB(true)}
+	tenant := Patch{MaxConcurrent: ptrI(2)} // tenant layer wins for MaxConcurrent
+	got := Resolve(base, global, tenant)
+	if got.MaxConcurrent != 2 {
+		t.Fatalf("MaxConcurrent=%d, want 2 (tenant patch wins over global)", got.MaxConcurrent)
+	}
+	// Global-only field is preserved when tenant does not override it.
+	if !got.FallbackEnabled {
+		t.Fatal("FallbackEnabled should remain true from global layer")
+	}
+	// Unset-in-both fields keep the base value.
+	if got.BanPersistStreak != base.BanPersistStreak {
+		t.Fatal("unset fields keep base value")
+	}
+}
+
 func TestResolve_NilPatchNoChange(t *testing.T) {
 	base := Defaults()
 	got := Resolve(base, Patch{})

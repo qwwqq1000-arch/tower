@@ -77,6 +77,55 @@ func putGlobalPolicyHandler(q *sqlc.Queries) http.HandlerFunc {
 	}
 }
 
+// putTenantPolicyHandler stores a per-tenant policy override (scope_type "owner",
+// scope_id = the tenant/owner id from the path). The dispatch service resolves
+// this layer over the global policy so a tenant's override wins. Like the global
+// handler it merges the incoming patch over the existing tenant params so a
+// partial save only updates the provided keys. Superadmin-gated by the router.
+func putTenantPolicyHandler(q *sqlc.Queries) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		tenant := r.PathValue("id")
+		if tenant == "" {
+			writeJSON(w, 400, map[string]string{"error": "tenant id required"})
+			return
+		}
+		raw, _ := readAll(r)
+		if !validJSON(raw) {
+			writeJSON(w, 400, map[string]string{"error": "invalid json"})
+			return
+		}
+		// Merge the incoming patch over the existing tenant policy params so a
+		// partial save only updates the provided keys (never wipes other settings).
+		merged := map[string]json.RawMessage{}
+		if rows, err := q.ListPolicies(r.Context()); err == nil {
+			for _, p := range rows {
+				if p.ScopeType == "owner" && p.ScopeID == tenant {
+					_ = json.Unmarshal(p.Params, &merged)
+					break
+				}
+			}
+		}
+		var incoming map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &incoming); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "patch must be a JSON object"})
+			return
+		}
+		for k, v := range incoming {
+			merged[k] = v
+		}
+		out, err := json.Marshal(merged)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := q.UpsertPolicy(r.Context(), sqlc.UpsertPolicyParams{ScopeType: "owner", ScopeID: tenant, Params: out, UpdatedAt: time.Now().UnixMilli()}); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, 200, map[string]string{"ok": "true"})
+	}
+}
+
 func dryRunPolicyHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var patch policy.Patch

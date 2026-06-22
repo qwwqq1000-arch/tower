@@ -98,7 +98,7 @@ func parseUsage(body string) (in, out, cacheRead, cache5m, cache1h int64) {
 func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string, body []byte) Outcome {
 	start := time.Now()
 
-	cfg := s.resolveConfig(ctx)
+	cfg := s.resolveConfig(ctx, ownerID)
 	breaker := state.BreakerCfg{
 		PersistStreak: cfg.BanPersistStreak, PermStreak: cfg.PermanentBanStreak,
 		BaseMs: cfg.CooldownBaseMs, MaxMs: cfg.CooldownMaxMs, Mult: cfg.CooldownMult,
@@ -219,19 +219,36 @@ func (s *Service) applyAffinity(conv string, order []string, now int64) []string
 	return reordered
 }
 
-func (s *Service) resolveConfig(ctx context.Context) policy.Config {
+// resolveConfig resolves the effective 封控 policy for the given dispatch owner by
+// applying the global layer first, then the owner's (tenant) layer over it, so a
+// per-tenant override wins over the global default. ownerID=="" (admin/unowned
+// dispatch key) has no tenant layer and resolves to global-over-base.
+func (s *Service) resolveConfig(ctx context.Context, ownerID string) policy.Config {
 	rows, err := s.Q.ListPolicies(ctx)
 	if err != nil {
 		return s.Base
 	}
-	var patches []policy.Patch
+	var globalPatch, tenantPatch *policy.Patch
 	for _, r := range rows {
-		if r.ScopeType == "global" {
+		switch {
+		case r.ScopeType == "global":
 			var p policy.Patch
 			if json.Unmarshal(r.Params, &p) == nil {
-				patches = append(patches, p)
+				globalPatch = &p
+			}
+		case ownerID != "" && r.ScopeType == "owner" && r.ScopeID == ownerID:
+			var p policy.Patch
+			if json.Unmarshal(r.Params, &p) == nil {
+				tenantPatch = &p
 			}
 		}
+	}
+	patches := make([]policy.Patch, 0, 2)
+	if globalPatch != nil {
+		patches = append(patches, *globalPatch)
+	}
+	if tenantPatch != nil {
+		patches = append(patches, *tenantPatch)
 	}
 	return policy.Resolve(s.Base, patches...)
 }
@@ -673,7 +690,7 @@ func flushCopy(dst http.ResponseWriter, src io.Reader) {
 // DispatchStream routes a streaming request: it may fail over to another account
 // before the first byte; once streaming to the client starts, it commits.
 func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, ownerID, model string, body []byte) Outcome {
-	cfg := s.resolveConfig(ctx)
+	cfg := s.resolveConfig(ctx, ownerID)
 	breaker := state.BreakerCfg{
 		PersistStreak: cfg.BanPersistStreak, PermStreak: cfg.PermanentBanStreak,
 		BaseMs: cfg.CooldownBaseMs, MaxMs: cfg.CooldownMaxMs, Mult: cfg.CooldownMult,
