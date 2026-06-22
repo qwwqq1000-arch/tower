@@ -110,3 +110,46 @@ func TestAdminNodesAndKeys(t *testing.T) {
 		t.Fatalf("viewer status=%d, want 403", rec5.Code)
 	}
 }
+
+func TestCreateNodeForceOwner(t *testing.T) {
+	url := os.Getenv("TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	if err := db.Migrate(ctx, url); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	pool, err := db.Connect(ctx, url)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer pool.Close()
+	q := sqlc.New(pool)
+
+	const secret = "test-secret-padding-to-32-chars!"
+	router := NewRouter(pool, secret, nil, q, false)
+
+	// Create an admin session with a specific owner ID
+	adminCookie := seedSessionCookie(t, ctx, q, secret, "u_admin1", "admin")
+
+	// Try to create a node with a different ownerId in the body
+	foreignOwner := "u_admin2"
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/nodes",
+		strings.NewReader(`{"name":"n1","baseUrl":"http://x:3456","apiKey":"k","ownerId":"`+foreignOwner+`"}`))
+	req.AddCookie(adminCookie)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create node status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Verify the node was created with the caller's owner, not the foreign one
+	var nodeResp struct{ ID, OwnerId string }
+	if err := json.NewDecoder(rec.Body).Decode(&nodeResp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if nodeResp.OwnerId != "u_admin1" {
+		t.Fatalf("expected ownerId=u_admin1 (caller), got %q (body supplied %q)", nodeResp.OwnerId, foreignOwner)
+	}
+}

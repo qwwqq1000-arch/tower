@@ -53,10 +53,10 @@ func createNodeHandler(q *sqlc.Queries) http.HandlerFunc {
 		if kind != "cpa" {
 			kind = "meridian"
 		}
-		// Owner default: a non-superadmin that does not specify an owner owns the
-		// node it creates (so it remains visible under owner scoping). superadmin
-		// may leave it empty (global) or assign explicitly.
-		if owner, all := scope(r); !all && body.OwnerId == "" {
+		// Owner enforcement: a non-superadmin must own the node they create.
+		// Non-superadmin: force owner to caller's owner regardless of body.
+		// Superadmin: use body value (may be empty for global) or leave empty.
+		if owner, all := scope(r); !all {
 			body.OwnerId = owner
 		}
 		n, err := q.CreateNode(r.Context(), sqlc.CreateNodeParams{
