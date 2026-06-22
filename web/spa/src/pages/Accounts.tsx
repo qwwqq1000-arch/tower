@@ -87,7 +87,7 @@ function QuotaBadge({
   let cls = 'bg-green-500/20 text-green-400 border-green-500/40';
   if (utilization >= 0.9) cls = 'bg-red-500/20 text-red-400 border-red-500/40';
   else if (utilization >= 0.7) cls = 'bg-yellow-500/20 text-yellow-400 border-yellow-500/40';
-  const resetStr = utilization >= 0.5 ? fmtResetTime(resetsAt) : null;
+  const resetStr = resetsAt && resetsAt > 0 ? fmtResetTime(resetsAt) : null;
   return (
     <span className="inline-flex flex-col items-start gap-0">
       <span className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-mono ${cls}`}>

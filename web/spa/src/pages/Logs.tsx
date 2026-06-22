@@ -75,7 +75,7 @@ function LogRow({ row, channelMap, accountMap }: { row: LogEntry; channelMap: Ma
     <tr className="border-t border-line hover:bg-line/20 transition text-sm">
       <td className="px-3 py-2 text-xs text-muted whitespace-nowrap font-mono">{fmtTime(row.ts)}</td>
       <td className="px-3 py-2 text-ink truncate max-w-[140px]" title={row.model}>{row.model || '—'}</td>
-      <td className="px-3 py-2 text-ink truncate max-w-[120px] font-mono text-xs" title={row.target}>
+      <td className="px-3 py-2 text-ink truncate max-w-[120px] font-mono text-xs">
         {targetLabel}
       </td>
       <td className="px-3 py-2">{statusBadge(row.status, row.httpStatus)}</td>
