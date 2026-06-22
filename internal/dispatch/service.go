@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/qwwqq1000-arch/tower/internal/billing"
+	"github.com/qwwqq1000-arch/tower/internal/crypto"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 	"github.com/qwwqq1000-arch/tower/internal/events"
 	"github.com/qwwqq1000-arch/tower/internal/fallback"
@@ -29,15 +30,21 @@ type Service struct {
 	Now   func() int64
 	sess  *session.Store
 
+	// Cipher is the master-key AES-GCM cipher threaded in from the runtime
+	// (vault-crypto-1). It is used to decrypt channel/account secrets just
+	// before use (vault-crypto-3). May be nil in tests that don't touch secrets.
+	Cipher *crypto.Cipher
+
 	// scaledUp tracks owners for which reserve accounts were last activated,
 	// to deduplicate scale_up / scale_down events.
 	scaledUpMu sync.Mutex
 	scaledUp   map[string]bool
 }
 
-// NewService builds a dispatch Service.
-func NewService(q *sqlc.Queries, store *state.Store, base policy.Config, now func() int64) *Service {
-	return &Service{Q: q, Store: store, Base: base, Now: now, sess: session.NewStore(), scaledUp: make(map[string]bool)}
+// NewService builds a dispatch Service. cipher is the runtime master-key cipher
+// (vault-crypto-1) used to decrypt secrets at use; it may be nil.
+func NewService(q *sqlc.Queries, store *state.Store, base policy.Config, now func() int64, cipher *crypto.Cipher) *Service {
+	return &Service{Q: q, Store: store, Base: base, Now: now, sess: session.NewStore(), Cipher: cipher, scaledUp: make(map[string]bool)}
 }
 
 // matchesAny reports whether body contains any of kws (case-insensitive).

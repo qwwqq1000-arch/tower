@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/qwwqq1000-arch/tower/internal/auth"
+	"github.com/qwwqq1000-arch/tower/internal/crypto"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 	"github.com/qwwqq1000-arch/tower/internal/dispatch"
 	"github.com/qwwqq1000-arch/tower/web"
@@ -17,7 +18,11 @@ import (
 // NewRouter builds the HTTP handler. pool may be nil (health reports degraded).
 // svc and q may be nil for test/partial setups; the dispatch route is only registered when svc != nil.
 // secureCookies controls the Secure flag on the session cookie; set true only for TLS deployments.
-func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc.Queries, secureCookies bool) http.Handler {
+// cipher is the runtime master-key cipher (vault-crypto-1) made available to
+// handlers that encrypt secrets on write / decrypt on read (vault-crypto-2/3); it
+// may be nil in tests that do not exercise secret persistence.
+func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc.Queries, secureCookies bool, cipher *crypto.Cipher) http.Handler {
+	_ = cipher // threaded for vault-crypto-2/3; handlers adopt it in those tasks.
 	mux := http.NewServeMux()
 	loginThrottle := auth.NewThrottle(5, time.Minute, 15*time.Minute)
 	// DB-backed permission loader for requirePerm (turns the seeded role

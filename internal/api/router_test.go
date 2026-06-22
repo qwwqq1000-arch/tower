@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,12 +10,44 @@ import (
 	"testing"
 
 	"github.com/qwwqq1000-arch/tower/internal/auth"
+	"github.com/qwwqq1000-arch/tower/internal/crypto"
 	"github.com/qwwqq1000-arch/tower/internal/db"
+	"github.com/qwwqq1000-arch/tower/internal/dispatch"
+	"github.com/qwwqq1000-arch/tower/internal/policy"
+	"github.com/qwwqq1000-arch/tower/internal/state"
 )
+
+// TestServerConstructsWithCipher is a smoke test for vault-crypto-1: the master
+// key Cipher is threaded into the runtime (dispatch service + router) rather than
+// discarded. It proves the wiring compiles and the server builds with a real
+// cipher in hand, ready for the encrypt-on-write / decrypt-on-read paths.
+func TestServerConstructsWithCipher(t *testing.T) {
+	key := make([]byte, 32)
+	cipher, err := crypto.NewCipher(base64.StdEncoding.EncodeToString(key))
+	if err != nil {
+		t.Fatalf("NewCipher: %v", err)
+	}
+	store := state.NewStore(func() int64 { return 0 }, func(a, b int64) int64 { return a })
+	svc := dispatch.NewService(nil, store, policy.Defaults(), func() int64 { return 0 }, cipher)
+	if svc.Cipher != cipher {
+		t.Fatalf("dispatch service did not retain the cipher")
+	}
+	h := NewRouter(nil, "test-secret-padding-to-32-chars!", svc, nil, false, cipher)
+	if h == nil {
+		t.Fatalf("NewRouter returned nil with a cipher")
+	}
+	// The constructed router must still serve healthz (degraded with nil pool).
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("healthz status = %d, want 503 (nil pool degraded)", rec.Code)
+	}
+}
 
 func TestHealthz_OKWithoutDB(t *testing.T) {
 	// nil pool → handler must still respond (degraded), never panic.
-	h := NewRouter(nil, "test-secret-padding-to-32-chars!", nil, nil, false)
+	h := NewRouter(nil, "test-secret-padding-to-32-chars!", nil, nil, false, nil)
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -40,7 +73,7 @@ func TestHealthz_OKWithPool(t *testing.T) {
 	}
 	defer pool.Close()
 
-	h := NewRouter(pool, "test-secret-padding-to-32-chars!", nil, nil, false)
+	h := NewRouter(pool, "test-secret-padding-to-32-chars!", nil, nil, false, nil)
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

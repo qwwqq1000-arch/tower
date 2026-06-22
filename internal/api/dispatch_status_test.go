@@ -34,7 +34,7 @@ func TestDispatchStatusJSON(t *testing.T) {
 	svc := &dispatch.Service{Q: q, Store: store, Base: policy.Defaults(), Now: func() int64 { return 0 }}
 
 	const secret = "test-secret-padding-to-32-chars!"
-	router := NewRouter(pool, secret, svc, q, false)
+	router := NewRouter(pool, secret, svc, q, false, nil)
 	req := httptest.NewRequest("GET", "/api/admin/dispatch/status", nil)
 	req.AddCookie(adminCookie(t, ctx, q, secret))
 	rec := httptest.NewRecorder()

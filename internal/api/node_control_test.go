@@ -58,7 +58,7 @@ func TestNodeControl(t *testing.T) {
 	}
 
 	const secret = "test-secret-padding-to-32-chars!"
-	router := NewRouter(pool, secret, nil, q, false)
+	router := NewRouter(pool, secret, nil, q, false, nil)
 	ck := adminCookie(t, ctx, q, secret)
 	do := func(m, p, body string) *httptest.ResponseRecorder {
 		var r *http.Request

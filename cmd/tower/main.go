@@ -29,7 +29,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("config: %v", err)
 	}
-	if _, err := crypto.NewCipher(cfg.MasterKeyB64); err != nil {
+	cipher, err := crypto.NewCipher(cfg.MasterKeyB64)
+	if err != nil {
 		log.Fatalf("crypto: %v", err)
 	}
 	ctx := context.Background()
@@ -60,7 +61,7 @@ func main() {
 	if err := state.LoadStates(ctx, q, store, base.MaxConcurrent); err != nil {
 		log.Printf("warm-start: %v", err)
 	}
-	svc := dispatch.NewService(q, store, base, nowMs)
+	svc := dispatch.NewService(q, store, base, nowMs, cipher)
 
 	// Periodically persist account_state so warm-start after restart has data.
 	go func() {
@@ -90,6 +91,7 @@ func main() {
 		BaseThreshold: base.QuotaRotateThreshold,
 		BaseCapacity:  base.MaxConcurrent,
 		DefaultTTLMs:  3600000,
+		Cipher:        cipher,
 	}
 	go func() {
 		// Run once shortly after startup, then on a ticker.
@@ -166,7 +168,7 @@ func main() {
 	}()
 
 	log.Printf("tower listening on %s", cfg.HTTPAddr)
-	if err := http.ListenAndServe(cfg.HTTPAddr, api.NewRouter(pool, cfg.SessionSecret, svc, q, cfg.SecureCookies)); err != nil {
+	if err := http.ListenAndServe(cfg.HTTPAddr, api.NewRouter(pool, cfg.SessionSecret, svc, q, cfg.SecureCookies, cipher)); err != nil {
 		log.Fatal(err)
 	}
 }

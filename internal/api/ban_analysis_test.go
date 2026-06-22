@@ -28,7 +28,7 @@ func TestBanAnalysis(t *testing.T) {
 	q := sqlc.New(pool)
 	_ = q.InsertBanEpisode(ctx, sqlc.InsertBanEpisodeParams{NodeID: "n", ProfileID: "p", BannedAt: 1718000000000, Detail: []byte("{}")})
 	const secret = "test-secret-padding-to-32-chars!"
-	router := NewRouter(pool, secret, nil, q, false)
+	router := NewRouter(pool, secret, nil, q, false, nil)
 	req := httptest.NewRequest("GET", "/api/admin/ban-analysis", nil)
 	req.AddCookie(adminCookie(t, ctx, q, secret))
 	rec := httptest.NewRecorder()

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/qwwqq1000-arch/tower/internal/crypto"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 	"github.com/qwwqq1000-arch/tower/internal/policy"
 	"github.com/qwwqq1000-arch/tower/internal/state"
@@ -26,6 +27,11 @@ type RotateConfig struct {
 	Threshold    float64 // effective QuotaRotateThreshold for this cycle (0..1 fraction)
 	Capacity     int     // effective per-account slot capacity for this cycle (MaxConcurrent)
 	DefaultTTLMs int64   // fallback limit window when resets_at is unknown
+
+	// Cipher is the runtime master-key cipher (vault-crypto-1) used to decrypt a
+	// node's stored mgmt_key before building the CPA management client
+	// (vault-crypto-3). May be nil when secrets are stored as plaintext.
+	Cipher *crypto.Cipher
 
 	// BaseThreshold/BaseCapacity are the compiled-in defaults applied when the
 	// global policy row is missing or omits an override. Mirrors Poller.Threshold

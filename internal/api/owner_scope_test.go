@@ -32,7 +32,7 @@ func TestOwnerScoping(t *testing.T) {
 	defer pool.Close()
 	q := sqlc.New(pool)
 	const secret = "test-secret-padding-to-32-chars!"
-	router := NewRouter(pool, secret, nil, q, false)
+	router := NewRouter(pool, secret, nil, q, false, nil)
 
 	// Seed the session subjects as real tenant rows so requireSession's epoch
 	// check (auth-session-1) accepts them; tokens are issued at epoch 0.
