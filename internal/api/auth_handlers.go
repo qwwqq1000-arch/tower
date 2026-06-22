@@ -20,11 +20,16 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func loginHandler(pool *pgxpool.Pool, secret string) http.HandlerFunc {
+func loginHandler(pool *pgxpool.Pool, secret string, throttle *auth.Throttle) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct{ Username, Password string }
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad request"})
+			return
+		}
+		key := body.Username + "|" + clientIP(r)
+		if !throttle.Allowed(key, time.Now()) {
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many attempts"})
 			return
 		}
 		q := sqlc.New(pool)
@@ -37,9 +42,11 @@ func loginHandler(pool *pgxpool.Pool, secret string) http.HandlerFunc {
 			ok = auth.VerifyPassword(body.Password, u.PwHash, u.Salt)
 		}
 		if !ok {
+			throttle.RecordFailure(key, time.Now())
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 			return
 		}
+		throttle.Reset(key)
 		tok := auth.IssueSession(secret, u.ID, u.Role, nowUnix(), sessionTTLSec)
 		http.SetCookie(w, &http.Cookie{
 			Name: "tower_session", Value: tok, Path: "/",

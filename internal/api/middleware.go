@@ -2,11 +2,28 @@ package api
 
 import (
 	"context"
+	"net"
 	"net/http"
+	"strings"
 
 	"github.com/qwwqq1000-arch/tower/internal/auth"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 )
+
+// clientIP extracts the caller's source IP: the first hop of X-Forwarded-For
+// when present (the box runs behind a proxy), otherwise the RemoteAddr host.
+func clientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		first, _, _ := strings.Cut(xff, ",")
+		if ip := strings.TrimSpace(first); ip != "" {
+			return ip
+		}
+	}
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
+}
 
 type ctxKey string
 

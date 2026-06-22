@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/qwwqq1000-arch/tower/internal/auth"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 	"github.com/qwwqq1000-arch/tower/internal/dispatch"
 	"github.com/qwwqq1000-arch/tower/web"
@@ -17,8 +18,9 @@ import (
 // svc and q may be nil for test/partial setups; the dispatch route is only registered when svc != nil.
 func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc.Queries) http.Handler {
 	mux := http.NewServeMux()
+	loginThrottle := auth.NewThrottle(5, time.Minute, 15*time.Minute)
 	mux.HandleFunc("GET /healthz", healthzHandler(pool))
-	mux.HandleFunc("POST /auth/login", loginHandler(pool, secret))
+	mux.HandleFunc("POST /auth/login", loginHandler(pool, secret, loginThrottle))
 	mux.HandleFunc("POST /auth/logout", logoutHandler())
 	mux.HandleFunc("GET /auth/me", requireSession(secret, meHandler(pool)))
 	mux.HandleFunc("GET /api/admin/server-status", requireAdmin(secret, serverStatusHandler()))
