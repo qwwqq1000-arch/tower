@@ -78,16 +78,19 @@ func main() {
 
 	go (&reconcile.Reconciler{Q: q}).Run(context.Background(), 120*time.Second)
 
-	// Every 60s: discover accounts on CPA (CLIProxyAPI) nodes into the pool.
+	// Every 60s: discover accounts on CPA (CLIProxyAPI) nodes into the pool and
+	// project their quota utilization into the live store so saturated CPA
+	// accounts rotate out of dispatch (same threshold as the meridian poller).
+	cpaRot := &cpaclient.RotateConfig{Store: store, Threshold: 0.95, Capacity: base.MaxConcurrent, DefaultTTLMs: 3600000}
 	go func() {
 		// Run once shortly after startup, then on a ticker.
-		if err := cpaclient.SyncAll(context.Background(), q); err != nil {
+		if err := cpaclient.SyncAll(context.Background(), q, cpaRot); err != nil {
 			log.Printf("cpa discovery: %v", err)
 		}
 		ticker := time.NewTicker(60 * time.Second)
 		defer ticker.Stop()
 		for range ticker.C {
-			if err := cpaclient.SyncAll(context.Background(), q); err != nil {
+			if err := cpaclient.SyncAll(context.Background(), q, cpaRot); err != nil {
 				log.Printf("cpa discovery: %v", err)
 			}
 		}
