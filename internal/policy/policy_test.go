@@ -155,3 +155,53 @@ func TestResolve_FallbackStrategyTriggers(t *testing.T) {
 		}
 	}
 }
+
+// TestPickThreshold covers the shared global-policy pickup used by both the
+// meridian poller and the CPA discovery loop so they gate on the same value.
+func TestPickThreshold(t *testing.T) {
+	const def = 0.95
+	cases := []struct {
+		name string
+		json []byte
+		want float64
+	}{
+		{"valid 0.8", []byte(`{"QuotaRotateThreshold":0.8}`), 0.8},
+		{"field absent", []byte(`{}`), def},
+		{"out of range high", []byte(`{"QuotaRotateThreshold":1.5}`), def},
+		{"out of range zero", []byte(`{"QuotaRotateThreshold":0}`), def},
+		{"empty json", []byte(``), def},
+		{"invalid json", []byte(`not-json`), def},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := PickThreshold(tc.json, def); got != tc.want {
+				t.Fatalf("PickThreshold(%q, %v) = %v, want %v", tc.json, def, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestPickMaxConcurrent covers the shared MaxConcurrent pickup so CPA and
+// meridian per-account capacity track the live global policy identically.
+func TestPickMaxConcurrent(t *testing.T) {
+	const def = 3
+	cases := []struct {
+		name string
+		json []byte
+		want int
+	}{
+		{"override 7", []byte(`{"MaxConcurrent":7}`), 7},
+		{"field absent", []byte(`{}`), def},
+		{"non-positive ignored", []byte(`{"MaxConcurrent":0}`), def},
+		{"negative ignored", []byte(`{"MaxConcurrent":-2}`), def},
+		{"empty json", []byte(``), def},
+		{"invalid json", []byte(`not-json`), def},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := PickMaxConcurrent(tc.json, def); got != tc.want {
+				t.Fatalf("PickMaxConcurrent(%q, %v) = %v, want %v", tc.json, def, got, tc.want)
+			}
+		})
+	}
+}

@@ -2,7 +2,43 @@
 // → node/account) and produces dry-run diffs for the UI.
 package policy
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+)
+
+// PickThreshold extracts QuotaRotateThreshold from a JSON policy patch (the
+// global policy row's params). If the patch is absent, unparseable, or holds an
+// invalid value (<=0 or >1), it returns def unchanged. This is the single source
+// of truth for how the meridian poller and the CPA discovery loop pick up the
+// live QuotaRotateThreshold, so both account kinds gate on the same value.
+func PickThreshold(patchJSON []byte, def float64) float64 {
+	var p Patch
+	if err := json.Unmarshal(patchJSON, &p); err != nil {
+		return def
+	}
+	if p.QuotaRotateThreshold != nil {
+		if v := *p.QuotaRotateThreshold; v > 0 && v <= 1 {
+			return v
+		}
+	}
+	return def
+}
+
+// PickMaxConcurrent extracts MaxConcurrent from a JSON policy patch (the global
+// policy row's params). Returns def when the patch is absent, unparseable, or does
+// not override MaxConcurrent with a positive value. Shared by the meridian poller
+// and the CPA discovery loop so per-account slot capacity matches across kinds.
+func PickMaxConcurrent(patchJSON []byte, def int) int {
+	var p Patch
+	if err := json.Unmarshal(patchJSON, &p); err != nil {
+		return def
+	}
+	if p.MaxConcurrent != nil && *p.MaxConcurrent > 0 {
+		return *p.MaxConcurrent
+	}
+	return def
+}
 
 // Config is the resolved 封控 configuration (representative core fields).
 type Config struct {

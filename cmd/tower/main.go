@@ -80,8 +80,17 @@ func main() {
 
 	// Every 60s: discover accounts on CPA (CLIProxyAPI) nodes into the pool and
 	// project their quota utilization into the live store so saturated CPA
-	// accounts rotate out of dispatch (same threshold as the meridian poller).
-	cpaRot := &cpaclient.RotateConfig{Store: store, Threshold: 0.95, Capacity: base.MaxConcurrent, DefaultTTLMs: 3600000}
+	// accounts rotate out of dispatch. SyncAll resolves the effective threshold
+	// and capacity from the live global policy each cycle (mirroring the meridian
+	// poller's threshold/maxConcurrent), so QuotaRotateThreshold / MaxConcurrent
+	// overrides gate CPA and meridian accounts identically. BaseThreshold /
+	// BaseCapacity are the fallback defaults when the policy omits an override.
+	cpaRot := &cpaclient.RotateConfig{
+		Store:         store,
+		BaseThreshold: base.QuotaRotateThreshold,
+		BaseCapacity:  base.MaxConcurrent,
+		DefaultTTLMs:  3600000,
+	}
 	go func() {
 		// Run once shortly after startup, then on a ticker.
 		if err := cpaclient.SyncAll(context.Background(), q, cpaRot); err != nil {

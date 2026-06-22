@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
+	"github.com/qwwqq1000-arch/tower/internal/policy"
 	"github.com/qwwqq1000-arch/tower/internal/state"
 	"github.com/qwwqq1000-arch/tower/internal/telemetry"
 )
@@ -14,11 +15,55 @@ import (
 // discovery so a CPA account's quota utilization gates dispatch the same way the
 // meridian telemetry poller gates meridian accounts. A nil Store disables the
 // projection (e.g. in discovery-only tests).
+//
+// Threshold and Capacity are the effective values for the current cycle. They
+// are refreshed from the live global policy (via Refresh) before each SyncAll so
+// CPA accounts honor QuotaRotateThreshold / MaxConcurrent overrides exactly like
+// the meridian poller does; BaseThreshold and BaseCapacity hold the startup
+// defaults used as fallback when the policy row is absent or does not override.
 type RotateConfig struct {
 	Store        *state.Store
-	Threshold    float64 // QuotaRotateThreshold (0..1 fraction)
-	Capacity     int     // per-account slot capacity (MaxConcurrent)
+	Threshold    float64 // effective QuotaRotateThreshold for this cycle (0..1 fraction)
+	Capacity     int     // effective per-account slot capacity for this cycle (MaxConcurrent)
 	DefaultTTLMs int64   // fallback limit window when resets_at is unknown
+
+	// BaseThreshold/BaseCapacity are the compiled-in defaults applied when the
+	// global policy row is missing or omits an override. Mirrors Poller.Threshold
+	// / Poller.Capacity. When zero, Threshold/Capacity are used as the base.
+	BaseThreshold float64
+	BaseCapacity  int
+}
+
+// Refresh resolves the effective Threshold and Capacity from the live global
+// policy row, mirroring telemetry.Poller.threshold / Poller.maxConcurrent so CPA
+// accounts gate on the same live values as meridian accounts. It must be called
+// once per cycle before SyncAll. On any error (or when rot is nil) it leaves the
+// current effective values unchanged.
+func (rot *RotateConfig) Refresh(ctx context.Context, q *sqlc.Queries) {
+	if rot == nil {
+		return
+	}
+	baseThresh := rot.BaseThreshold
+	if baseThresh == 0 {
+		baseThresh = rot.Threshold
+	}
+	baseCap := rot.BaseCapacity
+	if baseCap == 0 {
+		baseCap = rot.Capacity
+	}
+	rot.Threshold = baseThresh
+	rot.Capacity = baseCap
+	rows, err := q.ListPolicies(ctx)
+	if err != nil {
+		return
+	}
+	for _, row := range rows {
+		if row.ScopeType == "global" {
+			rot.Threshold = policy.PickThreshold(row.Params, baseThresh)
+			rot.Capacity = policy.PickMaxConcurrent(row.Params, baseCap)
+			return
+		}
+	}
 }
 
 // cpaWindows flattens a CPA Usage payload into telemetry windows for projection.
@@ -133,8 +178,12 @@ func Sync(ctx context.Context, q *sqlc.Queries, node sqlc.Node, rot *RotateConfi
 
 // SyncAll discovers accounts for every CPA node in the registry, projecting each
 // account's quota utilization into rot.Store (when non-nil) so saturated CPA
-// accounts rotate out of dispatch.
+// accounts rotate out of dispatch. The effective rotation threshold and capacity
+// are resolved from the live global policy at the start of each cycle (mirroring
+// the meridian poller), so QuotaRotateThreshold / MaxConcurrent overrides gate
+// CPA and meridian accounts identically.
 func SyncAll(ctx context.Context, q *sqlc.Queries, rot *RotateConfig) error {
+	rot.Refresh(ctx, q)
 	nodes, err := q.ListNodes(ctx)
 	if err != nil {
 		return err

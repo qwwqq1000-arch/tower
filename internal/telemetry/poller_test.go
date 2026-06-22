@@ -11,6 +11,7 @@ import (
 
 	"github.com/qwwqq1000-arch/tower/internal/db"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
+	"github.com/qwwqq1000-arch/tower/internal/policy"
 	"github.com/qwwqq1000-arch/tower/internal/state"
 )
 
@@ -61,9 +62,9 @@ func TestPoller_ThresholdFromPolicy(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := pickThreshold(tc.json, def)
+			got := policy.PickThreshold(tc.json, def)
 			if got != tc.want {
-				t.Fatalf("pickThreshold(%q, %v) = %v, want %v", tc.json, def, got, tc.want)
+				t.Fatalf("policy.PickThreshold(%q, %v) = %v, want %v", tc.json, def, got, tc.want)
 			}
 		})
 	}

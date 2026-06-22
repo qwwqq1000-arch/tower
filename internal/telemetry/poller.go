@@ -2,7 +2,6 @@ package telemetry
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"sync"
 	"time"
@@ -127,22 +126,6 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 	return nil
 }
 
-// pickThreshold extracts QuotaRotateThreshold from a JSON policy patch.
-// If the patch is absent, unparseable, or contains an invalid value (<=0 or >1),
-// it returns def unchanged.
-func pickThreshold(patchJSON []byte, def float64) float64 {
-	var p policy.Patch
-	if err := json.Unmarshal(patchJSON, &p); err != nil {
-		return def
-	}
-	if p.QuotaRotateThreshold != nil {
-		if v := *p.QuotaRotateThreshold; v > 0 && v <= 1 {
-			return v
-		}
-	}
-	return def
-}
-
 // threshold reads the global policy row and returns the effective QuotaRotateThreshold.
 func (p *Poller) threshold(ctx context.Context) float64 {
 	rows, err := p.Q.ListPolicies(ctx)
@@ -151,7 +134,7 @@ func (p *Poller) threshold(ctx context.Context) float64 {
 	}
 	for _, row := range rows {
 		if row.ScopeType == "global" {
-			return pickThreshold(row.Params, p.Threshold)
+			return policy.PickThreshold(row.Params, p.Threshold)
 		}
 	}
 	return p.Threshold
@@ -166,13 +149,7 @@ func (p *Poller) maxConcurrent(ctx context.Context) int {
 	}
 	for _, row := range rows {
 		if row.ScopeType == "global" {
-			var patch policy.Patch
-			if json.Unmarshal(row.Params, &patch) == nil {
-				if patch.MaxConcurrent != nil && *patch.MaxConcurrent > 0 {
-					return *patch.MaxConcurrent
-				}
-			}
-			break
+			return policy.PickMaxConcurrent(row.Params, p.Capacity)
 		}
 	}
 	return p.Capacity
