@@ -258,3 +258,105 @@ func TestBanEventAttributedToAccountOwner(t *testing.T) {
 		t.Error("expected a ban_detected or ban_permanent event attributed to the account's owner")
 	}
 }
+
+// TestBanEpisodeClosedOnRecovery verifies that when a half-open recovery trial
+// succeeds, RecoverBanEpisode is called and the ban episode's recovered_at field
+// is populated (events-audit-2 / ban-classify-1).
+func TestBanEpisodeClosedOnRecovery(t *testing.T) {
+	q, closeDB := setupDB(t)
+	defer closeDB()
+	ctx := context.Background()
+
+	// First call returns 401 (ban signal); subsequent calls return 200 (success).
+	callCount := 0
+	node := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		if callCount == 1 {
+			w.WriteHeader(401)
+			_, _ = w.Write([]byte(`{"error":"authentication_error"}`))
+			return
+		}
+		// Return a minimal valid SSE response so the stream path succeeds.
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte("event: message_stop\ndata: {}\n\n"))
+	}))
+	defer node.Close()
+
+	sfx := suffixDispatch(t)
+	owner := "owner_" + sfx
+	nodeID := "n_rec_" + sfx
+	profileID := "default"
+
+	if _, err := q.CreateNode(ctx, sqlc.CreateNodeParams{ID: nodeID, Name: "n-rec-" + sfx, BaseUrl: node.URL, ApiKey: "k", OwnerID: owner}); err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	if _, err := q.CreateAccount(ctx, sqlc.CreateAccountParams{ID: "a_rec_" + sfx, OwnerID: owner}); err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	if _, err := q.AssignAccount(ctx, sqlc.AssignAccountParams{NodeID: nodeID, AccountID: "a_rec_" + sfx, ProfileID: profileID, Weight: 100, Role: "baseline"}); err != nil {
+		t.Fatalf("assign: %v", err)
+	}
+
+	// Use a controllable clock. Time 0 for ban; 2000 for the recovery trial
+	// (past the 1000ms base cooldown so the breaker is half_open).
+	now := int64(0)
+	base := policy.Defaults()
+	base.BanPersistStreak = 1 // single 401 opens the breaker
+	base.CooldownBaseMs = 1000
+	base.CooldownMaxMs = 1000
+	base.CooldownMult = 1.0
+	store := state.NewStore(func() int64 { return now }, func(min, max int64) int64 { return min })
+	svc := &Service{Q: q, Store: store, Base: base, Now: func() int64 { return now }}
+
+	// First dispatch → ban detected, episode inserted with recovered_at=0.
+	_ = svc.Dispatch(ctx, owner, "opus", "task", []byte(`{"model":"opus"}`))
+
+	key := nodeID + ":" + profileID
+	if !store.IsPermanent(key) {
+		// Breaker should be open (not permanent for PersistStreak=1 without PermStreak).
+		// Verify it's open at now=0.
+		snaps := store.Snapshot(0)
+		var found bool
+		for _, s := range snaps {
+			if s.Key == key {
+				found = true
+				if s.Status != "open" && s.Status != "permanent" {
+					t.Fatalf("after 401, status=%s, want open or permanent", s.Status)
+				}
+			}
+		}
+		if !found {
+			t.Fatal("account key not found in store snapshot")
+		}
+	}
+
+	// Advance time past the ban cooldown so the breaker is half_open.
+	now = 2000
+
+	// Second dispatch → trial attempt → node returns 200 → RecoverBanEpisode called.
+	_ = svc.Dispatch(ctx, owner, "opus", "task", []byte(`{"model":"opus"}`))
+
+	// Verify the ban episode's recovered_at was set.
+	episodes, err := q.GetBanEpisodesForProfile(ctx, sqlc.GetBanEpisodesForProfileParams{
+		NodeID:    nodeID,
+		ProfileID: profileID,
+	})
+	if err != nil {
+		t.Fatalf("get ban episodes: %v", err)
+	}
+	if len(episodes) == 0 {
+		t.Fatal("expected at least one ban episode")
+	}
+	// At least one episode must have recovered_at populated (non-zero).
+	var recovered bool
+	for _, ep := range episodes {
+		if ep.RecoveredAt != 0 {
+			recovered = true
+			break
+		}
+	}
+	if !recovered {
+		t.Errorf("expected a ban episode with recovered_at != 0, got episodes: %+v", episodes)
+	}
+}

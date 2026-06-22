@@ -336,6 +336,13 @@ func recoverAccountHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerF
 					NodeID: na.NodeID, ProfileID: na.ProfileID, Status: "active",
 					CooldownUntil: 0, BanStreak: 0, FailCount: 0, Permanent: false, UpdatedAt: now,
 				})
+				// Close any open ban episodes so recovered_at/survival_ms are populated
+				// (events-audit-2 / ban-classify-1).
+				_ = q.RecoverBanEpisode(r.Context(), sqlc.RecoverBanEpisodeParams{
+					NodeID:      na.NodeID,
+					ProfileID:   na.ProfileID,
+					RecoveredAt: now,
+				})
 			}
 		}
 		_ = q.SetNodeAccountEnabledByAccount(r.Context(), sqlc.SetNodeAccountEnabledByAccountParams{AccountID: accountID, Enabled: true})

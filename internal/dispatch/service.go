@@ -907,7 +907,11 @@ func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, 
 				s.Store.OnTrialCooldown(key)
 			} else {
 				s.Store.OnTrialResult(key, breaker, success, lastBanned)
-				if !success && lastBanned {
+				if success {
+					// Half-open trial succeeded: close the open ban episode so
+					// recovered_at/survival_ms are populated (events-audit-2).
+					s.recordRecover(ctx, key)
+				} else if lastBanned {
 					s.recordBan(ctx, acctOwnerOf(keyOwner, key, ownerID), key, lastStatus)
 				}
 			}
@@ -992,6 +996,21 @@ func (s *Service) recordBan(ctx context.Context, ownerID, key string, status int
 	_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: typ, Target: key, OwnerID: ownerID, Detail: detail})
 	db, _ := json.Marshal(detail)
 	_ = s.Q.InsertBanEpisode(ctx, sqlc.InsertBanEpisodeParams{NodeID: node, ProfileID: profile, BannedAt: s.Now(), Detail: db})
+}
+
+// recordRecover closes any open ban episodes for the given key (node:profile)
+// by calling RecoverBanEpisode, so recovered_at and survival_ms are populated.
+// Called on half-open trial success and on manual recovery.
+func (s *Service) recordRecover(ctx context.Context, key string) {
+	node, profile, found := splitKey(key)
+	if !found {
+		return
+	}
+	_ = s.Q.RecoverBanEpisode(ctx, sqlc.RecoverBanEpisodeParams{
+		NodeID:      node,
+		ProfileID:   profile,
+		RecoveredAt: s.Now(),
+	})
 }
 
 // isCooldownSignal reports whether status matches a configured CooldownSignal (and
