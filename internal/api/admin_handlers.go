@@ -153,7 +153,7 @@ func listNodesHandler(q *sqlc.Queries) http.HandlerFunc {
 	}
 }
 
-func deleteNodeHandler(q *sqlc.Queries) http.HandlerFunc {
+func deleteNodeHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		if !ownsNodeID(r, q, id) {
@@ -163,6 +163,10 @@ func deleteNodeHandler(q *sqlc.Queries) http.HandlerFunc {
 		if err := q.DeleteNode(r.Context(), id); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
+		}
+		// Drop the node's in-memory accounts so they don't linger as ghost rows.
+		if svc != nil && svc.Store != nil {
+			svc.Store.RemoveNode(id)
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"ok": "true"})
 	}

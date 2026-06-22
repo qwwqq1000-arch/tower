@@ -478,6 +478,7 @@ export interface MeAccountRow {
   profileId: string;
   email: string;
   enabled: boolean;
+  status?: string;           // live breaker status: active|banned|half_open|permanent|cooldown
   weight: number;
   role: string;
   expiresAt?: number;        // unix ms

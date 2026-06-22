@@ -382,7 +382,7 @@ export default function Policies() {
 
         <FieldRow
           label="MaxConcurrent"
-          desc="每节点最大并发槽位数"
+          desc="每账号最大并发槽位数(节点总并发 = 账号数 × 此值)"
           enabled={maxConcurrent.enabled}
           onToggle={maxConcurrent.toggle}
         >

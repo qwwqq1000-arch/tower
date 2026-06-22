@@ -93,7 +93,7 @@ func TestBreaker_PermanentViaTrialFailures(t *testing.T) {
 	}
 }
 
-func TestBreaker_RecoverClearsPermanent(t *testing.T) {
+func TestBreaker_ForceClearClearsPermanent(t *testing.T) {
 	cfg := permCfg()
 	var b Breaker
 	for i := 0; i < 5; i++ {
@@ -102,12 +102,32 @@ func TestBreaker_RecoverClearsPermanent(t *testing.T) {
 	if !b.Permanent() {
 		t.Fatal("setup: should be permanent")
 	}
-	b.OnSuccess() // manual recover path
+	b.ForceClear() // explicit manual-recover path
 	if b.Permanent() {
-		t.Fatal("OnSuccess must clear permanent")
+		t.Fatal("ForceClear must clear permanent")
 	}
 	if b.State(1000) != "closed" {
 		t.Fatalf("after recover state=%s, want closed", b.State(1000))
+	}
+}
+
+// A permanent ban is sticky: an automatic success (e.g. a concurrent in-flight
+// request that completes AFTER the ban tripped) must NOT silently un-ban it.
+func TestBreaker_OnSuccessKeepsPermanent(t *testing.T) {
+	cfg := permCfg()
+	var b Breaker
+	for i := 0; i < 5; i++ {
+		b.OnBanSignal(cfg, 1000)
+	}
+	if !b.Permanent() {
+		t.Fatal("setup: should be permanent")
+	}
+	b.OnSuccess() // automatic success path — must not lift a permanent ban
+	if !b.Permanent() {
+		t.Fatal("OnSuccess must keep a permanent ban sticky")
+	}
+	if b.State(1000) != "permanent" {
+		t.Fatalf("after OnSuccess state=%s, want permanent", b.State(1000))
 	}
 }
 

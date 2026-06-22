@@ -195,9 +195,16 @@ function daysRemaining(ms: number | undefined): number | null {
   return Math.floor((ms - Date.now()) / 86400000);
 }
 
+// liveBanned/permanent flags from the account's live breaker status.
+function isLiveBanned(status?: string): boolean {
+  return status === 'permanent' || status === 'banned' || status === 'half_open' || status === 'cooldown';
+}
+
 function TenantAccountRow({ account, onChanged }: { account: MeAccountRow; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
   const days = daysRemaining(account.expiresAt);
+  const permanent = account.status === 'permanent';
+  const liveBanned = isLiveBanned(account.status);
 
   async function toggle() {
     setBusy(true);
@@ -228,21 +235,31 @@ function TenantAccountRow({ account, onChanged }: { account: MeAccountRow; onCha
       <td className="px-4 py-3 text-xs text-muted text-right tabular-nums">{fmtCost(account.todayCostUsd)}</td>
       <td className="px-4 py-3 text-xs text-muted text-right tabular-nums">{fmtCost(account.totalCostUsd)}</td>
       <td className="px-4 py-3">
-        <span className={`flex items-center gap-1 text-xs ${account.enabled ? 'text-ok' : 'text-muted'}`}>
-          <span className={`w-1.5 h-1.5 rounded-full ${account.enabled ? 'bg-ok' : 'bg-muted'}`} />
-          {account.enabled ? '启用' : '暂停'}
-        </span>
+        {liveBanned ? (
+          <span className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-mono ${statusColor(account.status!)}`}>
+            {statusLabel(account.status!)}
+          </span>
+        ) : (
+          <span className={`flex items-center gap-1 text-xs ${account.enabled ? 'text-ok' : 'text-muted'}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${account.enabled ? 'bg-ok' : 'bg-muted'}`} />
+            {account.enabled ? '启用' : '暂停'}
+          </span>
+        )}
       </td>
       <td className="px-4 py-3">
-        <button
-          onClick={() => { void toggle(); }}
-          disabled={busy}
-          className={`text-xs transition disabled:opacity-50 ${
-            account.enabled ? 'text-yellow-500 hover:text-yellow-400' : 'text-ok hover:text-ok/70'
-          }`}
-        >
-          {busy ? '…' : account.enabled ? '暂停' : '启用'}
-        </button>
+        {permanent ? (
+          <span className="text-xs text-muted" title="永久封禁，无法启用，请联系管理员恢复">无法启用</span>
+        ) : (
+          <button
+            onClick={() => { void toggle(); }}
+            disabled={busy}
+            className={`text-xs transition disabled:opacity-50 ${
+              account.enabled ? 'text-yellow-500 hover:text-yellow-400' : 'text-ok hover:text-ok/70'
+            }`}
+          >
+            {busy ? '…' : account.enabled ? '暂停' : '启用'}
+          </button>
+        )}
       </td>
     </tr>
   );
@@ -251,6 +268,8 @@ function TenantAccountRow({ account, onChanged }: { account: MeAccountRow; onCha
 function TenantAccountCard({ account, onChanged }: { account: MeAccountRow; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
   const days = daysRemaining(account.expiresAt);
+  const permanent = account.status === 'permanent';
+  const liveBanned = isLiveBanned(account.status);
 
   async function toggle() {
     setBusy(true);
@@ -269,21 +288,31 @@ function TenantAccountCard({ account, onChanged }: { account: MeAccountRow; onCh
           <p className="text-sm font-semibold text-ink truncate">{account.email || '—'}</p>
           <p className="text-xs text-muted mt-0.5 truncate">{account.nodeName || '—'}</p>
         </div>
-        <button
-          onClick={() => { void toggle(); }}
-          disabled={busy}
-          className={`text-xs transition disabled:opacity-50 shrink-0 ${
-            account.enabled ? 'text-yellow-500 hover:text-yellow-400' : 'text-ok hover:text-ok/70'
-          }`}
-        >
-          {busy ? '…' : account.enabled ? '暂停' : '启用'}
-        </button>
+        {permanent ? (
+          <span className="text-xs text-muted shrink-0" title="永久封禁，无法启用，请联系管理员恢复">无法启用</span>
+        ) : (
+          <button
+            onClick={() => { void toggle(); }}
+            disabled={busy}
+            className={`text-xs transition disabled:opacity-50 shrink-0 ${
+              account.enabled ? 'text-yellow-500 hover:text-yellow-400' : 'text-ok hover:text-ok/70'
+            }`}
+          >
+            {busy ? '…' : account.enabled ? '暂停' : '启用'}
+          </button>
+        )}
       </div>
       <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
-        <span className={`flex items-center gap-1 ${account.enabled ? 'text-ok' : 'text-muted'}`}>
-          <span className={`w-1.5 h-1.5 rounded-full ${account.enabled ? 'bg-ok' : 'bg-muted'}`} />
-          {account.enabled ? '启用' : '暂停'}
-        </span>
+        {liveBanned ? (
+          <span className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-mono ${statusColor(account.status!)}`}>
+            {statusLabel(account.status!)}
+          </span>
+        ) : (
+          <span className={`flex items-center gap-1 ${account.enabled ? 'text-ok' : 'text-muted'}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${account.enabled ? 'bg-ok' : 'bg-muted'}`} />
+            {account.enabled ? '启用' : '暂停'}
+          </span>
+        )}
         {account.subscriptionType && <span>{account.subscriptionType}</span>}
         <span>权重 {account.weight}</span>
         {account.role && <span>角色 {account.role}</span>}

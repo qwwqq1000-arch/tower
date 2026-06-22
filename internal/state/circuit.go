@@ -61,9 +61,25 @@ func (b *Breaker) OnBanSignal(cfg BreakerCfg, now int64) (opened bool) {
 // Permanent reports whether the account is permanently banned.
 func (b *Breaker) Permanent() bool { return b.permanent }
 
-// OnSuccess clears all failure state (closes the breaker), including a permanent
-// ban — used by manual recovery.
+// OnSuccess closes the breaker after a clean response. A PERMANENT ban is sticky:
+// it is NOT cleared here, so a concurrent in-flight request that completes after
+// the account was permanently banned cannot silently un-ban it. Only explicit
+// manual recovery (ForceClear) lifts a permanent ban.
 func (b *Breaker) OnSuccess() {
+	if b.permanent {
+		b.trial = false // resolve any in-flight trial flag, but stay permanently banned
+		return
+	}
+	b.streak = 0
+	b.failCount = 0
+	b.openUntil = 0
+	b.trial = false
+}
+
+// ForceClear resets ALL breaker state, INCLUDING a permanent ban. Used only by
+// explicit manual recovery — automatic successes must use OnSuccess so a permanent
+// ban remains sticky.
+func (b *Breaker) ForceClear() {
 	b.streak = 0
 	b.failCount = 0
 	b.openUntil = 0
@@ -113,6 +129,13 @@ func (b *Breaker) OnTrialResult(cfg BreakerCfg, now int64, ok, banned bool) {
 	}
 	b.open(cfg, now)
 }
+
+// OnTrialCooldown settles a half-open trial that failed with a transient
+// cooldown signal (e.g. 429): it only clears the in-flight trial flag, WITHOUT
+// reopening or escalating the breaker. The account-level error-cooldown
+// (Account.CoolUntil) owns the backoff instead, so a rate-limit during recovery
+// never turns into a (shorter) ban-cooldown that would mask it.
+func (b *Breaker) OnTrialCooldown() { b.trial = false }
 
 // Snapshot exports the durable verdict (excludes the in-flight trial flag).
 func (b *Breaker) Snapshot() (openUntil int64, streak, failCount int) {

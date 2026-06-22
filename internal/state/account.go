@@ -25,16 +25,21 @@ func (a *Account) Status(now int64) string {
 	if a.Offline {
 		return "offline"
 	}
-	switch a.Breaker.State(now) {
-	case "permanent":
+	bs := a.Breaker.State(now)
+	if bs == "permanent" {
 		return "permanent"
+	}
+	// An active error-cooldown (e.g. 429) takes precedence over a recoverable
+	// breaker state when it outlasts the breaker's recovery time, so a rate-limit
+	// shows as 限流·冷却 for its full duration instead of a shorter 封控·冷却.
+	if now < a.CoolUntil && a.CoolUntil >= a.Breaker.RecoverAt() {
+		return "cooldown"
+	}
+	switch bs {
 	case "open":
 		return "banned"
 	case "half_open":
 		return "half_open"
-	}
-	if now < a.CoolUntil {
-		return "cooldown" // temporary error-cooldown (e.g. 429 rate limit)
 	}
 	return "active"
 }

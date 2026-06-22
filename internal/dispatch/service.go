@@ -146,6 +146,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 					s.maybeCooldown(ctx, ownerID, key, status, cfg)
 				}
 			},
+			IsCooldownSignal: func(status int) bool { return isCooldownSignal(status, cfg) },
 		}
 		np := &NodeProxy{Body: body, Resolve: resolver, BanSignals: cfg.BanSignals, BanKeywords: cfg.BanKeywords}
 		res, winKey, ok := orch.Dispatch(ctx, model, order, np)
@@ -792,9 +793,15 @@ func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, 
 			return // panic before upstream responded → release slot only, no ban
 		}
 		if trial {
-			s.Store.OnTrialResult(key, breaker, success, lastBanned)
-			if !success && lastBanned {
-				s.recordBan(ctx, ownerID, key, lastStatus)
+			if !success && isCooldownSignal(lastStatus, cfg) {
+				// A transient cooldown signal (e.g. 429) during recovery must not
+				// reopen/escalate the breaker; the error-cooldown owns the backoff.
+				s.Store.OnTrialCooldown(key)
+			} else {
+				s.Store.OnTrialResult(key, breaker, success, lastBanned)
+				if !success && lastBanned {
+					s.recordBan(ctx, ownerID, key, lastStatus)
+				}
 			}
 		} else if success {
 			s.Store.OnSuccess(key)
@@ -879,21 +886,25 @@ func (s *Service) recordBan(ctx context.Context, ownerID, key string, status int
 	_ = s.Q.InsertBanEpisode(ctx, sqlc.InsertBanEpisodeParams{NodeID: node, ProfileID: profile, BannedAt: s.Now(), Detail: db})
 }
 
+// isCooldownSignal reports whether status matches a configured CooldownSignal (and
+// the feature is enabled). Shared by maybeCooldown and the trial-settle paths.
+func isCooldownSignal(status int, cfg policy.Config) bool {
+	if cfg.CooldownSignalSec <= 0 || len(cfg.CooldownSignals) == 0 {
+		return false
+	}
+	for _, c := range cfg.CooldownSignals {
+		if status == c {
+			return true
+		}
+	}
+	return false
+}
+
 // maybeCooldown puts an account into a temporary cooldown when the response status
 // matches a configured CooldownSignal (e.g. 429). This is NOT a ban: the account
 // auto-recovers after CooldownSignalSec and never escalates to permanent.
 func (s *Service) maybeCooldown(ctx context.Context, ownerID, key string, status int, cfg policy.Config) {
-	if cfg.CooldownSignalSec <= 0 || len(cfg.CooldownSignals) == 0 {
-		return
-	}
-	hit := false
-	for _, c := range cfg.CooldownSignals {
-		if status == c {
-			hit = true
-			break
-		}
-	}
-	if !hit {
+	if !isCooldownSignal(status, cfg) {
 		return
 	}
 	until := s.Now() + int64(cfg.CooldownSignalSec)*1000

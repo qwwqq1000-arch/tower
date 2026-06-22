@@ -28,7 +28,7 @@ func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc
 	if q != nil {
 		mux.HandleFunc("POST /api/admin/nodes", requireAdmin(secret, createNodeHandler(q)))
 		mux.HandleFunc("GET /api/admin/nodes", requireAdmin(secret, listNodesHandler(q)))
-		mux.HandleFunc("DELETE /api/admin/nodes/{id}", requireAdmin(secret, deleteNodeHandler(q)))
+		mux.HandleFunc("DELETE /api/admin/nodes/{id}", requireAdmin(secret, deleteNodeHandler(q, svc)))
 		mux.HandleFunc("POST /api/admin/dispatch-keys", requireAdmin(secret, createDispatchKeyHandler(q)))
 		mux.HandleFunc("GET /api/admin/dispatch-keys", requireAdmin(secret, listDispatchKeysHandler(q)))
 		mux.HandleFunc("DELETE /api/admin/dispatch-keys/{id}", requireAdmin(secret, deleteDispatchKeyHandler(q)))
@@ -83,7 +83,7 @@ func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc
 		mux.HandleFunc("PATCH /api/admin/users/{id}/fallback-limit", requireSuperadmin(secret, setUserFallbackLimitHandler(q)))
 		mux.HandleFunc("POST /auth/change-password", requireSession(secret, changePasswordHandler(q)))
 		// Tenant self-service: strictly scoped to the caller's session sub.
-		mux.HandleFunc("GET /api/me/accounts", requireSession(secret, meAccountsHandler(q)))
+		mux.HandleFunc("GET /api/me/accounts", requireSession(secret, meAccountsHandler(q, svc)))
 		mux.HandleFunc("POST /api/me/accounts/{accountId}/pause", requireSession(secret, mePauseAccountHandler(q)))
 		mux.HandleFunc("GET /api/me/dashboard", requireSession(secret, meDashboardHandler(q)))
 		mux.HandleFunc("GET /api/me/logs", requireSession(secret, meLogsHandler(q)))

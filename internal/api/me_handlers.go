@@ -22,7 +22,7 @@ func ownerFrom(r *http.Request) (string, bool) {
 }
 
 // meAccountsHandler returns ONLY the accounts owned by the caller. Read-only.
-func meAccountsHandler(q *sqlc.Queries) http.HandlerFunc {
+func meAccountsHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		owner, ok := ownerFrom(r)
 		if !ok {
@@ -34,6 +34,17 @@ func meAccountsHandler(q *sqlc.Queries) http.HandlerFunc {
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
+		}
+		// Live status overlay (banned/half_open/permanent/cooldown) from the store.
+		liveStatus := map[string]string{}
+		if svc != nil && svc.Store != nil {
+			now := int64(0)
+			if svc.Now != nil {
+				now = svc.Now()
+			}
+			for _, snap := range svc.Store.Snapshot(now) {
+				liveStatus[snap.Key] = snap.Status
+			}
 		}
 		todayCostMap := map[string]float64{}
 		if todayRows, err := q.CostByTargetSince(ctx, startOfTodayMs()); err == nil {
@@ -53,6 +64,10 @@ func meAccountsHandler(q *sqlc.Queries) http.HandlerFunc {
 				continue
 			}
 			key := a.NodeID + ":" + a.ProfileID
+			status := a.AcctStatus
+			if ls, ok := liveStatus[key]; ok {
+				status = ls // live ban/half_open/permanent/cooldown wins over stored value
+			}
 			out = append(out, map[string]any{
 				"accountId":        a.AccountID,
 				"nodeName":         a.NodeName,
@@ -62,6 +77,7 @@ func meAccountsHandler(q *sqlc.Queries) http.HandlerFunc {
 				"weight":           a.Weight,
 				"role":             a.Role,
 				"enabled":          a.Enabled,
+				"status":           status,
 				"todayCostUsd":     todayCostMap[key],
 				"totalCostUsd":     totalCostMap[key],
 			})
@@ -686,9 +702,12 @@ func meDispatchStatusHandler(q *sqlc.Queries, svc *dispatch.Service) http.Handle
 				if !mine { // strict: only the caller's accounts
 					continue
 				}
+				if s.Status == "permanent" { // permanently banned → out of rotation, hide from the live pool
+					continue
+				}
 				accounts = append(accounts, map[string]any{
 					"key": s.Key, "label": label, "status": s.Status,
-					"inflight": s.Inflight, "available": s.Available,
+					"inflight": s.Inflight, "available": s.Available, "recoverAt": s.RecoverAt,
 					"todayCostUsd": todayCostMap[s.Key], "totalCostUsd": totalCostMap[s.Key],
 				})
 			}

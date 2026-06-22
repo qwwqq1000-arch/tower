@@ -134,6 +134,16 @@ func (s *Store) Complete(key string, cooldownMin, cooldownMax int64) {
 	a.Slots.Release(s.now(), cd)
 }
 
+// OnTrialCooldown resolves a half-open trial that hit a transient cooldown signal
+// (e.g. 429) without reopening/escalating the breaker — the error-cooldown owns it.
+func (s *Store) OnTrialCooldown(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if a := s.accts[key]; a != nil {
+		a.Breaker.OnTrialCooldown()
+	}
+}
+
 // OnSuccess records a successful response (closes the breaker / resolves trial).
 func (s *Store) OnSuccess(key string) {
 	s.mu.Lock()
@@ -181,9 +191,23 @@ func (s *Store) Recover(key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if a := s.accts[key]; a != nil {
-		a.Breaker.OnSuccess()
+		a.Breaker.ForceClear() // manual recovery lifts even a permanent ban
 		a.Disabled = false
 		a.Offline = false
+	}
+}
+
+// RemoveNode drops every in-memory account belonging to nodeID (keys prefixed
+// "nodeID:"). Called when a node is deleted so its accounts no longer surface as
+// ghost rows in the live pool or skew elastic/utilisation math.
+func (s *Store) RemoveNode(nodeID string) {
+	prefix := nodeID + ":"
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for k := range s.accts {
+		if strings.HasPrefix(k, prefix) {
+			delete(s.accts, k)
+		}
 	}
 }
 
@@ -354,10 +378,10 @@ func (s *Store) PersistAll(ctx context.Context, q *sqlc.Queries, now int64) erro
 			profileID: key[i+1:],
 			// Copy the Account value; Breaker and scalar fields are value types.
 			account: Account{
-				Breaker:   a.Breaker,
-				Slots:     a.Slots,   // pointer — only durable Breaker fields are read by SaveState
-				Disabled:  a.Disabled,
-				Offline:   a.Offline,
+				Breaker:  a.Breaker,
+				Slots:    a.Slots, // pointer — only durable Breaker fields are read by SaveState
+				Disabled: a.Disabled,
+				Offline:  a.Offline,
 			},
 			now: now,
 		})

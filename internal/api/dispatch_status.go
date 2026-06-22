@@ -25,7 +25,13 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 			keyOwner[a.NodeID+":"+a.ProfileID] = a.AcctOwnerID
 		}
 	}
-	visible := func(key string) bool { return all || keyOwner[key] == owner }
+	// An account is "known" only while its node_accounts row still exists; a deleted
+	// node can leave stale in-memory store entries that must not surface as ghost rows.
+	known := make(map[string]bool, len(keyOwner))
+	for k := range keyOwner {
+		known[k] = true
+	}
+	visible := func(key string) bool { return known[key] && (all || keyOwner[key] == owner) }
 	// Build today/total cost maps for accounts
 	todayCostMap := map[string]float64{}
 	if todayRows, err := q.CostByTargetSince(ctx, startOfTodayMs()); err == nil {
@@ -43,6 +49,9 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 	if svc != nil && svc.Store != nil {
 		for _, s := range svc.Store.Snapshot(now) {
 			if strings.HasPrefix(s.Key, "fb:") {
+				continue
+			}
+			if _, known := keyOwner[s.Key]; !known { // node/account deleted → drop stale ghost row
 				continue
 			}
 			if !visible(s.Key) { // owner scoping
