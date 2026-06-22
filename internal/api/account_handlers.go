@@ -13,24 +13,6 @@ import (
 	"github.com/qwwqq1000-arch/tower/internal/nodeclient"
 )
 
-// encryptImportCred encrypts a credential string using cipher and returns the
-// ciphertext. If cipher is nil (keyless deployments) or plain is empty the
-// value is returned unchanged, so callers can use this unconditionally
-// (vault-crypto-2).
-func encryptImportCred(cipher *crypto.Cipher, plain string) string {
-	return cipher.EncryptStr(plain)
-}
-
-// decryptImportCred is the symmetric read helper for vault-crypto-2.
-// It decrypts a ciphertext written by encryptImportCred, falling back to
-// returning the value unchanged when cipher is nil (keyless deployments) or
-// when the value is not valid ciphertext (legacy plaintext rows).
-// Call this wherever OauthAccessEnc or OauthRefreshEnc are consumed in order
-// to satisfy the decrypt-on-use requirement of vault-crypto-2.
-func decryptImportCred(cipher *crypto.Cipher, enc string) string {
-	return cipher.DecryptOrPlaintext(enc)
-}
-
 // effectiveProfiles returns the node's named profiles, or — when none exist but
 // the node is logged in (default account) — a synthetic "default" profile from /health.
 func effectiveProfiles(ctx context.Context, cl *nodeclient.Client) ([]nodeclient.Profile, error) {
@@ -115,18 +97,18 @@ func oauthExchangeHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFu
 			}
 		}
 		accID := randHex("acc_")
+		// Tower's import path is pointer-only: the session lives on the node keyed
+		// by profile_id (stored in node_accounts.profile_id). Tower does not capture
+		// raw OAuth access/refresh tokens from cl.Exchange(), so OauthAccessEnc and
+		// OauthRefreshEnc are intentionally left empty here. If real OAuth tokens
+		// become available in future, write them via internal/vault.Vault.Store().
 		if _, err := q.CreateAccount(r.Context(), sqlc.CreateAccountParams{
 			ID:               accID,
 			OwnerID:          n.OwnerID,
 			Email:            email,
 			SubscriptionType: "",
-			// Encrypt the account identity as stored credentials (vault-crypto-2):
-			// OauthAccessEnc holds the email, OauthRefreshEnc holds the profileID,
-			// both encrypted at rest. Use decryptImportCred when reading these fields.
-			OauthAccessEnc:  encryptImportCred(cipher, email),
-			OauthRefreshEnc: encryptImportCred(cipher, profileID),
-			ExpiresAt:       time.Now().Add(30 * 24 * time.Hour).UnixMilli(),
-			OnboardedAt:     time.Now().UnixMilli(),
+			ExpiresAt:        time.Now().Add(30 * 24 * time.Hour).UnixMilli(),
+			OnboardedAt:      time.Now().UnixMilli(),
 		}); err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
@@ -188,18 +170,18 @@ func importProfileHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFu
 			}
 		}
 		accID := randHex("acc_")
+		// Tower's import path is pointer-only: the session lives on the node keyed
+		// by profile_id (stored in node_accounts.profile_id). Tower does not capture
+		// raw OAuth access/refresh tokens, so OauthAccessEnc and OauthRefreshEnc are
+		// intentionally left empty here. If real OAuth tokens become available in
+		// future, write them via internal/vault.Vault.Store().
 		if _, err := q.CreateAccount(r.Context(), sqlc.CreateAccountParams{
 			ID:               accID,
 			OwnerID:          n.OwnerID,
 			Email:            matched.Email,
 			SubscriptionType: "",
-			// Encrypt the account identity as stored credentials (vault-crypto-2):
-			// OauthAccessEnc holds the email, OauthRefreshEnc holds the profileID,
-			// both encrypted at rest. Use decryptImportCred when reading these fields.
-			OauthAccessEnc:  encryptImportCred(cipher, matched.Email),
-			OauthRefreshEnc: encryptImportCred(cipher, matched.ID),
-			ExpiresAt:       time.Now().Add(30 * 24 * time.Hour).UnixMilli(),
-			OnboardedAt:     time.Now().UnixMilli(),
+			ExpiresAt:        time.Now().Add(30 * 24 * time.Hour).UnixMilli(),
+			OnboardedAt:      time.Now().UnixMilli(),
 		}); err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
