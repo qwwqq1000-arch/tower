@@ -143,6 +143,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 				if !ok {
 					s.logAttemptErr(ctx, ownerID, model, key, status)
 					s.recordRetry(ctx, ownerID, model, key, status, banned)
+					s.maybeCooldown(ctx, ownerID, key, status, cfg)
 				}
 			},
 		}
@@ -738,6 +739,7 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 		// not committed → failed before first byte → log per-attempt error + failover
 		s.logAttemptErr(ctx, ownerID, model, key, out.Status)
 		s.recordRetry(ctx, ownerID, model, key, out.Status, ClassifyBanned(out.Status, "", cfg.BanSignals, nil))
+		s.maybeCooldown(ctx, ownerID, key, out.Status, cfg)
 		if justExiled := s.sess.RecordError(conv, int64(cfg.SessionErrorThreshold), int64(cfg.SessionCooldownSec)*1000, nowMs); justExiled {
 			_ = events.Record(ctx, s.Q, nowMs, events.Event{Type: "session_exile", Target: "session", OwnerID: ownerID})
 		}
@@ -875,6 +877,31 @@ func (s *Service) recordBan(ctx context.Context, ownerID, key string, status int
 	_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: typ, Target: key, OwnerID: ownerID, Detail: detail})
 	db, _ := json.Marshal(detail)
 	_ = s.Q.InsertBanEpisode(ctx, sqlc.InsertBanEpisodeParams{NodeID: node, ProfileID: profile, BannedAt: s.Now(), Detail: db})
+}
+
+// maybeCooldown puts an account into a temporary cooldown when the response status
+// matches a configured CooldownSignal (e.g. 429). This is NOT a ban: the account
+// auto-recovers after CooldownSignalSec and never escalates to permanent.
+func (s *Service) maybeCooldown(ctx context.Context, ownerID, key string, status int, cfg policy.Config) {
+	if cfg.CooldownSignalSec <= 0 || len(cfg.CooldownSignals) == 0 {
+		return
+	}
+	hit := false
+	for _, c := range cfg.CooldownSignals {
+		if status == c {
+			hit = true
+			break
+		}
+	}
+	if !hit {
+		return
+	}
+	until := s.Now() + int64(cfg.CooldownSignalSec)*1000
+	s.Store.SetCooldown(key, cfg.MaxConcurrent, until)
+	_ = events.Record(ctx, s.Q, s.Now(), events.Event{
+		Type: "cooldown", Target: key, OwnerID: ownerID,
+		Detail: map[string]any{"account": key, "status": status, "seconds": cfg.CooldownSignalSec},
+	})
 }
 
 // recordRetry records a failover event: an attempt to account `key` failed

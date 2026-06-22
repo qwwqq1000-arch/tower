@@ -22,8 +22,13 @@ type Config struct {
 	FallbackProbeEnabled      bool
 	BanSignals                []int
 	BanKeywords               []string
-	QuotaRotateThreshold      float64
-	MaxFailover               int
+	// CooldownSignals are HTTP status codes (e.g. 429) that temporarily cool the
+	// account for CooldownSignalSec seconds (NOT a ban — it auto-recovers and never
+	// escalates to permanent). Empty = off.
+	CooldownSignals      []int
+	CooldownSignalSec    int
+	QuotaRotateThreshold float64
+	MaxFailover          int
 
 	// Warmup: new accounts (onboarded within WarmupHours) serve at reduced concurrency.
 	// 0 = off.
@@ -32,11 +37,11 @@ type Config struct {
 	WarmupBlockOpus     bool
 
 	// Elastic scaling: activate reserve accounts when baseline is saturated.
-	ElasticEnabled        bool
-	ElasticBaselineCount  int     // number of accounts that form the active baseline; default 1
-	ElasticScaleUpUtil    float64 // utilisation threshold to activate reserves (0.0–1.0); default 0.8
-	ElasticScaleDownUtil  float64 // utilisation threshold to release reserves (hysteresis); default 0.3
-	ElasticMaxReserve     int     // cap on reserve accounts added per evaluation; default 1000
+	ElasticEnabled       bool
+	ElasticBaselineCount int     // number of accounts that form the active baseline; default 1
+	ElasticScaleUpUtil   float64 // utilisation threshold to activate reserves (0.0–1.0); default 0.8
+	ElasticScaleDownUtil float64 // utilisation threshold to release reserves (hysteresis); default 0.3
+	ElasticMaxReserve    int     // cap on reserve accounts added per evaluation; default 1000
 
 	// Session exile: route a conversation to fallback after this many consecutive
 	// errors from our nodes. 0 = disabled.
@@ -70,6 +75,8 @@ func Defaults() Config {
 		FallbackProbeEnabled:      false,
 		BanSignals:                []int{401},
 		BanKeywords:               []string{"authentication_error", "account_disabled", "account_suspended"},
+		CooldownSignals:           nil,
+		CooldownSignalSec:         60,
 		QuotaRotateThreshold:      0.95,
 		MaxFailover:               50,
 		WarmupHours:               0,
@@ -105,16 +112,18 @@ type Patch struct {
 	FallbackProbeEnabled      *bool
 	BanSignals                *[]int
 	BanKeywords               *[]string
+	CooldownSignals           *[]int
+	CooldownSignalSec         *int
 	QuotaRotateThreshold      *float64
 	MaxFailover               *int
-	WarmupHours         *int
-	WarmupMaxConcurrent *int
-	WarmupBlockOpus     *bool
-	ElasticEnabled       *bool
-	ElasticBaselineCount *int
-	ElasticScaleUpUtil   *float64
-	ElasticScaleDownUtil *float64
-	ElasticMaxReserve    *int
+	WarmupHours               *int
+	WarmupMaxConcurrent       *int
+	WarmupBlockOpus           *bool
+	ElasticEnabled            *bool
+	ElasticBaselineCount      *int
+	ElasticScaleUpUtil        *float64
+	ElasticScaleDownUtil      *float64
+	ElasticMaxReserve         *int
 	SessionErrorThreshold     *int
 	SessionCooldownSec        *int
 	ResponseExileEnabled      *bool
@@ -169,6 +178,12 @@ func apply(c *Config, p Patch) {
 	}
 	if p.BanKeywords != nil {
 		c.BanKeywords = *p.BanKeywords
+	}
+	if p.CooldownSignals != nil {
+		c.CooldownSignals = *p.CooldownSignals
+	}
+	if p.CooldownSignalSec != nil {
+		c.CooldownSignalSec = *p.CooldownSignalSec
 	}
 	if p.QuotaRotateThreshold != nil {
 		if v := *p.QuotaRotateThreshold; v > 0 && v <= 1 {
@@ -260,6 +275,8 @@ func DryRun(base Config, patches ...Patch) (Config, []Diff) {
 	add("FallbackProbeEnabled", base.FallbackProbeEnabled, final.FallbackProbeEnabled)
 	add("BanSignals", base.BanSignals, final.BanSignals)
 	add("BanKeywords", base.BanKeywords, final.BanKeywords)
+	add("CooldownSignals", base.CooldownSignals, final.CooldownSignals)
+	add("CooldownSignalSec", base.CooldownSignalSec, final.CooldownSignalSec)
 	add("QuotaRotateThreshold", base.QuotaRotateThreshold, final.QuotaRotateThreshold)
 	add("MaxFailover", base.MaxFailover, final.MaxFailover)
 	add("WarmupHours", base.WarmupHours, final.WarmupHours)

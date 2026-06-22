@@ -174,6 +174,8 @@ export default function Policies() {
   const fallbackModels = useField<string>('');
   const banSignals = useField<string>('401,403');
   const banKeywords = useField<string>('authentication_error,account_disabled,account_suspended');
+  const cooldownSignals = useField<string>('429');
+  const cooldownSignalSec = useField<number>(60);
 
   const [dryRunResult, setDryRunResult] = useState<PolicyDryRunResult | null>(null);
   const [previewing, setPreviewing] = useState(false);
@@ -214,6 +216,8 @@ export default function Policies() {
         setBool(fallbackProbeEnabled, 'FallbackProbeEnabled');
         setArr(banSignals, 'BanSignals');
         setArr(banKeywords, 'BanKeywords');
+        setArr(cooldownSignals, 'CooldownSignals');
+        setNum(cooldownSignalSec, 'CooldownSignalSec');
         setNum(quotaRotateThreshold, 'QuotaRotateThreshold');
         setNum(maxFailover, 'MaxFailover');
         setNum(warmupHours, 'WarmupHours');
@@ -266,6 +270,15 @@ export default function Policies() {
         .map((s) => s.trim())
         .filter(Boolean);
     }
+    if (cooldownSignals.enabled) {
+      patch.CooldownSignals = cooldownSignals.value
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map(Number)
+        .filter((n) => !isNaN(n));
+    }
+    if (cooldownSignalSec.enabled) patch.CooldownSignalSec = cooldownSignalSec.value;
     if (quotaRotateThreshold.enabled) patch.QuotaRotateThreshold = quotaRotateThreshold.value;
     if (maxFailover.enabled) patch.MaxFailover = maxFailover.value;
     if (warmupHours.enabled) patch.WarmupHours = warmupHours.value;
@@ -315,7 +328,7 @@ export default function Policies() {
   const anyEnabled = [
     maxConcurrent, slotCooldownMinMs, slotCooldownMaxMs, banPersistStreak, permanentBanStreak,
     cooldownBaseMs, cooldownMaxMs, cooldownMult, affinityTTLSec,
-    fallbackEnabled, fallbackPriceThresholdUsd, fallbackKeywords, fallbackModels, fallbackProbeEnabled, banSignals, banKeywords,
+    fallbackEnabled, fallbackPriceThresholdUsd, fallbackKeywords, fallbackModels, fallbackProbeEnabled, banSignals, banKeywords, cooldownSignals, cooldownSignalSec,
     quotaRotateThreshold, maxFailover,
     warmupHours, warmupMaxConcurrent, warmupBlockOpus,
     sessionErrorThreshold, sessionCooldownSec, responseExileEnabled, responseExileKeywords,
@@ -697,6 +710,38 @@ export default function Policies() {
             className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink
                        placeholder:text-muted focus:outline-none focus:border-accent transition
                        disabled:cursor-not-allowed"
+          />
+        </FieldRow>
+
+        <FieldRow
+          label="CooldownSignals"
+          desc="触发账户临时冷却的 HTTP 状态码，逗号分隔（例: 429）。命中后冷却该号，不封禁、自动恢复"
+          enabled={cooldownSignals.enabled}
+          onToggle={cooldownSignals.toggle}
+        >
+          <input
+            type="text"
+            value={cooldownSignals.value}
+            onChange={(e) => cooldownSignals.set(e.target.value)}
+            disabled={!cooldownSignals.enabled}
+            placeholder="429"
+            className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink
+                       placeholder:text-muted focus:outline-none focus:border-accent transition
+                       disabled:cursor-not-allowed"
+          />
+        </FieldRow>
+
+        <FieldRow
+          label="CooldownSignalSec"
+          desc="命中 CooldownSignals 后，该账户冷却的秒数"
+          enabled={cooldownSignalSec.enabled}
+          onToggle={cooldownSignalSec.toggle}
+        >
+          <NumInput
+            value={cooldownSignalSec.value}
+            onChange={cooldownSignalSec.set}
+            disabled={!cooldownSignalSec.enabled}
+            min={1}
           />
         </FieldRow>
 

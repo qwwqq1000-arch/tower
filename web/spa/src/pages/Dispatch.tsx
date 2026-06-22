@@ -240,6 +240,7 @@ export function getEventLabel(type: string): EventLabel {
     case 'ban_detected':  return { label: '封禁触发',    cls: 'bg-red-500/20 text-red-400 border-red-500/40' };
     case 'ban_permanent': return { label: '永久封禁',    cls: 'bg-red-600/30 text-red-300 border-red-600/50' };
     case 'retry':         return { label: '节点报错',    cls: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/40' };
+    case 'cooldown':      return { label: '限流冷却',    cls: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/40' };
     case 'account_recovered': return { label: '账户恢复', cls: 'bg-green-500/20 text-green-400 border-green-500/40' };
     case 'recover':       return { label: '恢复',        cls: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/40' };
     case 'fallback':      return { label: '保底触发',    cls: 'bg-blue-500/20 text-blue-400 border-blue-500/40' };
@@ -293,6 +294,19 @@ export function renderEventDetail(
     const parts = [head, email];
     if (status) parts.push(`HTTP ${status}`);
     if (streak !== undefined && (type === 'ban_detected' || type === 'ban_permanent')) parts.push(`连续${streak}次`);
+    return parts.filter(Boolean).join(' · ');
+  }
+  if (type === 'cooldown') {
+    const email = accountNames?.get(target) ?? target;
+    let status: number | undefined; let sec: number | undefined;
+    try {
+      const d: any = typeof detail === 'string' ? JSON.parse(detail) : detail;
+      if (d && typeof d.status === 'number') status = d.status;
+      if (d && typeof d.seconds === 'number') sec = d.seconds;
+    } catch { /* ignore */ }
+    const parts = ['限流冷却', email];
+    if (status) parts.push(`HTTP ${status}`);
+    if (sec) parts.push(`${sec}秒`);
     return parts.filter(Boolean).join(' · ');
   }
   if (type === 'fallback') {

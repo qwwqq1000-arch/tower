@@ -8,6 +8,7 @@ type Account struct {
 	Offline      bool
 	LimitedUntil map[string]int64 // model class ("opus"/"sonnet"/"all") -> reset time ms
 	WarmupCap    int              // 0 = no warmup limit; >0 = max in-flight during warmup
+	CoolUntil    int64            // ms; temporary error-cooldown (e.g. 429); 0 = none. Ephemeral.
 }
 
 // NewAccount builds an account with a slot set of the given capacity.
@@ -31,9 +32,11 @@ func (a *Account) Status(now int64) string {
 		return "banned"
 	case "half_open":
 		return "half_open"
-	default:
-		return "active"
 	}
+	if now < a.CoolUntil {
+		return "cooldown" // temporary error-cooldown (e.g. 429 rate limit)
+	}
+	return "active"
 }
 
 // limitedFor reports whether the model class is rate-limited at now.
@@ -58,6 +61,9 @@ func (a *Account) CanDispatch(now int64, model string, cfg BreakerCfg) (ok bool,
 		return false, false
 	}
 	if a.Offline {
+		return false, false
+	}
+	if now < a.CoolUntil { // temporary error-cooldown (e.g. 429)
 		return false, false
 	}
 	if a.limitedFor(now, model) {

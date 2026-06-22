@@ -153,6 +153,17 @@ func (s *Store) IsPermanent(key string) bool {
 	return false
 }
 
+// SetCooldown puts an account into a temporary error-cooldown until untilMs
+// (e.g. after a 429). Only extends an existing cooldown, never shortens it.
+func (s *Store) SetCooldown(key string, capacity int, untilMs int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.ensureLocked(key, capacity)
+	if untilMs > a.CoolUntil {
+		a.CoolUntil = untilMs
+	}
+}
+
 // BanStreak returns the account's current consecutive ban-signal streak.
 func (s *Store) BanStreak(key string) int {
 	s.mu.Lock()
@@ -202,7 +213,7 @@ func (s *Store) NodeStatus(nodeID string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
-	rank := map[string]int{"disabled": 4, "permanent": 3, "banned": 2, "half_open": 1, "active": 0}
+	rank := map[string]int{"disabled": 5, "permanent": 4, "banned": 3, "half_open": 2, "cooldown": 1, "active": 0}
 	best := ""
 	for k, a := range s.accts {
 		if !strings.HasPrefix(k, prefix) {

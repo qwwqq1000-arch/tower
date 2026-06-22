@@ -146,6 +146,8 @@ export interface PolicyPatch {
   FallbackModels?: string[];
   FallbackProbeEnabled?: boolean;
   BanSignals?: number[];
+  CooldownSignals?: number[];
+  CooldownSignalSec?: number;
   BanKeywords?: string[];
   QuotaRotateThreshold?: number;
   MaxFailover?: number;
@@ -178,6 +180,8 @@ export interface PolicyConfig {
   FallbackPriceThresholdUsd: number;
   BanSignals: number[];
   BanKeywords: string[];
+  CooldownSignals: number[];
+  CooldownSignalSec: number;
 }
 
 export interface PolicyDiff {

@@ -126,3 +126,69 @@ func TestSSEHasError(t *testing.T) {
 		t.Error("error events must be detected (both spacing variants)")
 	}
 }
+
+// TestCooldownSignalCoolsAccount verifies a CooldownSignal (429) puts the account
+// into a temporary cooldown (not a ban) and emits a cooldown event.
+func TestCooldownSignalCoolsAccount(t *testing.T) {
+	q, closeDB := setupDB(t)
+	defer closeDB()
+	ctx := context.Background()
+
+	node := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(429)
+		_, _ = w.Write([]byte(`{"error":"rate_limited"}`))
+	}))
+	defer node.Close()
+
+	sfx := suffixDispatch(t)
+	owner := "owner_" + sfx
+	nodeID := "n_" + sfx
+	if _, err := q.CreateNode(ctx, sqlc.CreateNodeParams{ID: nodeID, Name: "n-" + sfx, BaseUrl: node.URL, ApiKey: "k", OwnerID: owner}); err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	if _, err := q.CreateAccount(ctx, sqlc.CreateAccountParams{ID: "a_" + sfx, OwnerID: owner}); err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	if _, err := q.AssignAccount(ctx, sqlc.AssignAccountParams{NodeID: nodeID, AccountID: "a_" + sfx, ProfileID: "default", Weight: 100, Role: "baseline"}); err != nil {
+		t.Fatalf("assign: %v", err)
+	}
+
+	now := int64(1000)
+	base := policy.Defaults() // BanSignals=[401]
+	base.CooldownSignals = []int{429}
+	base.CooldownSignalSec = 60
+	store := state.NewStore(func() int64 { return now }, func(min, max int64) int64 { return min })
+	svc := &Service{Q: q, Store: store, Base: base, Now: func() int64 { return now }}
+
+	_ = svc.Dispatch(ctx, owner, "opus", "please do a real task here", []byte(`{"model":"opus"}`))
+
+	key := nodeID + ":default"
+	if store.BanStreak(key) != 0 || store.IsPermanent(key) {
+		t.Fatal("429 must not ban the account")
+	}
+	// account must be in cooldown now (within the 60s window)
+	for _, snap := range store.Snapshot(now + 1000) {
+		if snap.Key == key && snap.Status != "cooldown" {
+			t.Fatalf("status=%s, want cooldown", snap.Status)
+		}
+	}
+	// after the cooldown window it returns to active
+	for _, snap := range store.Snapshot(now + 61_000) {
+		if snap.Key == key && snap.Status != "active" {
+			t.Fatalf("after cooldown status=%s, want active", snap.Status)
+		}
+	}
+	evs, _ := q.ListRecentEvents(ctx, 50)
+	seenCooldown := false
+	for _, e := range evs {
+		if e.OwnerID == owner && e.Type == "cooldown" {
+			seenCooldown = true
+		}
+		if e.OwnerID == owner && (e.Type == "ban_detected" || e.Type == "ban_permanent") {
+			t.Fatal("429 must not emit a ban event")
+		}
+	}
+	if !seenCooldown {
+		t.Error("expected a cooldown event")
+	}
+}
