@@ -104,6 +104,29 @@ func scope(r *http.Request) (string, bool)
 ## 实施顺序
 F(UI 收尾) → 一/二(封禁状态机) → 四(事件) → 三(权限) → 五(审计) → 六-Tower(CPA 客户端) → 六-fork(CLIProxyAPI 改造) → 部署 → 发布 → 全量 build/test + 审计 debug。
 
+## 封控策略生效审计结果(2026-06-22)
+
+逐项核对 `policy.Config` 字段在 dispatch/state/telemetry 的执行情况:
+
+| 设置 | 生效? | 执行点 |
+|---|---|---|
+| MaxConcurrent | ✓ | buildCandidates SetCapacity + Slots |
+| SlotCooldownMin/MaxMs | ✓ | Store.Complete 冷却 |
+| BanPersistStreak | ✓ | Breaker.OnBanSignal |
+| PermanentBanStreak | ✓ (本次新增) | Breaker 永久封禁 |
+| CooldownBase/Max/Mult | ✓ | backoffMs |
+| **AffinityTTLSec** | **✗→✓(本次修复)** | 之前 0 处使用;现 applyAffinity + session.SetAffinity 粘性路由 |
+| FallbackEnabled/PriceThreshold/Keywords/Models/Probe | ✓ | fallback.Decide |
+| BanSignals/BanKeywords | ✓ | ClassifyBanned |
+| QuotaRotateThreshold | ✓ | telemetry.Poller 配额轮转 |
+| MaxFailover | ✓ | Orchestrator.MaxAttempts / stream 循环 |
+| WarmupHours/MaxConcurrent/BlockOpus | ✓ | buildCandidates warmup |
+| Elastic*(Enabled/Baseline/ScaleUp/Down/MaxReserve) | ✓ | buildCandidates 弹性分区 + scale_up/down 事件 |
+| SessionErrorThreshold/CooldownSec | ✓ | session.RecordError/Exiled |
+| ResponseExileEnabled/Keywords | ✓ | matchesAny 安全拒答放逐 |
+
+结论:唯一未生效的 `AffinityTTLSec` 已实现会话粘性路由(同对话 TTL 内复用同账户,利于 prompt 缓存)。所有触发点均写事件日志(见第四节)。
+
 ## 测试策略
 - 状态机/熔断:`internal/state` 单测覆盖 permanent 触发、不恢复、人工恢复。
 - 权限:`internal/api` 表驱动测试 owner 过滤。

@@ -109,6 +109,9 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 
 	conv := session.ConvID(body)
 	nowMs := s.Now()
+	if cfg.AffinityTTLSec > 0 {
+		order = s.applyAffinity(conv, order, nowMs)
+	}
 
 	est := billing.CostUsd(model, int64(len(body)/4), 2000, 0, 0)
 	probeText := lastUserText(body)
@@ -160,6 +163,9 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 				return Outcome{Status: res.Status, Body: res.Body, Target: winKey, Reason: "cyber"}
 			}
 			s.sess.RecordSuccess(conv)
+			if cfg.AffinityTTLSec > 0 {
+				s.sess.SetAffinity(conv, winKey, int64(cfg.AffinityTTLSec)*1000, nowMs)
+			}
 			s.logOK(ctx, ownerID, model, res, winKey, time.Since(start).Milliseconds(), "")
 			return Outcome{Status: res.Status, Body: res.Body, Target: winKey, Reason: ""}
 		}
@@ -181,6 +187,34 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 	}
 	s.logErr(ctx, ownerID, model, 503, 0, "no_nodes")
 	return Outcome{Status: 503, Body: `{"error":"no nodes available"}`, Target: "none", Reason: ""}
+}
+
+// applyAffinity moves the conversation's sticky account (if any, and present in
+// order) to the front, so repeat requests reuse the same account for prompt
+// caching. Enforces policy.AffinityTTLSec.
+func (s *Service) applyAffinity(conv string, order []string, now int64) []string {
+	if conv == "" || len(order) < 2 {
+		return order
+	}
+	key, ok := s.sess.Affinity(conv, now)
+	if !ok {
+		return order
+	}
+	idx := -1
+	for i, k := range order {
+		if k == key {
+			idx = i
+			break
+		}
+	}
+	if idx <= 0 {
+		return order // not found, or already first
+	}
+	reordered := make([]string, 0, len(order))
+	reordered = append(reordered, key)
+	reordered = append(reordered, order[:idx]...)
+	reordered = append(reordered, order[idx+1:]...)
+	return reordered
 }
 
 func (s *Service) resolveConfig(ctx context.Context) policy.Config {
@@ -639,6 +673,9 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 
 	conv := session.ConvID(body)
 	nowMs := s.Now()
+	if cfg.AffinityTTLSec > 0 {
+		order = s.applyAffinity(conv, order, nowMs)
+	}
 
 	// Probe/keyword/model fallback decision — same logic as non-streaming Dispatch.
 	est := billing.CostUsd(model, int64(len(body)/4), 2000, 0, 0)
@@ -685,6 +722,9 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 				// Cannot re-serve mid-stream — exile only affects future requests.
 			} else {
 				s.sess.RecordSuccess(conv)
+				if cfg.AffinityTTLSec > 0 {
+					s.sess.SetAffinity(conv, key, int64(cfg.AffinityTTLSec)*1000, nowMs)
+				}
 			}
 			return out
 		}

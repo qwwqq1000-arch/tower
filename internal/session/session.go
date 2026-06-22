@@ -74,8 +74,10 @@ func matchesAny(body string, kws []string) bool {
 }
 
 type state struct {
-	errs        int
-	exiledUntil int64
+	errs          int
+	exiledUntil   int64
+	affinityKey   string // preferred account key for this conversation
+	affinityUntil int64  // affinity expiry (ms); 0 = none
 }
 
 // Store tracks per-conversation error counts and exile windows in memory.
@@ -142,6 +144,35 @@ func (s *Store) RecordSuccess(conv string) {
 	st := s.get(conv)
 	st.errs = 0
 	st.exiledUntil = 0
+}
+
+// SetAffinity records the account key a conversation was served by, keeping it
+// "sticky" for ttlMs (so subsequent requests prefer the same account, preserving
+// prompt caching). No-op when conv or key is empty, or ttlMs <= 0.
+func (s *Store) SetAffinity(conv, key string, ttlMs, now int64) {
+	if conv == "" || key == "" || ttlMs <= 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st := s.get(conv)
+	st.affinityKey = key
+	st.affinityUntil = now + ttlMs
+}
+
+// Affinity returns the sticky account key for a conversation if one is set and
+// not expired. Returns ("", false) otherwise.
+func (s *Store) Affinity(conv string, now int64) (string, bool) {
+	if conv == "" {
+		return "", false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.m[conv]
+	if !ok || st.affinityKey == "" || now >= st.affinityUntil {
+		return "", false
+	}
+	return st.affinityKey, true
 }
 
 // ForceExile immediately exiles the conversation for cooldownMs milliseconds.
