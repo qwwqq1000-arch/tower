@@ -368,6 +368,13 @@ func meUpdateFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 400, map[string]string{"error": "bad body"})
 			return
 		}
+		// Preserve existing secrets when blank (留空表示不更改).
+		if b.ApiKey == "" {
+			b.ApiKey = ch.ApiKey
+		}
+		if b.BalanceToken == "" {
+			b.BalanceToken = ch.BalanceToken
+		}
 		if err := q.UpdateFallbackChannel(r.Context(), sqlc.UpdateFallbackChannelParams{
 			ID:              ch.ID,
 			Name:            b.Name,

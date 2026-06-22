@@ -107,6 +107,15 @@ func updateFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 400, map[string]string{"error": "bad body"})
 			return
 		}
+		// Preserve existing secrets when the incoming value is blank (留空表示不更改).
+		if cur, err := q.GetFallbackChannel(r.Context(), r.PathValue("id")); err == nil {
+			if b.ApiKey == "" {
+				b.ApiKey = cur.ApiKey
+			}
+			if b.BalanceToken == "" {
+				b.BalanceToken = cur.BalanceToken
+			}
+		}
 		if err := q.UpdateFallbackChannel(r.Context(), sqlc.UpdateFallbackChannelParams{
 			ID:              r.PathValue("id"),
 			Name:            b.Name,
