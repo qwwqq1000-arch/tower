@@ -150,7 +150,8 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 			maxFailover = 50
 		}
 		orch := &Orchestrator{Store: s.Store, Cfg: breaker, CooldownMin: cfg.SlotCooldownMinMs, CooldownMax: cfg.SlotCooldownMaxMs, MaxAttempts: maxFailover,
-			OnBan: func(key string, status int) { s.recordBan(ctx, acctOwnerOf(keyOwner, key, ownerID), key, status) },
+			OnBan:     func(key string, status int) { s.recordBan(ctx, acctOwnerOf(keyOwner, key, ownerID), key, status) },
+			OnRecover: func(key string) { s.recordRecover(ctx, key) },
 			OnAttempt: func(key string, status int, ok bool, banned bool) {
 				if !ok {
 					s.logAttemptErr(ctx, ownerID, model, key, status)
