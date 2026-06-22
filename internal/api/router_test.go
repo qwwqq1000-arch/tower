@@ -13,7 +13,7 @@ import (
 
 func TestHealthz_OKWithoutDB(t *testing.T) {
 	// nil pool → handler must still respond (degraded), never panic.
-	h := NewRouter(nil, "test-secret-padding-to-32-chars!", nil, nil)
+	h := NewRouter(nil, "test-secret-padding-to-32-chars!", nil, nil, false)
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -39,7 +39,7 @@ func TestHealthz_OKWithPool(t *testing.T) {
 	}
 	defer pool.Close()
 
-	h := NewRouter(pool, "test-secret-padding-to-32-chars!", nil, nil)
+	h := NewRouter(pool, "test-secret-padding-to-32-chars!", nil, nil, false)
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

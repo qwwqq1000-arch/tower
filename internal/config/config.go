@@ -15,10 +15,16 @@ type Config struct {
 	SessionSecret string // HMAC secret for session cookies
 	AdminUser     string
 	AdminPassword string
+	// SecureCookies controls whether the tower_session cookie has the Secure
+	// flag set. Defaults to false so plain-HTTP deployments work out of the
+	// box. Set TOWER_SECURE_COOKIES=1 (or "true"/"yes") in TLS environments.
+	SecureCookies bool
 }
 
 // Load reads configuration from the environment. HTTPAddr defaults to ":8080";
 // DatabaseURL, MasterKeyB64 and SessionSecret are required.
+// SessionSecret must be at least 32 bytes long (matching the master-key
+// validation) to ensure adequate HMAC strength.
 func Load() (Config, error) {
 	cfg := Config{
 		HTTPAddr:      envOr("TOWER_HTTP_ADDR", ":8080"),
@@ -27,19 +33,22 @@ func Load() (Config, error) {
 		SessionSecret: os.Getenv("TOWER_SESSION_SECRET"),
 		AdminUser:     os.Getenv("TOWER_ADMIN_USER"),
 		AdminPassword: os.Getenv("TOWER_ADMIN_PASSWORD"),
+		SecureCookies: parseBoolEnv("TOWER_SECURE_COOKIES"),
 	}
-	var missing []string
+	var errs []string
 	if cfg.DatabaseURL == "" {
-		missing = append(missing, "TOWER_DATABASE_URL")
+		errs = append(errs, "TOWER_DATABASE_URL")
 	}
 	if cfg.MasterKeyB64 == "" {
-		missing = append(missing, "TOWER_MASTER_KEY")
+		errs = append(errs, "TOWER_MASTER_KEY")
 	}
 	if cfg.SessionSecret == "" {
-		missing = append(missing, "TOWER_SESSION_SECRET")
+		errs = append(errs, "TOWER_SESSION_SECRET")
+	} else if len(cfg.SessionSecret) < 32 {
+		return Config{}, fmt.Errorf("TOWER_SESSION_SECRET must be at least 32 characters (got %d)", len(cfg.SessionSecret))
 	}
-	if len(missing) > 0 {
-		return Config{}, fmt.Errorf("missing required env: %s", strings.Join(missing, ", "))
+	if len(errs) > 0 {
+		return Config{}, fmt.Errorf("missing required env: %s", strings.Join(errs, ", "))
 	}
 	return cfg, nil
 }
@@ -49,4 +58,14 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// parseBoolEnv returns true when the env var is set to a common truthy string:
+// "1", "true", "yes", "on" (case-insensitive). Empty or any other value → false.
+func parseBoolEnv(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }

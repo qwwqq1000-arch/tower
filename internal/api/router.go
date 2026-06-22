@@ -16,11 +16,12 @@ import (
 
 // NewRouter builds the HTTP handler. pool may be nil (health reports degraded).
 // svc and q may be nil for test/partial setups; the dispatch route is only registered when svc != nil.
-func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc.Queries) http.Handler {
+// secureCookies controls the Secure flag on the session cookie; set true only for TLS deployments.
+func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc.Queries, secureCookies bool) http.Handler {
 	mux := http.NewServeMux()
 	loginThrottle := auth.NewThrottle(5, time.Minute, 15*time.Minute)
 	mux.HandleFunc("GET /healthz", healthzHandler(pool))
-	mux.HandleFunc("POST /auth/login", loginHandler(pool, secret, loginThrottle))
+	mux.HandleFunc("POST /auth/login", loginHandler(pool, secret, loginThrottle, secureCookies))
 	mux.HandleFunc("POST /auth/logout", logoutHandler())
 	mux.HandleFunc("GET /auth/me", requireSession(secret, q, meHandler(pool)))
 	mux.HandleFunc("GET /api/admin/server-status", requireAdmin(secret, q, serverStatusHandler()))

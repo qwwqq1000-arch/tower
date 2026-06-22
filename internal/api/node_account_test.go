@@ -25,7 +25,7 @@ func TestUpdateNodeAccount(t *testing.T) {
 	_, _ = q.AssignAccount(ctx, sqlc.AssignAccountParams{NodeID: nid, AccountID: aid, ProfileID: "default", Weight: 100, Role: "baseline"})
 
 	const secret = "test-secret-padding-to-32-chars!"
-	router := NewRouter(pool, secret, nil, q)
+	router := NewRouter(pool, secret, nil, q, false)
 	req := httptest.NewRequest("PATCH", "/api/admin/accounts/"+nid+"/"+aid, strings.NewReader(`{"egress":"1.2.3.4","weight":50,"role":"reserve","enabled":false}`))
 	req.AddCookie(adminCookie(t, ctx, q, secret))
 	rec := httptest.NewRecorder()

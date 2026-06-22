@@ -20,7 +20,7 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func loginHandler(pool *pgxpool.Pool, secret string, throttle *auth.Throttle) http.HandlerFunc {
+func loginHandler(pool *pgxpool.Pool, secret string, throttle *auth.Throttle, secureCookies bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct{ Username, Password string }
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -51,6 +51,7 @@ func loginHandler(pool *pgxpool.Pool, secret string, throttle *auth.Throttle) ht
 		http.SetCookie(w, &http.Cookie{
 			Name: "tower_session", Value: tok, Path: "/",
 			HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: sessionTTLSec,
+			Secure: secureCookies,
 		})
 		writeJSON(w, http.StatusOK, map[string]string{"role": u.Role})
 	}

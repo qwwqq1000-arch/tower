@@ -42,7 +42,7 @@ func TestMeEndpointsOwnerScoping(t *testing.T) {
 	t.Cleanup(pool.Close)
 	q := sqlc.New(pool)
 	const secret = "test-secret-padding-to-32-chars!"
-	router := NewRouter(pool, secret, nil, q)
+	router := NewRouter(pool, secret, nil, q, false)
 
 	ownerA := randHex("owA_")
 	ownerB := randHex("owB_")
@@ -281,7 +281,7 @@ func TestMeSettingsOwnerScoping(t *testing.T) {
 	t.Cleanup(pool.Close)
 	q := sqlc.New(pool)
 	const secret = "test-secret-padding-to-32-chars!"
-	router := NewRouter(pool, secret, nil, q)
+	router := NewRouter(pool, secret, nil, q, false)
 
 	ownerA := randHex("owA_")
 	ownerB := randHex("owB_")
@@ -439,7 +439,7 @@ func TestFallbackChannelLimit(t *testing.T) {
 	t.Cleanup(pool.Close)
 	q := sqlc.New(pool)
 	const secret = "test-secret-padding-to-32-chars!"
-	router := NewRouter(pool, secret, nil, q)
+	router := NewRouter(pool, secret, nil, q, false)
 
 	owner := randHex("owL_")
 	// tenant created with default fallback_limit=1.

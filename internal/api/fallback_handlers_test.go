@@ -28,7 +28,7 @@ func TestFallbackChannelCRUD(t *testing.T) {
 	defer pool.Close()
 	q := sqlc.New(pool)
 	const secret = "test-secret-padding-to-32-chars!"
-	router := NewRouter(pool, secret, nil, q)
+	router := NewRouter(pool, secret, nil, q, false)
 	ck := adminCookie(t, ctx, q, secret)
 	do := func(m, p, b string) *httptest.ResponseRecorder {
 		var r *http.Request

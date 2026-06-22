@@ -154,7 +154,7 @@ func main() {
 	}()
 
 	log.Printf("tower listening on %s", cfg.HTTPAddr)
-	if err := http.ListenAndServe(cfg.HTTPAddr, api.NewRouter(pool, cfg.SessionSecret, svc, q)); err != nil {
+	if err := http.ListenAndServe(cfg.HTTPAddr, api.NewRouter(pool, cfg.SessionSecret, svc, q, cfg.SecureCookies)); err != nil {
 		log.Fatal(err)
 	}
 }

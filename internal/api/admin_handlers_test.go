@@ -59,7 +59,7 @@ func TestAdminNodesAndKeys(t *testing.T) {
 	q := sqlc.New(pool)
 
 	const secret = "test-secret-padding-to-32-chars!"
-	router := NewRouter(pool, secret, nil, q)
+	router := NewRouter(pool, secret, nil, q, false)
 	ck := adminCookie(t, ctx, q, secret)
 
 	// create node
