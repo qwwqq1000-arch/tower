@@ -47,6 +47,17 @@ func (q *Queries) CountDispatchLogsByOwnerSince(ctx context.Context, arg CountDi
 	return count, err
 }
 
+const countDispatchLogsByStatus = `-- name: CountDispatchLogsByStatus :one
+SELECT count(*) FROM dispatch_logs WHERE status = $1
+`
+
+func (q *Queries) CountDispatchLogsByStatus(ctx context.Context, status string) (int64, error) {
+	row := q.db.QueryRow(ctx, countDispatchLogsByStatus, status)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countDispatchLogsSince = `-- name: CountDispatchLogsSince :one
 SELECT count(*) FROM dispatch_logs WHERE ts >= $1
 `

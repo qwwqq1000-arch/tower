@@ -53,29 +53,28 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 			})
 		}
 	}
-	traffic := map[string]any{"total": int64(0), "rpm": int64(0), "ok": 0, "error": 0, "tokensIn": int64(0), "tokensOut": int64(0)}
+	// tokensIn/tokensOut come from the recent-200 window; ok/error/total/rpm are REAL totals.
+	var in, out int64
 	if logs, err := q.ListRecentDispatchLogs(ctx, 200); err == nil {
-		var ok, errc int
-		var in, out int64
 		for _, l := range logs {
-			if l.Status == "ok" {
-				ok++
-			} else if l.Status == "error" {
-				errc++
-			}
 			in += l.TokensIn
 			out += l.TokensOut
 		}
-		var total int64
-		if t, terr := q.CountDispatchLogs(ctx); terr == nil {
-			total = t
-		}
-		var rpm int64
-		if r, rerr := q.CountDispatchLogsSince(ctx, now-60000); rerr == nil {
-			rpm = r
-		}
-		traffic = map[string]any{"total": total, "rpm": rpm, "ok": ok, "error": errc, "tokensIn": in, "tokensOut": out}
 	}
+	var total, rpm, okc, errc int64
+	if t, terr := q.CountDispatchLogs(ctx); terr == nil {
+		total = t
+	}
+	if r, rerr := q.CountDispatchLogsSince(ctx, now-60000); rerr == nil {
+		rpm = r
+	}
+	if c, cerr := q.CountDispatchLogsByStatus(ctx, "ok"); cerr == nil {
+		okc = c
+	}
+	if c, cerr := q.CountDispatchLogsByStatus(ctx, "error"); cerr == nil {
+		errc = c
+	}
+	traffic := map[string]any{"total": total, "rpm": rpm, "ok": okc, "error": errc, "tokensIn": in, "tokensOut": out}
 	events := []map[string]any{}
 	if evs, err := q.ListRecentEvents(ctx, 20); err == nil {
 		for _, e := range evs {

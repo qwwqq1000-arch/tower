@@ -416,12 +416,18 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 	return order, resolver
 }
 
-func (s *Service) enabledChannels(ctx context.Context, _ string) []sqlc.FallbackChannel {
+func (s *Service) enabledChannels(ctx context.Context, ownerID string) []sqlc.FallbackChannel {
 	chs, err := s.Q.ListEnabledFallbackChannels(ctx)
 	if err != nil {
 		return nil
 	}
-	return chs
+	out := chs[:0]
+	for _, c := range chs {
+		if c.OwnerID == ownerID { // strict owner scoping: admin(owner="") uses owner="" channels; tenant uses own
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // fbSlotKey returns the store key for a fallback channel's concurrency slot.

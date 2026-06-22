@@ -702,8 +702,44 @@ func meDispatchStatusHandler(q *sqlc.Queries, svc *dispatch.Service) http.Handle
 				})
 			}
 		}
+		// fallbackChannels: the caller's OWN channels (mirrors admin buildDispatchStatus shape).
+		snapMap := map[string]struct{ Inflight, Available int }{}
+		if svc != nil && svc.Store != nil {
+			for _, s := range svc.Store.Snapshot(now) {
+				snapMap[s.Key] = struct{ Inflight, Available int }{s.Inflight, s.Available}
+			}
+		}
+		fallbackChannels := []map[string]any{}
+		if chs, err := q.ListFallbackChannelsByOwner(ctx, owner); err == nil {
+			today := todayDayStr()
+			for _, ch := range chs {
+				var todayReq int64
+				var todayCost float64
+				if spend, serr := q.GetFallbackSpendToday(ctx, sqlc.GetFallbackSpendTodayParams{ChannelID: ch.ID, Day: today}); serr == nil {
+					todayReq = spend.Requests
+					todayCost = spend.Cost
+				}
+				fbKey := "fb:" + ch.ID
+				inflight, available := 0, int(ch.MaxConcurrent)
+				if available <= 0 {
+					available = 1000
+				}
+				if snap, ok := snapMap[fbKey]; ok {
+					inflight = snap.Inflight
+					available = snap.Available
+				}
+				fallbackChannels = append(fallbackChannels, map[string]any{
+					"id": ch.ID, "name": ch.Name, "enabled": ch.Enabled,
+					"priority": ch.Priority, "weight": ch.Weight,
+					"todayRequests": todayReq, "todayCostUsd": todayCost,
+					"inflight": inflight, "available": available,
+					"balanceUsd": ch.BalanceUsd,
+				})
+			}
+		}
 		writeJSON(w, 200, map[string]any{
-			"accounts": accounts, "traffic": traffic, "events": events, "asOf": now,
+			"accounts": accounts, "traffic": traffic, "events": events,
+			"fallbackChannels": fallbackChannels, "asOf": now,
 		})
 	}
 }
