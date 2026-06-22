@@ -18,6 +18,7 @@ import {
   updateMeFallback,
   setMeFallbackEnabled,
   deleteMeFallback,
+  listUsers,
 } from '../api';
 import type { FallbackChannel } from '../types';
 import { useAuth } from '../auth';
@@ -377,6 +378,8 @@ export default function Fallback() {
   const [channels, setChannels] = useState<FallbackChannel[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Admin-only: map user id → username for 归属 column
+  const [userMap, setUserMap] = useState<Record<string, string>>({});
 
   const [creating, setCreating] = useState(false);
   const [createErr, setCreateErr] = useState<string | null>(null);
@@ -406,6 +409,16 @@ export default function Fallback() {
     const t = setInterval(() => { void fetchChannels(); }, 60000);
     return () => clearInterval(t);
   }, [fetchChannels]);
+
+  // Admin only: fetch user list once to build id→username map for 归属 column
+  useEffect(() => {
+    if (isTenant) return;
+    listUsers().then((users) => {
+      const m: Record<string, string> = {};
+      for (const u of users) m[u.id] = u.username;
+      setUserMap(m);
+    }).catch(() => { /* best-effort */ });
+  }, [isTenant]);
 
   // ---- create ----
   async function handleCreate(f: FormState) {
@@ -500,6 +513,12 @@ export default function Fallback() {
     }
   }
 
+  // Resolve ownerId to a display label (admin view only)
+  function ownerLabel(ownerId: string): string {
+    if (!ownerId) return '共享(超管)';
+    return userMap[ownerId] ?? ownerId;
+  }
+
   return (
     <div className="p-4 md:p-6 space-y-6">
       {/* Header */}
@@ -549,6 +568,7 @@ export default function Fallback() {
                   <thead>
                     <tr className="text-xs text-muted uppercase tracking-wide border-b border-line bg-bg/50">
                       <th className="px-4 py-3 font-medium">名称</th>
+                      {!isTenant && <th className="px-4 py-3 font-medium">归属</th>}
                       <th className="px-4 py-3 font-medium">Base URL</th>
                       <th className="px-4 py-3 font-medium text-right">Priority</th>
                       <th className="px-4 py-3 font-medium text-right">Weight</th>
@@ -572,6 +592,11 @@ export default function Fallback() {
                             )}
                           </div>
                         </td>
+                        {!isTenant && (
+                          <td className="px-4 py-3 text-xs text-muted whitespace-nowrap">
+                            {ownerLabel(c.ownerId)}
+                          </td>
+                        )}
                         <td className="px-4 py-3 text-muted font-mono text-xs truncate max-w-[200px]">{c.baseUrl}</td>
                         <td className="px-4 py-3 text-right tabular-nums">{c.priority}</td>
                         <td className="px-4 py-3 text-right tabular-nums">{c.weight}</td>
@@ -653,6 +678,11 @@ export default function Fallback() {
                           )}
                         </div>
                         <p className="text-xs text-muted font-mono truncate mt-0.5">{c.baseUrl}</p>
+                        {!isTenant && (
+                          <p className="text-xs text-muted mt-0.5">
+                            归属: <span className="text-ink">{ownerLabel(c.ownerId)}</span>
+                          </p>
+                        )}
                       </div>
                       <EnableToggle id={c.id} enabled={c.enabled} onChange={handleToggle} setEnabledFn={setEnabledFn} />
                     </div>
