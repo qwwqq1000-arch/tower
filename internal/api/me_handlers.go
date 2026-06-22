@@ -352,6 +352,7 @@ func meCreateFallbackHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.Handle
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "fallback.create", "channel:"+c.ID, nil, map[string]any{"name": b.Name, "baseUrl": b.BaseUrl, "ownerId": owner})
 		writeJSON(w, 200, map[string]string{"id": c.ID})
 	}
 }
@@ -415,6 +416,7 @@ func meUpdateFallbackHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.Handle
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "fallback.update", "channel:"+ch.ID, nil, map[string]any{"name": b.Name, "baseUrl": b.BaseUrl})
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }
@@ -437,6 +439,7 @@ func meEnableFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "fallback.enable", "channel:"+ch.ID, nil, map[string]any{"enabled": b.Enabled})
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }
@@ -451,6 +454,7 @@ func meDeleteFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "fallback.delete", "channel:"+ch.ID, nil, nil)
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }
@@ -510,6 +514,7 @@ func meCreateSlotHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "slot.create", "slot:"+s.ID, nil, map[string]any{"name": b.Name, "startMin": b.StartMin, "endMin": b.EndMin, "ownerId": owner})
 		writeJSON(w, 200, map[string]string{"id": s.ID})
 	}
 }
@@ -544,6 +549,7 @@ func meDeleteSlotHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "slot.delete", "slot:"+s.ID, nil, nil)
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }
@@ -565,6 +571,7 @@ func meSetSlotEnabledHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "slot.enable", "slot:"+s.ID, nil, map[string]any{"enabled": b.Enabled})
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }
@@ -622,6 +629,7 @@ func meCreateDispatchKeyHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "dispatchKey.create", "key:"+id, nil, map[string]any{"label": body.Label, "ownerId": owner, "prefix": prefix})
 		writeJSON(w, 200, map[string]string{"id": id, "key": plaintext})
 	}
 }
@@ -655,6 +663,7 @@ func meDeleteDispatchKeyHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "dispatchKey.delete", "key:"+id, nil, nil)
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }
