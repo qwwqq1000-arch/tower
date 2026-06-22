@@ -73,6 +73,9 @@ type Config struct {
 	WarmupBlockOpus     bool
 
 	// Elastic scaling: activate reserve accounts when baseline is saturated.
+	// Reserves (accounts with non-baseline roles) are only activated if ElasticEnabled is true
+	// and the baseline accounts exceed ElasticScaleUpUtil. Accounts with baseline roles always
+	// remain active; only non-baseline accounts are dynamically scaled.
 	ElasticEnabled       bool
 	ElasticBaselineCount int     // number of accounts that form the active baseline; default 1
 	ElasticScaleUpUtil   float64 // utilisation threshold to activate reserves (0.0–1.0); default 0.8
