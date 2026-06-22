@@ -35,6 +35,21 @@ func sessionFrom(r *http.Request) (auth.SessionPayload, bool) {
 	return p, ok
 }
 
+// scope returns the owner-id filter for the caller and whether the caller sees
+// everything. superadmin → ("", true) = no filter; every other role →
+// (callerSub, false) = restrict to resources they own. Callers must apply the
+// filter themselves (skip non-matching owner_id rows when all is false).
+func scope(r *http.Request) (ownerID string, all bool) {
+	p, ok := sessionFrom(r)
+	if !ok {
+		return "", false
+	}
+	if p.Role == "superadmin" {
+		return "", true
+	}
+	return p.Sub, false
+}
+
 // requireAdmin wraps requireSession and additionally requires an admin role.
 // Role hierarchy: superadmin >= admin >= operator all get full admin access.
 // Tenant and viewer roles are handled by future scoped endpoints.

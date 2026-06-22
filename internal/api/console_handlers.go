@@ -119,6 +119,7 @@ func putDesiredHandler(q *sqlc.Queries) http.HandlerFunc {
 
 func listLogsHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		owner, all := scope(r)
 		rows, err := q.ListRecentDispatchLogs(r.Context(), limitParam(r, 100))
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
@@ -126,6 +127,9 @@ func listLogsHandler(q *sqlc.Queries) http.HandlerFunc {
 		}
 		out := make([]map[string]any, 0, len(rows))
 		for _, l := range rows {
+			if !all && l.OwnerID != owner { // owner scoping: non-superadmin sees only own
+				continue
+			}
 			out = append(out, map[string]any{
 				"ts": l.Ts, "model": l.Model, "target": l.Target,
 				"status": l.Status, "httpStatus": l.HttpStatus,
@@ -140,6 +144,7 @@ func listLogsHandler(q *sqlc.Queries) http.HandlerFunc {
 
 func listEventsHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		owner, all := scope(r)
 		rows, err := q.ListRecentEvents(r.Context(), limitParam(r, 100))
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
@@ -147,6 +152,9 @@ func listEventsHandler(q *sqlc.Queries) http.HandlerFunc {
 		}
 		out := make([]map[string]any, 0, len(rows))
 		for _, e := range rows {
+			if !all && e.OwnerID != owner { // owner scoping: non-superadmin sees only own
+				continue
+			}
 			out = append(out, map[string]any{
 				"ts": e.Ts, "type": e.Type, "target": e.Target,
 				"detail": json.RawMessage(e.Detail),

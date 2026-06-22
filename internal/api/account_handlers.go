@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
+	"github.com/qwwqq1000-arch/tower/internal/dispatch"
+	"github.com/qwwqq1000-arch/tower/internal/events"
 	"github.com/qwwqq1000-arch/tower/internal/nodeclient"
 )
 
@@ -199,13 +201,25 @@ func listProfilesHandler(q *sqlc.Queries) http.HandlerFunc {
 	}
 }
 
-func listAccountsHandler(q *sqlc.Queries) http.HandlerFunc {
+func listAccountsHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
+		owner, all := scope(r)
 		rows, err := q.ListNodeAccountsAll(ctx)
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
+		}
+		// Live status overlay (banned/half_open/permanent/...) from the in-memory store.
+		liveStatus := map[string]string{}
+		if svc != nil && svc.Store != nil {
+			now := int64(0)
+			if svc.Now != nil {
+				now = svc.Now()
+			}
+			for _, snap := range svc.Store.Snapshot(now) {
+				liveStatus[snap.Key] = snap.Status
+			}
 		}
 		// Build today cost map: target -> cost
 		todayCostMap := map[string]float64{}
@@ -223,7 +237,14 @@ func listAccountsHandler(q *sqlc.Queries) http.HandlerFunc {
 		}
 		out := make([]map[string]any, 0, len(rows))
 		for _, a := range rows {
+			if !all && a.AcctOwnerID != owner { // owner scoping: non-superadmin sees only own
+				continue
+			}
 			key := a.NodeID + ":" + a.ProfileID
+			status := a.AcctStatus
+			if ls, ok := liveStatus[key]; ok {
+				status = ls // live ban/half_open/permanent state wins over stored value
+			}
 			out = append(out, map[string]any{
 				"nodeId":           a.NodeID,
 				"nodeName":         a.NodeName,
@@ -235,7 +256,7 @@ func listAccountsHandler(q *sqlc.Queries) http.HandlerFunc {
 				"role":             a.Role,
 				"egress":           a.Egress,
 				"email":            a.Email,
-				"status":           a.AcctStatus,
+				"status":           status,
 				"todayCostUsd":     todayCostMap[key],
 				"totalCostUsd":     totalCostMap[key],
 				"expiresAt":        a.ExpiresAt,
@@ -244,6 +265,42 @@ func listAccountsHandler(q *sqlc.Queries) http.HandlerFunc {
 			})
 		}
 		writeJSON(w, 200, out)
+	}
+}
+
+// recoverAccountHandler clears all ban/cooldown/permanent state for one account
+// (across every node it is assigned to), re-enables it, and records an event.
+func recoverAccountHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		accountID := r.PathValue("accountId")
+		acc, err := q.GetAccount(r.Context(), accountID)
+		if err != nil {
+			writeJSON(w, 404, map[string]string{"error": "account not found"})
+			return
+		}
+		// owner scoping: non-superadmin may only recover their own accounts.
+		if owner, all := scope(r); !all && acc.OwnerID != owner {
+			writeJSON(w, 403, map[string]string{"error": "forbidden"})
+			return
+		}
+		rows, err := q.ListNodeAccountsByAccount(r.Context(), accountID)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if svc != nil && svc.Store != nil {
+			for _, na := range rows {
+				svc.Store.Recover(na.NodeID + ":" + na.ProfileID)
+			}
+		}
+		_ = q.SetNodeAccountEnabledByAccount(r.Context(), sqlc.SetNodeAccountEnabledByAccountParams{AccountID: accountID, Enabled: true})
+		_ = q.SetAccountStatus(r.Context(), sqlc.SetAccountStatusParams{ID: accountID, Status: "active"})
+		var now int64
+		if svc != nil && svc.Now != nil {
+			now = svc.Now()
+		}
+		_ = events.Record(r.Context(), q, now, events.Event{Type: "account_recovered", Target: accountID, OwnerID: acc.OwnerID})
+		writeJSON(w, 200, map[string]any{"ok": true, "accountId": accountID})
 	}
 }
 

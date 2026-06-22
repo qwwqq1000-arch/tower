@@ -1,0 +1,29 @@
+// Shared account/node status presentation: Chinese labels + Tailwind color classes.
+// Keep keys in sync with internal/state Account.Status():
+//   active | banned (open/cooling) | half_open (probing) | permanent | offline | disabled
+
+export const STATUS_LABELS: Record<string, string> = {
+  active: '活跃',
+  banned: '封禁·冷却',
+  half_open: '半开·探测',
+  permanent: '封禁(永久)',
+  offline: '离线',
+  disabled: '禁用',
+};
+
+export const STATUS_COLORS: Record<string, string> = {
+  active: 'bg-green-500/20 text-green-400 border-green-500/40',
+  banned: 'bg-red-500/20 text-red-400 border-red-500/40',
+  half_open: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/40',
+  permanent: 'bg-red-600/30 text-red-300 border-red-600/50',
+  offline: 'bg-gray-500/20 text-gray-400 border-gray-500/40',
+  disabled: 'bg-gray-500/10 text-gray-500 border-gray-500/20',
+};
+
+export function statusLabel(status: string): string {
+  return STATUS_LABELS[status] ?? status;
+}
+
+export function statusColor(status: string): string {
+  return STATUS_COLORS[status] ?? STATUS_COLORS.offline;
+}

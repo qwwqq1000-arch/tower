@@ -6,23 +6,16 @@ import { useEffect, useRef, useState } from 'react';
 import { getDispatchStatus, listFallbackChannels, listAccounts, getServerStatus } from '../api';
 import type { DispatchStatus, DispatchAccountSnapshot, DispatchEvent, DispatchFallbackChannel, ServerStatus } from '../types';
 import { useAuth } from '../auth';
+import { statusColor, statusLabel } from '../lib/status';
 import { TenantDispatch } from './tenant';
 
 // ------------------------------------------------------------------
 // Badge
 // ------------------------------------------------------------------
 function StatusBadge({ status }: { status: string }) {
-  const colorMap: Record<string, string> = {
-    active:    'bg-green-500/20 text-green-400 border-green-500/40',
-    banned:    'bg-red-500/20 text-red-400 border-red-500/40',
-    half_open: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/40',
-    offline:   'bg-gray-500/20 text-gray-400 border-gray-500/40',
-    disabled:  'bg-gray-500/10 text-gray-500 border-gray-500/20',
-  };
-  const cls = colorMap[status] ?? colorMap['offline'];
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded border text-xs font-mono ${cls}`}>
-      {status}
+    <span className={`inline-flex items-center px-2 py-0.5 rounded border text-xs font-mono ${statusColor(status)}`}>
+      {statusLabel(status)}
     </span>
   );
 }

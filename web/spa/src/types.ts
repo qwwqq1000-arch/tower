@@ -134,6 +134,7 @@ export interface PolicyPatch {
   SlotCooldownMinMs?: number;
   SlotCooldownMaxMs?: number;
   BanPersistStreak?: number;
+  PermanentBanStreak?: number;
   CooldownBaseMs?: number;
   CooldownMaxMs?: number;
   CooldownMult?: number;
@@ -167,6 +168,7 @@ export interface PolicyConfig {
   SlotCooldownMinMs: number;
   SlotCooldownMaxMs: number;
   BanPersistStreak: number;
+  PermanentBanStreak: number;
   CooldownBaseMs: number;
   CooldownMaxMs: number;
   CooldownMult: number;
@@ -345,6 +347,8 @@ export interface UserRow {
   username: string;
   role: string;
   rate: number;
+  channelRate?: number;
+  fallbackLimit?: number;
 }
 
 // --- Node Telemetry (遥测 / 健康) ---
@@ -472,6 +476,9 @@ export interface MeDashboard {
   hostingRate: number;
   unsettledUsd: number;
   accumulatedUsd: number;
+  channelConsumptionUsd?: number;
+  channelRate?: number;
+  channelHostingFeeUsd?: number;
 }
 
 export interface ServerStatus {

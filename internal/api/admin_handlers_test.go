@@ -14,9 +14,12 @@ import (
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 )
 
+// adminCookie issues a superadmin session — the all-access role used by tests
+// that exercise global management. Owner-scoping (admin sees only own) is tested
+// separately with explicit non-superadmin sessions.
 func adminCookie(t *testing.T, secret string) *http.Cookie {
 	t.Helper()
-	tok := auth.IssueSession(secret, "u_admin", "admin", nowUnix(), 3600)
+	tok := auth.IssueSession(secret, "u_admin", "superadmin", nowUnix(), 3600)
 	return &http.Cookie{Name: "tower_session", Value: tok}
 }
 

@@ -11,10 +11,12 @@ import {
   listSlots,
   setAccountExpiry,
   setAccountOwner,
+  recoverAccount,
   listUsers,
 } from '../api';
 import type { AccountRow, QuotaAll, Slot, UserRow } from '../types';
 import { useAuth } from '../auth';
+import { statusColor, statusLabel } from '../lib/status';
 import { TenantAccounts } from './tenant';
 
 // ------------------------------------------------------------------
@@ -456,6 +458,18 @@ function AccountTableRow({
     }
   }
 
+  const [recovering, setRecovering] = useState(false);
+  const banned = account.status === 'permanent' || account.status === 'banned' || account.status === 'half_open';
+  async function handleRecover() {
+    setRecovering(true);
+    try {
+      await recoverAccount(account.accountId);
+      onRefresh();
+    } finally {
+      setRecovering(false);
+    }
+  }
+
   return (
     <>
       <tr className="border-t border-line hover:bg-line/30 transition">
@@ -463,6 +477,11 @@ function AccountTableRow({
         <td className="px-4 py-3">
           <p className="text-xs text-ink">{account.email || '—'}</p>
           <p className="text-[10px] text-muted font-mono mt-0.5">{account.profileId || '—'}</p>
+          {account.status && (
+            <span className={`inline-flex items-center mt-1 px-1.5 py-0.5 rounded border text-[10px] font-mono ${statusColor(account.status)}`}>
+              {statusLabel(account.status)}
+            </span>
+          )}
         </td>
         <td className="px-4 py-3 text-xs text-muted">{account.subscriptionType || '—'}</td>
         <td className="px-4 py-3">
@@ -495,6 +514,16 @@ function AccountTableRow({
             >
               {toggling ? '…' : account.enabled ? '暂停' : '启用'}
             </button>
+            {banned && (
+              <button
+                onClick={() => { void handleRecover(); }}
+                disabled={recovering}
+                className="text-xs text-ok hover:text-ok/70 disabled:opacity-50 transition"
+                title="清除封禁/冷却/永久封禁状态并重新启用"
+              >
+                {recovering ? '恢复中…' : '恢复'}
+              </button>
+            )}
             <button
               onClick={() => { void handleUnassign(); }}
               disabled={removing}

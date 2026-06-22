@@ -30,6 +30,7 @@ import type {
 import type { BanAnalysis, BanBucket } from '../api';
 import { EventTimeline } from './Dispatch';
 import { copyText } from '../lib/clipboard';
+import { statusColor, statusLabel } from '../lib/status';
 
 // ------------------------------------------------------------------
 // Shared formatters
@@ -439,6 +440,15 @@ export function TenantBilling() {
             <StatCard label="未结算托管费" value={fmtCost(dash.unsettledUsd)} warn={dash.unsettledUsd > 0} />
           </div>
 
+          {/* Channel (fallback relay) hosting summary — only when channel billing applies */}
+          {((dash.channelConsumptionUsd ?? 0) > 0 || (dash.channelRate ?? 0) > 0) && (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              <StatCard label="渠道中转消耗" value={fmtCost(dash.channelConsumptionUsd ?? 0)} />
+              <StatCard label="渠道倍率" value={`${((dash.channelRate ?? 0) * 100).toFixed(1)}%`} />
+              <StatCard label="渠道托管费" value={fmtCost(dash.channelHostingFeeUsd ?? 0)} accent />
+            </div>
+          )}
+
           {/* Ledger */}
           <div className="space-y-3">
             <h2 className="text-sm font-semibold text-ink">账本</h2>
@@ -571,14 +581,7 @@ function TenantFallbackChannelsPanel({ channels }: { channels: DispatchFallbackC
 }
 
 function dispStatusCls(status: string): string {
-  const colorMap: Record<string, string> = {
-    active:    'bg-green-500/20 text-green-400 border-green-500/40',
-    banned:    'bg-red-500/20 text-red-400 border-red-500/40',
-    half_open: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/40',
-    offline:   'bg-gray-500/20 text-gray-400 border-gray-500/40',
-    disabled:  'bg-gray-500/10 text-gray-500 border-gray-500/20',
-  };
-  return colorMap[status] ?? colorMap['offline'];
+  return statusColor(status);
 }
 
 const DISPATCH_REFRESH_MS = 5_000;
@@ -662,7 +665,7 @@ export function TenantDispatch() {
                         <td className="px-4 py-2 text-sm text-ink font-medium truncate max-w-[200px]">{a.label || '—'}</td>
                         <td className="px-4 py-2">
                           <span className={`inline-flex items-center px-2 py-0.5 rounded border text-xs font-mono ${dispStatusCls(a.status)}`}>
-                            {a.status}
+                            {statusLabel(a.status)}
                           </span>
                         </td>
                         <td className="px-4 py-2 text-right tabular-nums">{a.inflight}</td>

@@ -30,6 +30,7 @@ type AccountState struct {
 	BanStreak     int32  `json:"ban_streak"`
 	FailCount     int32  `json:"fail_count"`
 	UpdatedAt     int64  `json:"updated_at"`
+	Permanent     bool   `json:"permanent"`
 }
 
 type AuditLog struct {

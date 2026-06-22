@@ -100,8 +100,8 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 
 	cfg := s.resolveConfig(ctx)
 	breaker := state.BreakerCfg{
-		PersistStreak: cfg.BanPersistStreak, BaseMs: cfg.CooldownBaseMs,
-		MaxMs: cfg.CooldownMaxMs, Mult: cfg.CooldownMult,
+		PersistStreak: cfg.BanPersistStreak, PermStreak: cfg.PermanentBanStreak,
+		BaseMs: cfg.CooldownBaseMs, MaxMs: cfg.CooldownMaxMs, Mult: cfg.CooldownMult,
 	}
 
 	order, resolver := s.buildCandidates(ctx, ownerID, model, cfg)
@@ -629,8 +629,8 @@ func flushCopy(dst http.ResponseWriter, src io.Reader) {
 func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, ownerID, model string, body []byte) Outcome {
 	cfg := s.resolveConfig(ctx)
 	breaker := state.BreakerCfg{
-		PersistStreak: cfg.BanPersistStreak, BaseMs: cfg.CooldownBaseMs,
-		MaxMs: cfg.CooldownMaxMs, Mult: cfg.CooldownMult,
+		PersistStreak: cfg.BanPersistStreak, PermStreak: cfg.PermanentBanStreak,
+		BaseMs: cfg.CooldownBaseMs, MaxMs: cfg.CooldownMaxMs, Mult: cfg.CooldownMult,
 	}
 	order, resolver := s.buildCandidates(ctx, ownerID, model, cfg)
 	channels := s.enabledChannels(ctx, ownerID)

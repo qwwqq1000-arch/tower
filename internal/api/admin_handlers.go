@@ -47,6 +47,12 @@ func createNodeHandler(q *sqlc.Queries) http.HandlerFunc {
 		if body.Name == "" {
 			body.Name = nextNodeName(r.Context(), q)
 		}
+		// Owner default: a non-superadmin that does not specify an owner owns the
+		// node it creates (so it remains visible under owner scoping). superadmin
+		// may leave it empty (global) or assign explicitly.
+		if owner, all := scope(r); !all && body.OwnerId == "" {
+			body.OwnerId = owner
+		}
 		n, err := q.CreateNode(r.Context(), sqlc.CreateNodeParams{
 			ID: randHex("n_"), Name: body.Name, BaseUrl: body.BaseUrl, ApiKey: body.ApiKey, OwnerID: body.OwnerId,
 		})
@@ -60,10 +66,18 @@ func createNodeHandler(q *sqlc.Queries) http.HandlerFunc {
 
 func listNodesHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		rows, err := q.ListNodes(r.Context())
+		owner, all := scope(r)
+		allRows, err := q.ListNodes(r.Context())
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
+		}
+		// owner scoping: non-superadmin sees only nodes they own.
+		rows := allRows[:0:0]
+		for _, n := range allRows {
+			if all || n.OwnerID == owner {
+				rows = append(rows, n)
+			}
 		}
 
 		type healthResult struct {
@@ -149,6 +163,7 @@ func createDispatchKeyHandler(q *sqlc.Queries) http.HandlerFunc {
 
 func listDispatchKeysHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		owner, all := scope(r)
 		rows, err := q.ListAllDispatchKeys(r.Context())
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -156,6 +171,9 @@ func listDispatchKeysHandler(q *sqlc.Queries) http.HandlerFunc {
 		}
 		out := make([]map[string]any, 0, len(rows))
 		for _, k := range rows {
+			if !all && k.OwnerID != owner { // owner scoping: non-superadmin sees only own
+				continue
+			}
 			out = append(out, map[string]any{"id": k.ID, "prefix": k.Prefix, "label": k.Label, "ownerId": k.OwnerID, "enabled": k.Enabled})
 		}
 		writeJSON(w, http.StatusOK, out)
@@ -185,11 +203,18 @@ func startOfTodayMs() int64 {
 func dashboardHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
-		// nodes
-		rows, err := q.ListNodes(ctx)
+		owner, all := scope(r)
+		// nodes (owner-scoped: non-superadmin sees only own)
+		allNodes, err := q.ListNodes(ctx)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
+		}
+		rows := allNodes[:0:0]
+		for _, n := range allNodes {
+			if all || n.OwnerID == owner {
+				rows = append(rows, n)
+			}
 		}
 		var store interface{ NodeStatus(string) string }
 		if svc != nil && svc.Store != nil {
@@ -248,6 +273,9 @@ func dashboardHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
 		hosting := []map[string]any{}
 		if ts, err := q.ListTenantsBasic(ctx); err == nil {
 			for _, t := range ts {
+				if !all && t.ID != owner { // owner scoping: non-superadmin sees only own billing row
+					continue
+				}
 				consumption, _ := q.SumCostForOwner(ctx, t.ID)
 				rate, _ := q.GetHostingRate(ctx, t.ID)
 				unsettled, accumulated := billing.ComputeHostingFee(consumption, 0, rate)
