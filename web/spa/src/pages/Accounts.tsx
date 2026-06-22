@@ -58,19 +58,17 @@ function daysRemaining(ms: number | undefined): number | null {
   return Math.floor((ms - Date.now()) / 86400000);
 }
 
-/** Format a unix-ms timestamp as HH:MM, or MM-DD HH:MM if not today */
-function fmtResetTime(ms: number | undefined): string | null {
-  if (!ms) return null;
-  const d = new Date(ms);
-  const now = new Date();
-  const sameDay =
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate();
-  const hhmm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  if (sameDay) return hhmm;
-  const mmdd = `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  return `${mmdd} ${hhmm}`;
+/** Format remaining ms as a countdown: "已到" / "Xd Yh" / "H:MM:SS" / "MM:SS". */
+function fmtCountdown(remainMs: number): string {
+  if (remainMs <= 0) return '已到';
+  const s = Math.floor(remainMs / 1000);
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (d > 0) return `${d}天${h}时`;
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+  return `${m}:${String(sec).padStart(2, '0')}`;
 }
 
 // ------------------------------------------------------------------
@@ -85,18 +83,25 @@ function QuotaBadge({
   label: string;
   resetsAt?: number;
 }) {
+  // Tick once a second so the reset shows a live countdown.
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!resetsAt || resetsAt <= 0) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [resetsAt]);
   const pct = Math.round(utilization * 100);
   let cls = 'bg-green-500/20 text-green-400 border-green-500/40';
   if (utilization >= 0.9) cls = 'bg-red-500/20 text-red-400 border-red-500/40';
   else if (utilization >= 0.7) cls = 'bg-yellow-500/20 text-yellow-400 border-yellow-500/40';
-  const resetStr = resetsAt && resetsAt > 0 ? fmtResetTime(resetsAt) : null;
+  const countdown = resetsAt && resetsAt > 0 ? fmtCountdown(resetsAt - now) : null;
   return (
     <span className="inline-flex flex-col items-start gap-0">
       <span className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-mono ${cls}`}>
         {label} {pct}%
       </span>
-      {resetStr && (
-        <span className="text-[9px] text-muted pl-0.5">重置 {resetStr}</span>
+      {countdown && (
+        <span className="text-[9px] text-muted pl-0.5">重置 {countdown}</span>
       )}
     </span>
   );
@@ -748,6 +753,25 @@ function AdminAccounts() {
   useEffect(() => {
     void fetchAll();
   }, [fetchAll]);
+
+  // When a CPA quota window reaches its reset time, re-fetch so the account's
+  // status/utilisation refreshes for the new window. Schedule a single timer at
+  // the soonest upcoming reset (+3s buffer for the backend's quota poll).
+  useEffect(() => {
+    const resets: number[] = [];
+    for (const a of accounts) {
+      const q = a.cpaQuota;
+      if (!q) continue;
+      for (const s of [q.fiveHourResetsAt, q.sevenDayResetsAt, q.sevenDaySonnetResetsAt]) {
+        const t = s ? Date.parse(s) : NaN;
+        if (!isNaN(t) && t > Date.now()) resets.push(t);
+      }
+    }
+    if (resets.length === 0) return;
+    const delay = Math.max(1000, Math.min(...resets) - Date.now() + 3000);
+    const id = setTimeout(() => { void fetchAll(); }, Math.min(delay, 2_000_000_000));
+    return () => clearTimeout(id);
+  }, [accounts, fetchAll]);
 
   // Reset page when search changes
   useEffect(() => { setPage(1); }, [search]);

@@ -41,6 +41,15 @@ function fmtDays(ms?: number): string {
 // ------------------------------------------------------------------
 // Status badge
 // ------------------------------------------------------------------
+// consoleUrl returns the management console URL for a node. CPA (CLIProxyAPI)
+// serves its panel at /management.html on the inference port; meridian uses root.
+function consoleUrl(node: NodeRecord): string {
+  if ((node.kind ?? '').toLowerCase() === 'cpa') {
+    return `${node.baseUrl.replace(/\/$/, '')}/management.html`;
+  }
+  return node.baseUrl;
+}
+
 function NodeKindBadge({ kind }: { kind?: string }) {
   const isCpa = (kind ?? 'meridian').toLowerCase() === 'cpa';
   const cls = isCpa
@@ -870,7 +879,7 @@ function NodeRow({
             详情
           </Link>
           <a
-            href={node.baseUrl}
+            href={consoleUrl(node)}
             target="_blank"
             rel="noopener noreferrer"
             className="text-xs text-muted hover:text-ink transition"
@@ -988,7 +997,7 @@ function NodeMobileCard({
           {node.enabled ? '停用' : '启用'}
         </button>
         <a
-          href={node.baseUrl}
+          href={consoleUrl(node)}
           target="_blank"
           rel="noopener noreferrer"
           className="text-xs text-muted hover:text-ink transition"
