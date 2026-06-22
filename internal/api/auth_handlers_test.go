@@ -14,6 +14,35 @@ import (
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 )
 
+// TestMeHandlerMustChangePwField is a pure (no-DB) test that asserts the /auth/me
+// response includes a "mustChangePw" field. When the pool is nil, the field
+// defaults to false (no forced change). The DB-backed case is covered by the
+// integration test TestLoginMeLogout.
+func TestMeHandlerMustChangePwField(t *testing.T) {
+	const secret = "test-secret-padding-to-32-chars!"
+	// Build handler with nil pool (skips DB calls → must_change_pw defaults false).
+	handler := requireSession(secret, nil, meHandler(nil))
+
+	r := httptest.NewRequest(http.MethodGet, "/auth/me", nil)
+	r.AddCookie(&http.Cookie{
+		Name:  "tower_session",
+		Value: auth.IssueSession(secret, "u_test", "admin", 0, nowUnix(), 3600),
+	})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, r)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if _, ok := body["mustChangePw"]; !ok {
+		t.Fatal("response missing mustChangePw field")
+	}
+}
+
 func TestLoginMeLogout(t *testing.T) {
 	url := os.Getenv("TEST_DATABASE_URL")
 	if url == "" {

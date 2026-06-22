@@ -65,11 +65,21 @@ func meHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 		perms := loadPerms(pool, r, p.Role)
-		writeJSON(w, http.StatusOK, map[string]any{"sub": p.Sub, "role": p.Role, "perms": perms})
+		// Surface must_change_pw so the SPA can enforce a forced change gate.
+		mustChangePw := false
+		if pool != nil {
+			if t, err := sqlc.New(pool).GetTenantByID(r.Context(), p.Sub); err == nil {
+				mustChangePw = t.MustChangePw
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"sub": p.Sub, "role": p.Role, "perms": perms, "mustChangePw": mustChangePw})
 	}
 }
 
 func loadPerms(pool *pgxpool.Pool, r *http.Request, role string) []string {
+	if pool == nil {
+		return []string{}
+	}
 	var raw []byte
 	err := pool.QueryRow(r.Context(), `SELECT permissions FROM roles WHERE name=$1`, role).Scan(&raw)
 	if err != nil {

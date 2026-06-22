@@ -6,6 +6,7 @@ export interface User {
   sub: string;
   role: string; // superadmin | admin | operator | tenant | viewer
   perms: string[];
+  mustChangePw?: boolean;
 }
 
 // --- Nodes ---
