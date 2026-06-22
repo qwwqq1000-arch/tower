@@ -46,7 +46,7 @@ func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc
 		mux.HandleFunc("GET /api/admin/policies", requireAdmin(secret, q, listPoliciesHandler(q)))
 		mux.HandleFunc("PUT /api/admin/policies/global", requireSuperadmin(secret, q, putGlobalPolicyHandler(q)))
 		mux.HandleFunc("PUT /api/admin/policies/tenant/{id}", requireSuperadmin(secret, q, putTenantPolicyHandler(q)))
-		mux.HandleFunc("POST /api/admin/policies/dry-run", requireSuperadmin(secret, q, dryRunPolicyHandler()))
+		mux.HandleFunc("POST /api/admin/policies/dry-run", requireSuperadmin(secret, q, dryRunPolicyHandler(q)))
 		mux.HandleFunc("GET /api/admin/desired", requireAdmin(secret, q, getDesiredHandler(q)))
 		mux.HandleFunc("PUT /api/admin/desired", requireAdmin(secret, q, putDesiredHandler(q)))
 		mux.HandleFunc("GET /api/admin/logs", requireAdmin(secret, q, listLogsHandler(q)))

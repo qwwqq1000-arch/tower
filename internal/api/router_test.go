@@ -72,7 +72,7 @@ func TestPolicyRoutesSuperadminOnly(t *testing.T) {
 
 	// Build the handlers the same way the router does: wrap with requireSuperadmin.
 	putPolicyHandler := requireSuperadmin(secret, nil, putGlobalPolicyHandler(nil))
-	dryRunHandler := requireSuperadmin(secret, nil, dryRunPolicyHandler())
+	dryRunHandler := requireSuperadmin(secret, nil, dryRunPolicyHandler(nil))
 
 	doRequest := func(handler http.HandlerFunc, method, path, sub, role string) int {
 		r := httptest.NewRequest(method, path, nil)

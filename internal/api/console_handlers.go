@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -126,14 +127,44 @@ func putTenantPolicyHandler(q *sqlc.Queries) http.HandlerFunc {
 	}
 }
 
-func dryRunPolicyHandler() http.HandlerFunc {
+// loadStoredGlobalConfig reads the global policy row from the DB and returns
+// the effective Config (Defaults merged with the stored global patch). If q is
+// nil or no global row exists the returned Config is policy.Defaults() so the
+// handler degrades gracefully without a DB.
+func loadStoredGlobalConfig(ctx context.Context, q *sqlc.Queries) policy.Config {
+	base := policy.Defaults()
+	if q == nil {
+		return base
+	}
+	rows, err := q.ListPolicies(ctx)
+	if err != nil {
+		return base
+	}
+	for _, p := range rows {
+		if p.ScopeType == "global" {
+			var stored policy.Patch
+			if err := json.Unmarshal(p.Params, &stored); err == nil {
+				return policy.Resolve(base, stored)
+			}
+			break
+		}
+	}
+	return base
+}
+
+// dryRunPolicyHandler previews the effect of applying a policy patch over the
+// currently stored effective policy (Defaults + stored global patch). This
+// matches exactly what PUT /api/admin/policies/global will produce, so the
+// preview is accurate rather than diffing against hard-coded Defaults.
+func dryRunPolicyHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var patch policy.Patch
 		if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
 			writeJSON(w, 400, map[string]string{"error": "invalid patch"})
 			return
 		}
-		final, diffs := policy.DryRun(policy.Defaults(), patch)
+		current := loadStoredGlobalConfig(r.Context(), q)
+		final, diffs := policy.DryRun(current, patch)
 		writeJSON(w, 200, map[string]any{"final": final, "diffs": diffs})
 	}
 }
