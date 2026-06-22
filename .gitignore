@@ -3,3 +3,4 @@
 .env
 *.test
 web/spa/node_modules/
+/server
