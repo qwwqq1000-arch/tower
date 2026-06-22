@@ -58,16 +58,11 @@ func requireSession(secret string, q *sqlc.Queries, next http.HandlerFunc) http.
 				return
 			}
 		}
-		// CSRF guard: every cookie-auth mutation must carry X-Requested-With:
-		// tower. GET/HEAD are exempted (safe methods, no state change).
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			if r.Header.Get("X-Requested-With") != "tower" {
-				writeJSON(w, http.StatusForbidden, map[string]string{"error": "csrf check failed"})
-				return
-			}
-		}
 		ctx := context.WithValue(r.Context(), ctxKeySession, p)
-		next(w, r.WithContext(ctx))
+		// Delegate CSRF enforcement to requireSameOrigin so that the check
+		// lives in exactly one place and the name on the call-site matches
+		// the function that actually rejects the request.
+		requireSameOrigin(next)(w, r.WithContext(ctx))
 	}
 }
 
@@ -146,13 +141,17 @@ func requirePerm(secret string, q *sqlc.Queries, load permLoader, capability str
 	})
 }
 
-// requireSameOrigin is a CSRF guard for cookie-authenticated mutation routes.
+// requireSameOrigin is the CSRF guard for cookie-authenticated mutation routes.
 // It requires that all state-changing requests (any method other than GET and
 // HEAD) carry the header "X-Requested-With: tower". The SPA sends this header
 // on every non-GET fetch; a cross-origin attacker's form/script cannot set
 // custom headers, so the check stops CSRF even when SameSite=Lax allows the
 // cookie to be sent (e.g. top-level navigation POST). GET/HEAD are exempted
 // because they must be safe (idempotent, no state change) per HTTP semantics.
+//
+// requireSession calls this function internally so that the CSRF logic lives
+// in exactly one place; every cookie-auth route goes through requireSession
+// and therefore through this check automatically.
 func requireSameOrigin(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {

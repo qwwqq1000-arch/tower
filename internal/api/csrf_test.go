@@ -11,6 +11,10 @@ import (
 // TestRequireSameOrigin verifies that the CSRF guard rejects state-changing
 // cookie-auth requests that lack the X-Requested-With: tower header, while
 // passing through requests that carry it and unconditionally passing GET/HEAD.
+//
+// requireSession delegates to requireSameOrigin internally, so testing
+// requireSession exercises the CSRF protection in exactly the same way it
+// fires in production — no additional wrapper is needed.
 func TestRequireSameOrigin(t *testing.T) {
 	const secret = "test-secret-padding-to-32-chars!"
 
@@ -20,9 +24,9 @@ func TestRequireSameOrigin(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}
 
-	// Wrap the handler with both requireSession and requireSameOrigin so the
-	// full middleware chain is exercised.
-	h := requireSession(secret, nil, requireSameOrigin(next))
+	// requireSession owns the CSRF check (via requireSameOrigin). Using it
+	// directly here mirrors the production call-site in router.go.
+	h := requireSession(secret, nil, next)
 
 	sessionCookie := &http.Cookie{
 		Name:  "tower_session",
