@@ -516,7 +516,6 @@ func (s *Service) enabledChannels(ctx context.Context, ownerID string, model str
 func fbSlotKey(id string) string { return "fb:" + id }
 
 func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []byte, ch sqlc.FallbackChannel, reason string, latencyMs int64) Outcome {
-	_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: "fallback", Target: ch.ID, OwnerID: ownerID, Detail: map[string]any{"reason": reason, "channelId": ch.ID, "channelName": ch.Name}})
 	cap := int(ch.MaxConcurrent)
 	if cap <= 0 {
 		cap = 1000
@@ -524,10 +523,16 @@ func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []
 	key := fbSlotKey(ch.ID)
 	s.Store.Ensure(key, cap)
 	bk := state.BreakerCfg{PersistStreak: 1 << 30, BaseMs: 0, MaxMs: 0, Mult: 1}
-	occupied := s.Store.TryDispatch(key, model, bk)
-	if occupied {
-		defer s.Store.Complete(key, int64(ch.CooldownMs), int64(ch.CooldownMs))
+	// TryDispatch returns false when the channel's slot set is full (MaxConcurrent
+	// reached). Reject with backpressure (503) rather than forwarding anyway, so
+	// the concurrency cap is actually enforced (fallback-2).
+	if !s.Store.TryDispatch(key, model, bk) {
+		s.logErr(ctx, ownerID, model, 503, latencyMs, reason)
+		return Outcome{Status: 503, Body: `{"error":"fallback channel at capacity"}`, Target: "fallback:" + ch.ID, Reason: reason}
 	}
+	defer s.Store.Complete(key, int64(ch.CooldownMs), int64(ch.CooldownMs))
+
+	_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: "fallback", Target: ch.ID, OwnerID: ownerID, Detail: map[string]any{"reason": reason, "channelId": ch.ID, "channelName": ch.Name}})
 
 	cp := &ChannelProxy{Body: body, Ch: ChannelRef{BaseURL: ch.BaseUrl, APIKey: ch.ApiKey}}
 	res, err := cp.Send(ctx, ch.ID)
@@ -1038,7 +1043,6 @@ func lastUserText(body []byte) string {
 
 // streamChannel attempts a fallback channel stream. committed=true means we wrote to the client.
 func (s *Service) streamChannel(ctx context.Context, w http.ResponseWriter, ch sqlc.FallbackChannel, body []byte, ownerID, model, reason string) (Outcome, bool) {
-	_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: "fallback", Target: ch.ID, OwnerID: ownerID, Detail: map[string]any{"reason": reason, "channelId": ch.ID, "channelName": ch.Name}})
 	cap := int(ch.MaxConcurrent)
 	if cap <= 0 {
 		cap = 1000
@@ -1046,10 +1050,14 @@ func (s *Service) streamChannel(ctx context.Context, w http.ResponseWriter, ch s
 	key := fbSlotKey(ch.ID)
 	s.Store.Ensure(key, cap)
 	bk := state.BreakerCfg{PersistStreak: 1 << 30, BaseMs: 0, MaxMs: 0, Mult: 1}
-	occupied := s.Store.TryDispatch(key, model, bk)
-	if occupied {
-		defer s.Store.Complete(key, int64(ch.CooldownMs), int64(ch.CooldownMs))
+	// Slot set full (MaxConcurrent reached): do not forward. Return committed=false
+	// so the caller falls through to the next attempt / 503 (fallback-2).
+	if !s.Store.TryDispatch(key, model, bk) {
+		return Outcome{}, false
 	}
+	defer s.Store.Complete(key, int64(ch.CooldownMs), int64(ch.CooldownMs))
+
+	_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: "fallback", Target: ch.ID, OwnerID: ownerID, Detail: map[string]any{"reason": reason, "channelId": ch.ID, "channelName": ch.Name}})
 
 	cp := &ChannelProxy{Body: body, Ch: ChannelRef{BaseURL: ch.BaseUrl, APIKey: ch.ApiKey}}
 	st, err := cp.OpenStream(ctx, ch.ID)
