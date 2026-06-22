@@ -21,6 +21,16 @@ func encryptImportCred(cipher *crypto.Cipher, plain string) string {
 	return cipher.EncryptStr(plain)
 }
 
+// decryptImportCred is the symmetric read helper for vault-crypto-2.
+// It decrypts a ciphertext written by encryptImportCred, falling back to
+// returning the value unchanged when cipher is nil (keyless deployments) or
+// when the value is not valid ciphertext (legacy plaintext rows).
+// Call this wherever OauthAccessEnc or OauthRefreshEnc are consumed in order
+// to satisfy the decrypt-on-use requirement of vault-crypto-2.
+func decryptImportCred(cipher *crypto.Cipher, enc string) string {
+	return cipher.DecryptOrPlaintext(enc)
+}
+
 // effectiveProfiles returns the node's named profiles, or — when none exist but
 // the node is logged in (default account) — a synthetic "default" profile from /health.
 func effectiveProfiles(ctx context.Context, cl *nodeclient.Client) ([]nodeclient.Profile, error) {
@@ -112,7 +122,7 @@ func oauthExchangeHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFu
 			SubscriptionType: "",
 			// Encrypt the account identity as stored credentials (vault-crypto-2):
 			// OauthAccessEnc holds the email, OauthRefreshEnc holds the profileID,
-			// both encrypted at rest. DecryptOrPlaintext is used on read.
+			// both encrypted at rest. Use decryptImportCred when reading these fields.
 			OauthAccessEnc:  encryptImportCred(cipher, email),
 			OauthRefreshEnc: encryptImportCred(cipher, profileID),
 			ExpiresAt:       time.Now().Add(30 * 24 * time.Hour).UnixMilli(),
@@ -185,7 +195,7 @@ func importProfileHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFu
 			SubscriptionType: "",
 			// Encrypt the account identity as stored credentials (vault-crypto-2):
 			// OauthAccessEnc holds the email, OauthRefreshEnc holds the profileID,
-			// both encrypted at rest. DecryptOrPlaintext is used on read.
+			// both encrypted at rest. Use decryptImportCred when reading these fields.
 			OauthAccessEnc:  encryptImportCred(cipher, matched.Email),
 			OauthRefreshEnc: encryptImportCred(cipher, matched.ID),
 			ExpiresAt:       time.Now().Add(30 * 24 * time.Hour).UnixMilli(),
