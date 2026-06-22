@@ -1,5 +1,7 @@
 package billing
 
+import "math"
+
 // Ledger tracks cumulative consumption derived from a node's monotonic lifetime
 // cost, robust to node restarts. Last < 0 means "no observation yet".
 type Ledger struct {
@@ -27,4 +29,22 @@ func ComputeHostingFee(consumption, settled, rate float64) (unsettled, accumulat
 		u = 0
 	}
 	return u * rate, consumption * rate
+}
+
+// OutstandingToSettle returns the not-yet-settled consumption (gross minus what
+// was already settled), clamped to >= 0. Settling this amount is idempotent: a
+// second settle right after sees gross == alreadySettled and settles 0, so a
+// tenant is never double-charged for the same consumption.
+func OutstandingToSettle(gross, alreadySettled float64) float64 {
+	o := gross - alreadySettled
+	if o < 0 {
+		o = 0
+	}
+	return o
+}
+
+// RoundUSD rounds a USD amount to whole cents, removing float64 drift before a
+// money value is shown to or charged to a tenant.
+func RoundUSD(v float64) float64 {
+	return math.Round(v*100) / 100
 }

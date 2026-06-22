@@ -16,15 +16,24 @@ func Settle(ctx context.Context, pool *pgxpool.Pool, tenantID string, periodStar
 	}
 	defer tx.Rollback(ctx)
 	q := sqlc.New(tx)
+	// gross = all-time accrued consumption; alreadySettled = sum of prior paid
+	// settlements. We settle only the outstanding delta so re-settling does not
+	// re-charge the full lifetime total (the previous behaviour) and the tenant's
+	// unsettled balance actually drops after a settle.
 	gross, err := q.SumCostForOwner(ctx, tenantID)
 	if err != nil {
 		return sqlc.Settlement{}, err
 	}
-	st, err := q.CreateSettlement(ctx, sqlc.CreateSettlementParams{ID: settleID, TenantID: tenantID, PeriodStart: periodStart, PeriodEnd: periodEnd, GrossUsd: gross, SettledUsd: gross, Status: "paid", CreatedAt: now})
+	alreadySettled, err := q.SumSettledForOwner(ctx, tenantID)
 	if err != nil {
 		return sqlc.Settlement{}, err
 	}
-	if _, err := q.AppendLedger(ctx, sqlc.AppendLedgerParams{TenantID: tenantID, Ts: now, Type: "settlement", AmountUsd: gross, BalanceAfter: 0, Ref: settleID, Note: "settlement"}); err != nil {
+	outstanding := OutstandingToSettle(gross, alreadySettled)
+	st, err := q.CreateSettlement(ctx, sqlc.CreateSettlementParams{ID: settleID, TenantID: tenantID, PeriodStart: periodStart, PeriodEnd: periodEnd, GrossUsd: gross, SettledUsd: outstanding, Status: "paid", CreatedAt: now})
+	if err != nil {
+		return sqlc.Settlement{}, err
+	}
+	if _, err := q.AppendLedger(ctx, sqlc.AppendLedgerParams{TenantID: tenantID, Ts: now, Type: "settlement", AmountUsd: outstanding, BalanceAfter: 0, Ref: settleID, Note: "settlement"}); err != nil {
 		return sqlc.Settlement{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

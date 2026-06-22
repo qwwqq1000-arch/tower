@@ -521,7 +521,7 @@ func (s *Service) logOK(ctx context.Context, ownerID, model string, res ProxyRes
 	})
 	if in > 0 || out > 0 {
 		_ = s.Q.AddCostRollup(ctx, sqlc.AddCostRollupParams{
-			ScopeType: "owner", ScopeID: ownerID, Day: "", Model: model,
+			ScopeType: "owner", ScopeID: ownerID, Day: todayDayStr(), Model: model,
 			Requests: 1, TokensIn: in, TokensOut: out, CostUsd: cost,
 		})
 	}
@@ -636,7 +636,7 @@ func (s *Service) logStream(ctx context.Context, ownerID, model, key string, sta
 	})
 	if in > 0 || out > 0 {
 		_ = s.Q.AddCostRollup(ctx, sqlc.AddCostRollupParams{
-			ScopeType: "owner", ScopeID: ownerID, Day: "", Model: model,
+			ScopeType: "owner", ScopeID: ownerID, Day: todayDayStr(), Model: model,
 			Requests: 1, TokensIn: in, TokensOut: out, CostUsd: cost,
 		})
 	}
