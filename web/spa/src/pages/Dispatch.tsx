@@ -20,11 +20,14 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-// fmtRecover formats a future ms timestamp as HH:MM:SS (or "即将" if elapsed).
+// fmtRecover formats a future ms timestamp as a countdown ("剩 20秒" / "剩 1:23" / "即将").
 function fmtRecover(ms: number): string {
-  const d = new Date(ms);
-  if (ms <= Date.now()) return '即将';
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+  const remain = ms - Date.now();
+  if (remain <= 0) return '即将';
+  const s = Math.ceil(remain / 1000);
+  if (s < 60) return `剩 ${s}秒`;
+  const m = Math.floor(s / 60);
+  return `剩 ${m}:${String(s % 60).padStart(2, '0')}`;
 }
 
 // ------------------------------------------------------------------
@@ -95,7 +98,7 @@ function ConcurrencyPanel({ accounts }: { accounts: DispatchAccountSnapshot[] })
                 </td>
                 <td className="px-4 py-2">
                   <StatusBadge status={a.status} />
-                  {(a.status === 'banned' || a.status === 'half_open') && a.recoverAt && a.recoverAt > 0 && (
+                  {(a.status === 'banned' || a.status === 'half_open' || a.status === 'cooldown') && a.recoverAt && a.recoverAt > 0 && (
                     <div className="text-[10px] text-muted mt-0.5">恢复 {fmtRecover(a.recoverAt)}</div>
                   )}
                 </td>

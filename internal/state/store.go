@@ -311,9 +311,14 @@ func (s *Store) Snapshot(now int64) []AccountSnapshot {
 				avail = warmupAvail
 			}
 		}
+		st := a.Status(now)
+		recoverAt := a.Breaker.RecoverAt()
+		if st == "cooldown" && a.CoolUntil > recoverAt {
+			recoverAt = a.CoolUntil // temporary error-cooldown (429): show its remaining time
+		}
 		out = append(out, AccountSnapshot{
-			Key: key, Status: a.Status(now), Inflight: a.Slots.InUse(), Available: avail,
-			RecoverAt: a.Breaker.RecoverAt(),
+			Key: key, Status: st, Inflight: a.Slots.InUse(), Available: avail,
+			RecoverAt: recoverAt,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
