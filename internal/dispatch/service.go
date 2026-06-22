@@ -115,9 +115,14 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 
 	est := billing.CostUsd(model, int64(len(body)/4), 2000, 0, 0)
 	probeText := lastUserText(body)
+	var chPriceThreshold float64
+	if len(channels) > 0 {
+		chPriceThreshold = channels[0].PriceThreshold
+	}
 	trig := fallback.Decide(fallback.DecideInput{
 		Model: model, BodyText: bodyText, ProbeText: probeText, EstCostUsd: est, PoolEmpty: len(order) == 0,
-		Keywords: cfg.FallbackKeywords, FallbackModels: cfg.FallbackModels, PriceThresholdUsd: cfg.FallbackPriceThresholdUsd,
+		Keywords: cfg.FallbackKeywords, FallbackModels: cfg.FallbackModels,
+		PriceThresholdUsd: fallback.EffectivePriceThreshold(chPriceThreshold, cfg.FallbackPriceThresholdUsd),
 		ProbeEnabled: cfg.FallbackProbeEnabled,
 	})
 
@@ -741,9 +746,14 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 	// Probe/keyword/model fallback decision — same logic as non-streaming Dispatch.
 	est := billing.CostUsd(model, int64(len(body)/4), 2000, 0, 0)
 	probeText := lastUserText(body)
+	var chPriceThresholdS float64
+	if len(channels) > 0 {
+		chPriceThresholdS = channels[0].PriceThreshold
+	}
 	trig := fallback.Decide(fallback.DecideInput{
 		Model: model, BodyText: string(body), ProbeText: probeText, EstCostUsd: est, PoolEmpty: len(order) == 0,
-		Keywords: cfg.FallbackKeywords, FallbackModels: cfg.FallbackModels, PriceThresholdUsd: cfg.FallbackPriceThresholdUsd,
+		Keywords: cfg.FallbackKeywords, FallbackModels: cfg.FallbackModels,
+		PriceThresholdUsd: fallback.EffectivePriceThreshold(chPriceThresholdS, cfg.FallbackPriceThresholdUsd),
 		ProbeEnabled: cfg.FallbackProbeEnabled,
 	})
 	if cfg.FallbackEnabled && trig != fallback.None && trig != fallback.Exhausted && len(channels) > 0 {

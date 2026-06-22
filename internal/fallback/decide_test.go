@@ -93,3 +93,37 @@ func TestIsProbe_CJK(t *testing.T) {
 		t.Fatal("long CJK content must not be treated as probe")
 	}
 }
+
+func TestEffectivePriceThreshold_ChannelOverridesGlobal(t *testing.T) {
+	// When channel threshold is non-zero, it takes precedence over global.
+	got := EffectivePriceThreshold(0.02, 0.005)
+	if got != 0.02 {
+		t.Fatalf("channel threshold 0.02 should override global 0.005; got %v", got)
+	}
+}
+
+func TestEffectivePriceThreshold_FallsBackToGlobal(t *testing.T) {
+	// When channel threshold is zero, fall back to global.
+	got := EffectivePriceThreshold(0, 0.005)
+	if got != 0.005 {
+		t.Fatalf("channel threshold 0 should fall back to global 0.005; got %v", got)
+	}
+}
+
+func TestDecide_ChannelThresholdOverridesGlobal(t *testing.T) {
+	// A request costing 0.003 with a channel threshold of 0.01 should trigger Price,
+	// even though the global threshold (0.001) would not.
+	in := base()
+	in.EstCostUsd = 0.003
+	in.PriceThresholdUsd = EffectivePriceThreshold(0.01, 0.001) // channel wins
+	if g := Decide(in); g != Price {
+		t.Fatalf("channel threshold override: got %v, want Price", g)
+	}
+	// Conversely, channel threshold of 0 falls back to global, which is below cost.
+	in2 := base()
+	in2.EstCostUsd = 0.003
+	in2.PriceThresholdUsd = EffectivePriceThreshold(0, 0.001) // global=0.001 < 0.003 → no price trigger
+	if g := Decide(in2); g != None {
+		t.Fatalf("global threshold fallback: got %v, want None", g)
+	}
+}

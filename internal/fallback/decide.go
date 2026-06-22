@@ -53,6 +53,17 @@ func containsAny(hay string, needles []string) bool {
 	return false
 }
 
+// EffectivePriceThreshold returns the per-channel price threshold when it is
+// non-zero; otherwise it falls back to the global policy threshold. This lets
+// each fallback channel specify its own routing sensitivity without forcing a
+// global change.
+func EffectivePriceThreshold(channelThreshold, globalThreshold float64) float64 {
+	if channelThreshold > 0 {
+		return channelThreshold
+	}
+	return globalThreshold
+}
+
 // Decide returns the highest-priority fallback trigger (None = use our nodes).
 func Decide(in DecideInput) Trigger {
 	if containsAny(in.BodyText, in.Keywords) {
