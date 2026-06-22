@@ -23,6 +23,7 @@ import type {
   MeDashboard,
   LedgerEntry,
   DispatchStatus,
+  DispatchFallbackChannel,
   Slot,
   DispatchKeyRecord,
 } from '../types';
@@ -506,6 +507,69 @@ export function TenantBilling() {
 // ============================================================
 // TenantDispatch (/dispatch) — own dispatch overview via /api/me
 // ============================================================
+
+function TenantFallbackChannelsPanel({ channels }: { channels: DispatchFallbackChannel[] }) {
+  function formatBalance(usd: number | undefined): string {
+    if (usd == null || usd === 0) return '—';
+    if (usd >= 100) return `$${usd.toFixed(0)}`;
+    if (usd >= 1) return `$${usd.toFixed(2)}`;
+    if (usd >= 0.01) return `$${usd.toFixed(4)}`;
+    return `$${usd.toFixed(6)}`;
+  }
+
+  function formatCost(usd: number): string {
+    if (usd >= 1) return `$${usd.toFixed(2)}`;
+    if (usd >= 0.01) return `$${usd.toFixed(4)}`;
+    return `$${usd.toFixed(6)}`;
+  }
+
+  return (
+    <div className="bg-surface border border-line rounded-xl overflow-hidden">
+      <div className="px-4 py-3 border-b border-line text-sm font-medium text-ink">保底渠道</div>
+      {channels.length === 0 ? (
+        <p className="px-4 py-6 text-center text-muted text-xs">无保底渠道</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-line text-left text-xs text-muted">
+                <th className="px-4 py-2 font-medium">渠道名</th>
+                <th className="px-4 py-2 font-medium">状态</th>
+                <th className="px-4 py-2 font-medium text-right">优先级</th>
+                <th className="px-4 py-2 font-medium text-right">权重</th>
+                <th className="px-4 py-2 font-medium text-right">余额($)</th>
+                <th className="px-4 py-2 font-medium text-right">今日消费</th>
+                <th className="px-4 py-2 font-medium text-right">并发中</th>
+                <th className="px-4 py-2 font-medium text-right">可用</th>
+              </tr>
+            </thead>
+            <tbody>
+              {channels.map((ch) => (
+                <tr key={ch.id} className="border-b border-line/50 hover:bg-line/30 transition">
+                  <td className="px-4 py-2">
+                    <p className="text-sm text-ink font-medium">{ch.name}</p>
+                  </td>
+                  <td className="px-4 py-2">
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded border text-xs font-mono ${ch.enabled ? 'bg-green-500/20 text-green-400 border-green-500/40' : 'bg-gray-500/10 text-gray-500 border-gray-500/20'}`}>
+                      {ch.enabled ? '启用' : '停用'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2 text-right tabular-nums">{ch.priority}</td>
+                  <td className="px-4 py-2 text-right tabular-nums">{ch.weight}</td>
+                  <td className="px-4 py-2 text-right tabular-nums">{formatBalance(ch.balanceUsd)}</td>
+                  <td className="px-4 py-2 text-right tabular-nums">{formatCost(ch.todayCostUsd)}</td>
+                  <td className="px-4 py-2 text-right tabular-nums">{ch.inflight ?? '—'}</td>
+                  <td className="px-4 py-2 text-right tabular-nums">{ch.available ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function dispStatusCls(status: string): string {
   const colorMap: Record<string, string> = {
     active:    'bg-green-500/20 text-green-400 border-green-500/40',
@@ -615,6 +679,9 @@ export function TenantDispatch() {
             {/* Event timeline (reuse shared rendering) */}
             <EventTimeline events={data.events} fallbackNames={new Map()} accountNames={new Map()} />
           </div>
+
+          {/* Fallback channels */}
+          <TenantFallbackChannelsPanel channels={data.fallbackChannels ?? []} />
         </>
       )}
     </div>
