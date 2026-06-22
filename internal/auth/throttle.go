@@ -43,22 +43,26 @@ func (t *Throttle) Allowed(key string, now time.Time) bool {
 	defer t.mu.Unlock()
 	b, ok := t.buckets[key]
 	if !ok {
+		// No tracked failures: allow.
 		return true
 	}
-	if now.Before(b.lockUntil) {
+	switch {
+	case now.Before(b.lockUntil):
+		// Still within an active lockout: deny.
 		return false
-	}
-	// Lockout (if any) has elapsed, or the failure window expired: forget the
-	// bucket so the caller starts fresh.
-	if !b.lockUntil.IsZero() && !now.Before(b.lockUntil) {
+	case !b.lockUntil.IsZero():
+		// Lockout was set and has now elapsed: forget the bucket and allow.
 		delete(t.buckets, key)
 		return true
-	}
-	if now.Sub(b.first) > t.window {
+	case now.Sub(b.first) > t.window:
+		// Never locked, but the failure window has expired: forget the bucket
+		// so stale failures don't accumulate, and allow.
 		delete(t.buckets, key)
 		return true
+	default:
+		// Within the failure window and not locked: allow.
+		return true
 	}
-	return true
 }
 
 // RecordFailure registers a failed attempt for key at now, locking the key once
