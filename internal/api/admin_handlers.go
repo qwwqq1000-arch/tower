@@ -353,9 +353,11 @@ func dashboardHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
 			}
 		}
 
-		// cached average utilization (0..1 fractions)
+		// cached average utilization (0..1 fractions) — this is a GLOBAL average
+		// across all accounts, so only superadmin may see it (a scoped admin would
+		// otherwise see cluster-wide quota even with zero accounts of their own).
 		var a5h, a7d float64
-		if svc != nil && svc.Store != nil {
+		if all && svc != nil && svc.Store != nil {
 			a5h, a7d = svc.Store.QuotaAvg()
 		}
 

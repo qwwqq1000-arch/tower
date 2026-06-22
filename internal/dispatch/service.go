@@ -127,7 +127,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 	}
 
 	// PRE-FLIGHT: session exile check — route exiled conversations to fallback.
-	if cfg.SessionErrorThreshold > 0 && s.sess.Exiled(conv, nowMs) && cfg.FallbackEnabled && len(channels) > 0 {
+	if (cfg.SessionErrorThreshold > 0 || cfg.ResponseExileEnabled) && s.sess.Exiled(conv, nowMs) && cfg.FallbackEnabled && len(channels) > 0 {
 		return s.viaChannel(ctx, ownerID, model, body, channels[0], "session", time.Since(start).Milliseconds())
 	}
 
@@ -692,7 +692,7 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 	}
 
 	// PRE-FLIGHT: session exile check — route exiled conversations to fallback.
-	if cfg.SessionErrorThreshold > 0 && s.sess.Exiled(conv, nowMs) && cfg.FallbackEnabled && len(channels) > 0 {
+	if (cfg.SessionErrorThreshold > 0 || cfg.ResponseExileEnabled) && s.sess.Exiled(conv, nowMs) && cfg.FallbackEnabled && len(channels) > 0 {
 		if out, committed := s.streamChannel(ctx, w, channels[0], body, ownerID, model, "session"); committed {
 			return out
 		}
@@ -806,7 +806,7 @@ func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, 
 	}
 	defer func() { settle(false) }()
 
-	np := &NodeProxy{Body: body, Resolve: resolver, BanSignals: cfg.BanSignals}
+	np := &NodeProxy{Body: body, Resolve: resolver, BanSignals: cfg.BanSignals, BanKeywords: cfg.BanKeywords}
 	st, err := np.OpenStream(ctx, key)
 	sendReturned = true
 	if err != nil {
@@ -830,6 +830,12 @@ func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, 
 	// over mid-stream), but it must be accounted as an ERROR, not 200 ok — and fed
 	// into the session-error counter so the conversation exiles to fallback next.
 	streamErr := sseHasError(sseBody)
+	// A committed stream whose error body matches a ban signal/keyword (e.g.
+	// authentication_error) is a real ban — open the breaker (the HTTP header was
+	// 200 so this is the only way streamed keyword/auth bans are detected).
+	if streamErr && ClassifyBanned(st.Status, sseBody, cfg.BanSignals, cfg.BanKeywords) {
+		lastBanned = true
+	}
 	settle(!streamErr)
 	in, out, cacheRead, cache5m, cache1h := parseUsageSSE(sseBody)
 	total := time.Since(start).Milliseconds()

@@ -102,7 +102,7 @@ func oauthExchangeHandler(q *sqlc.Queries) http.HandlerFunc {
 			OauthAccessEnc:   "",
 			OauthRefreshEnc:  "",
 			ExpiresAt:        time.Now().Add(30 * 24 * time.Hour).UnixMilli(),
-			OnboardedAt:      0,
+			OnboardedAt:      time.Now().UnixMilli(),
 		}); err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
@@ -172,7 +172,7 @@ func importProfileHandler(q *sqlc.Queries) http.HandlerFunc {
 			OauthAccessEnc:   "",
 			OauthRefreshEnc:  "",
 			ExpiresAt:        time.Now().Add(30 * 24 * time.Hour).UnixMilli(),
-			OnboardedAt:      0,
+			OnboardedAt:      time.Now().UnixMilli(),
 		}); err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return

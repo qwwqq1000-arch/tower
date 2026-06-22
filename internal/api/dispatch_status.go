@@ -157,8 +157,9 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 			})
 		}
 	}
+	// global average across all accounts → superadmin only (no cross-owner leak).
 	var a5h, a7d float64
-	if svc != nil && svc.Store != nil {
+	if all && svc != nil && svc.Store != nil {
 		a5h, a7d = svc.Store.QuotaAvg()
 	}
 	return map[string]any{
