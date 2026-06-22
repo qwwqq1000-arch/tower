@@ -111,7 +111,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 		BaseMs: cfg.CooldownBaseMs, MaxMs: cfg.CooldownMaxMs, Mult: cfg.CooldownMult,
 	}
 
-	order, resolver := s.buildCandidates(ctx, ownerID, model, cfg)
+	order, resolver, keyOwner := s.buildCandidates(ctx, ownerID, model, cfg)
 	channels := s.enabledChannels(ctx, ownerID, model)
 
 	conv := session.ConvID(body)
@@ -150,12 +150,12 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 			maxFailover = 50
 		}
 		orch := &Orchestrator{Store: s.Store, Cfg: breaker, CooldownMin: cfg.SlotCooldownMinMs, CooldownMax: cfg.SlotCooldownMaxMs, MaxAttempts: maxFailover,
-			OnBan: func(key string, status int) { s.recordBan(ctx, ownerID, key, status) },
+			OnBan: func(key string, status int) { s.recordBan(ctx, acctOwnerOf(keyOwner, key, ownerID), key, status) },
 			OnAttempt: func(key string, status int, ok bool, banned bool) {
 				if !ok {
 					s.logAttemptErr(ctx, ownerID, model, key, status)
-					s.recordRetry(ctx, ownerID, model, key, status, banned)
-					s.maybeCooldown(ctx, ownerID, key, status, cfg)
+					s.recordRetry(ctx, acctOwnerOf(keyOwner, key, ownerID), model, key, status, banned)
+					s.maybeCooldown(ctx, acctOwnerOf(keyOwner, key, ownerID), key, status, cfg)
 				}
 			},
 			IsCooldownSignal: func(status int) bool { return isCooldownSignal(status, cfg) },
@@ -305,7 +305,7 @@ func slotActiveNow(startMin, endMin int, nowMs int64) bool {
 	return cur >= startMin || cur < endMin
 }
 
-func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cfg policy.Config) ([]string, Resolver) {
+func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cfg policy.Config) ([]string, Resolver, map[string]string) {
 	nodes, _ := s.Q.ListNodes(ctx)
 	// Build account-owner map for strict tenant isolation.
 	acctOwner := map[string]string{}
@@ -314,6 +314,10 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 			acctOwner[row.ID] = row.OwnerID
 		}
 	}
+	// keyOwner maps dispatch key (nodeID:profileID) → the account's ownerID.
+	// Used to attribute ban/retry/cooldown events to the banned account's owner
+	// rather than the dispatch caller's owner (events-audit-3).
+	keyOwner := map[string]string{}
 	refs := map[string]NodeRef{}
 	type cand struct {
 		key     string
@@ -371,6 +375,8 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 				continue
 			}
 			key := n.ID + ":" + na.ProfileID
+			// Record the account owner for ban-event attribution (events-audit-3).
+			keyOwner[key] = acctOwner[na.AccountID]
 			// Decrypt the node api_key transparently (vault-crypto-3): ciphertext
 			// rows decrypt, legacy plaintext rows pass through unchanged.
 			refs[key] = NodeRef{BaseURL: n.BaseUrl, APIKey: s.Cipher.DecryptOrPlaintext(n.ApiKey), ProfileID: na.ProfileID, Kind: n.Kind}
@@ -394,7 +400,7 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 			order[i] = c.key
 		}
 		resolver := func(key string) (NodeRef, bool) { r, ok := refs[key]; return r, ok }
-		return order, resolver
+		return order, resolver, keyOwner
 	}
 
 	// Elastic path: partition by count — first N (weight-desc) are baseline; the rest are reserve.
@@ -482,7 +488,7 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 	}
 
 	resolver := func(key string) (NodeRef, bool) { r, ok := refs[key]; return r, ok }
-	return order, resolver
+	return order, resolver, keyOwner
 }
 
 // channelAboveBalanceAlert reports whether a fallback channel has a sufficient
@@ -767,7 +773,7 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 		PersistStreak: cfg.BanPersistStreak, PermStreak: cfg.PermanentBanStreak,
 		BaseMs: cfg.CooldownBaseMs, MaxMs: cfg.CooldownMaxMs, Mult: cfg.CooldownMult,
 	}
-	order, resolver := s.buildCandidates(ctx, ownerID, model, cfg)
+	order, resolver, keyOwner := s.buildCandidates(ctx, ownerID, model, cfg)
 	channels := s.enabledChannels(ctx, ownerID, model)
 
 	conv := session.ConvID(body)
@@ -816,7 +822,7 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 		if !ok {
 			continue
 		}
-		out, committed, sseBody := s.streamOneWithBody(ctx, w, key, trial, resolver, breaker, body, cfg, ownerID, model)
+		out, committed, sseBody := s.streamOneWithBody(ctx, w, key, trial, resolver, breaker, body, cfg, ownerID, model, keyOwner)
 		if committed {
 			// Response exile: scan body for safety-refusal keywords.
 			if cfg.ResponseExileEnabled && matchesAny(sseBody, cfg.ResponseExileKeywords) {
@@ -841,8 +847,8 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 		}
 		// not committed → failed before first byte → log per-attempt error + failover
 		s.logAttemptErr(ctx, ownerID, model, key, out.Status)
-		s.recordRetry(ctx, ownerID, model, key, out.Status, ClassifyBanned(out.Status, "", cfg.BanSignals, nil))
-		s.maybeCooldown(ctx, ownerID, key, out.Status, cfg)
+		s.recordRetry(ctx, acctOwnerOf(keyOwner, key, ownerID), model, key, out.Status, ClassifyBanned(out.Status, "", cfg.BanSignals, nil))
+		s.maybeCooldown(ctx, acctOwnerOf(keyOwner, key, ownerID), key, out.Status, cfg)
 		if justExiled := s.sess.RecordError(conv, int64(cfg.SessionErrorThreshold), int64(cfg.SessionCooldownSec)*1000, nowMs); justExiled {
 			_ = events.Record(ctx, s.Q, nowMs, events.Event{Type: "session_exile", Target: "session", OwnerID: ownerID})
 		}
@@ -867,20 +873,20 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 // streamOneWithBody is like streamOne but also returns the captured SSE body.
 // This allows callers to inspect the response for exile keywords without
 // duplicating any of the settle invariants.
-func (s *Service) streamOneWithBody(ctx context.Context, w http.ResponseWriter, key string, trial bool, resolver Resolver, breaker state.BreakerCfg, body []byte, cfg policy.Config, ownerID, model string) (Outcome, bool, string) {
-	out, committed, sseBody := s.streamOneInternal(ctx, w, key, trial, resolver, breaker, body, cfg, ownerID, model)
+func (s *Service) streamOneWithBody(ctx context.Context, w http.ResponseWriter, key string, trial bool, resolver Resolver, breaker state.BreakerCfg, body []byte, cfg policy.Config, ownerID, model string, keyOwner map[string]string) (Outcome, bool, string) {
+	out, committed, sseBody := s.streamOneInternal(ctx, w, key, trial, resolver, breaker, body, cfg, ownerID, model, keyOwner)
 	return out, committed, sseBody
 }
 
 // streamOne attempts one account. committed=true means we wrote to the client
 // (success) and the caller must not fail over.
-func (s *Service) streamOne(ctx context.Context, w http.ResponseWriter, key string, trial bool, resolver Resolver, breaker state.BreakerCfg, body []byte, cfg policy.Config, ownerID, model string) (Outcome, bool) {
-	out, committed, _ := s.streamOneInternal(ctx, w, key, trial, resolver, breaker, body, cfg, ownerID, model)
+func (s *Service) streamOne(ctx context.Context, w http.ResponseWriter, key string, trial bool, resolver Resolver, breaker state.BreakerCfg, body []byte, cfg policy.Config, ownerID, model string, keyOwner map[string]string) (Outcome, bool) {
+	out, committed, _ := s.streamOneInternal(ctx, w, key, trial, resolver, breaker, body, cfg, ownerID, model, keyOwner)
 	return out, committed
 }
 
 // streamOneInternal is the actual implementation; streamOne and streamOneWithBody are thin wrappers.
-func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, key string, trial bool, resolver Resolver, breaker state.BreakerCfg, body []byte, cfg policy.Config, ownerID, model string) (Outcome, bool, string) {
+func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, key string, trial bool, resolver Resolver, breaker state.BreakerCfg, body []byte, cfg policy.Config, ownerID, model string, keyOwner map[string]string) (Outcome, bool, string) {
 	settled := false
 	sendReturned := false
 	lastStatus := 0
@@ -902,7 +908,7 @@ func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, 
 			} else {
 				s.Store.OnTrialResult(key, breaker, success, lastBanned)
 				if !success && lastBanned {
-					s.recordBan(ctx, ownerID, key, lastStatus)
+					s.recordBan(ctx, acctOwnerOf(keyOwner, key, ownerID), key, lastStatus)
 				}
 			}
 		} else if success {
@@ -911,7 +917,7 @@ func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, 
 			// Only classified ban signals open the breaker; transient failures
 			// (502/429/network) fail over without banning.
 			if s.Store.OnBanSignal(key, breaker) {
-				s.recordBan(ctx, ownerID, key, lastStatus)
+				s.recordBan(ctx, acctOwnerOf(keyOwner, key, ownerID), key, lastStatus)
 			}
 		}
 	}
@@ -1032,6 +1038,17 @@ func splitKey(key string) (node, profile string, ok bool) {
 		return "", "", false
 	}
 	return key[:i], key[i+1:], true
+}
+
+// acctOwnerOf returns the ownerID of the account associated with the dispatch
+// key (nodeID:profileID). If the key is not in the keyOwner map (e.g. the
+// account was added after buildCandidates ran), it falls back to the dispatch
+// caller's ownerID so events-audit-3 attribution degrades gracefully.
+func acctOwnerOf(keyOwner map[string]string, key, callerOwnerID string) string {
+	if owner, ok := keyOwner[key]; ok && owner != "" {
+		return owner
+	}
+	return callerOwnerID
 }
 
 func todayDayStr() string {

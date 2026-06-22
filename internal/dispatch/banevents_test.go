@@ -192,3 +192,69 @@ func TestCooldownSignalCoolsAccount(t *testing.T) {
 		t.Error("expected a cooldown event")
 	}
 }
+
+// TestBanEventAttributedToAccountOwner verifies that a ban_detected event is
+// attributed to the banned account's owner (events-audit-3), not to the
+// dispatch caller's owner. Scenario: admin dispatch key (ownerID="") dispatches
+// to an account owned by tenant "tenant_X"; the ban event OwnerID must be
+// "tenant_X", not "".
+func TestBanEventAttributedToAccountOwner(t *testing.T) {
+	q, closeDB := setupDB(t)
+	defer closeDB()
+	ctx := context.Background()
+
+	// Node always returns 401 (ban signal).
+	node := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(401)
+		_, _ = w.Write([]byte(`{"error":"authentication_error"}`))
+	}))
+	defer node.Close()
+
+	sfx := suffixDispatch(t)
+	// The tenant that owns the account.
+	acctOwner := "tenant_" + sfx
+	// The dispatch caller is an admin key (ownerID = "") that can see all accounts.
+	dispatchOwner := ""
+
+	nodeID := "n_attr_" + sfx
+	if _, err := q.CreateNode(ctx, sqlc.CreateNodeParams{ID: nodeID, Name: "n-attr-" + sfx, BaseUrl: node.URL, ApiKey: "k", OwnerID: acctOwner}); err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	if _, err := q.CreateAccount(ctx, sqlc.CreateAccountParams{ID: "a_attr_" + sfx, OwnerID: acctOwner}); err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	if _, err := q.AssignAccount(ctx, sqlc.AssignAccountParams{NodeID: nodeID, AccountID: "a_attr_" + sfx, ProfileID: "default", Weight: 100, Role: "baseline"}); err != nil {
+		t.Fatalf("assign: %v", err)
+	}
+
+	base := policy.Defaults()
+	base.BanPersistStreak = 1 // single 401 opens the breaker
+	store := state.NewStore(func() int64 { return 0 }, func(min, max int64) int64 { return min })
+	svc := &Service{Q: q, Store: store, Base: base, Now: func() int64 { return 0 }}
+
+	// Dispatch as admin (ownerID="") so it sees the tenant-owned account.
+	_ = svc.Dispatch(ctx, dispatchOwner, "opus", "please do a real task here", []byte(`{"model":"opus"}`))
+
+	evs, err := q.ListRecentEvents(ctx, 100)
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	// The ban event must carry the account's owner, not the dispatch caller's "".
+	for _, e := range evs {
+		if e.Type == "ban_detected" || e.Type == "ban_permanent" {
+			if e.OwnerID != acctOwner {
+				t.Errorf("ban event OwnerID=%q, want %q (the banned account's owner)", e.OwnerID, acctOwner)
+			}
+		}
+	}
+	// Confirm at least one ban event was recorded.
+	var seenBan bool
+	for _, e := range evs {
+		if (e.Type == "ban_detected" || e.Type == "ban_permanent") && e.OwnerID == acctOwner {
+			seenBan = true
+		}
+	}
+	if !seenBan {
+		t.Error("expected a ban_detected or ban_permanent event attributed to the account's owner")
+	}
+}

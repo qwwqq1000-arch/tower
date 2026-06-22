@@ -508,7 +508,7 @@ func TestBuildCandidates_OwnerIsolation(t *testing.T) {
 
 	// ownerID=ownerA → only accA candidate.
 	t.Run("owner A sees only A", func(t *testing.T) {
-		order, _ := svc.buildCandidates(ctx, ownerA, "claude-3", cfg)
+		order, _, _ := svc.buildCandidates(ctx, ownerA, "claude-3", cfg)
 		found := map[string]bool{}
 		for _, k := range order {
 			found[k] = true
@@ -523,7 +523,7 @@ func TestBuildCandidates_OwnerIsolation(t *testing.T) {
 
 	// ownerID=ownerB → only accB candidate.
 	t.Run("owner B sees only B", func(t *testing.T) {
-		order, _ := svc.buildCandidates(ctx, ownerB, "claude-3", cfg)
+		order, _, _ := svc.buildCandidates(ctx, ownerB, "claude-3", cfg)
 		found := map[string]bool{}
 		for _, k := range order {
 			found[k] = true
@@ -538,7 +538,7 @@ func TestBuildCandidates_OwnerIsolation(t *testing.T) {
 
 	// ownerID="" (admin) → both accounts visible.
 	t.Run("admin (empty ownerID) sees all", func(t *testing.T) {
-		order, _ := svc.buildCandidates(ctx, "", "claude-3", cfg)
+		order, _, _ := svc.buildCandidates(ctx, "", "claude-3", cfg)
 		found := map[string]bool{}
 		for _, k := range order {
 			found[k] = true
