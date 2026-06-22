@@ -17,6 +17,13 @@ func startProvisionHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "host/password required"})
 			return
 		}
+		// For non-superadmin callers, force the node's owner_id to the caller's
+		// own sub, ignoring any ownerId supplied in the body (provision-3).
+		// A superadmin may explicitly specify an ownerId (e.g. to provision on
+		// behalf of a tenant); if the body omits it the empty string is kept.
+		if callerOwner, all := scope(r); !all {
+			body.OwnerId = callerOwner
+		}
 		if body.Name == "" {
 			body.Name = nextNodeName(r.Context(), q)
 		}
