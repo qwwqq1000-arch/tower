@@ -13,6 +13,14 @@ import (
 	"github.com/qwwqq1000-arch/tower/internal/nodeclient"
 )
 
+// encryptImportCred encrypts a credential string using cipher and returns the
+// ciphertext. If cipher is nil (keyless deployments) or plain is empty the
+// value is returned unchanged, so callers can use this unconditionally
+// (vault-crypto-2).
+func encryptImportCred(cipher *crypto.Cipher, plain string) string {
+	return cipher.EncryptStr(plain)
+}
+
 // effectiveProfiles returns the node's named profiles, or — when none exist but
 // the node is logged in (default account) — a synthetic "default" profile from /health.
 func effectiveProfiles(ctx context.Context, cl *nodeclient.Client) ([]nodeclient.Profile, error) {
@@ -102,10 +110,13 @@ func oauthExchangeHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFu
 			OwnerID:          n.OwnerID,
 			Email:            email,
 			SubscriptionType: "",
-			OauthAccessEnc:   "",
-			OauthRefreshEnc:  "",
-			ExpiresAt:        time.Now().Add(30 * 24 * time.Hour).UnixMilli(),
-			OnboardedAt:      time.Now().UnixMilli(),
+			// Encrypt the account identity as stored credentials (vault-crypto-2):
+			// OauthAccessEnc holds the email, OauthRefreshEnc holds the profileID,
+			// both encrypted at rest. DecryptOrPlaintext is used on read.
+			OauthAccessEnc:  encryptImportCred(cipher, email),
+			OauthRefreshEnc: encryptImportCred(cipher, profileID),
+			ExpiresAt:       time.Now().Add(30 * 24 * time.Hour).UnixMilli(),
+			OnboardedAt:     time.Now().UnixMilli(),
 		}); err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
@@ -172,10 +183,13 @@ func importProfileHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFu
 			OwnerID:          n.OwnerID,
 			Email:            matched.Email,
 			SubscriptionType: "",
-			OauthAccessEnc:   "",
-			OauthRefreshEnc:  "",
-			ExpiresAt:        time.Now().Add(30 * 24 * time.Hour).UnixMilli(),
-			OnboardedAt:      time.Now().UnixMilli(),
+			// Encrypt the account identity as stored credentials (vault-crypto-2):
+			// OauthAccessEnc holds the email, OauthRefreshEnc holds the profileID,
+			// both encrypted at rest. DecryptOrPlaintext is used on read.
+			OauthAccessEnc:  encryptImportCred(cipher, matched.Email),
+			OauthRefreshEnc: encryptImportCred(cipher, matched.ID),
+			ExpiresAt:       time.Now().Add(30 * 24 * time.Hour).UnixMilli(),
+			OnboardedAt:     time.Now().UnixMilli(),
 		}); err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
