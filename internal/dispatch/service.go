@@ -105,7 +105,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 	}
 
 	order, resolver := s.buildCandidates(ctx, ownerID, model, cfg)
-	channels := s.enabledChannels(ctx, ownerID)
+	channels := s.enabledChannels(ctx, ownerID, model)
 
 	conv := session.ConvID(body)
 	nowMs := s.Now()
@@ -471,16 +471,43 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 	return order, resolver
 }
 
-func (s *Service) enabledChannels(ctx context.Context, ownerID string) []sqlc.FallbackChannel {
+// channelAllowsModel reports whether model is permitted by a channel's allowlist.
+// The allowlist is a comma- or space-separated list of model-family keywords
+// (e.g. "opus", "haiku", "sonnet").  An empty allowlist permits all models.
+// Matching is case-insensitive substring: a keyword "haiku" matches any model
+// whose name contains "haiku".
+func channelAllowsModel(allowlist, model string) bool {
+	if allowlist == "" {
+		return true
+	}
+	m := strings.ToLower(model)
+	// Split on commas or spaces.
+	for _, raw := range strings.FieldsFunc(allowlist, func(r rune) bool { return r == ',' || r == ' ' }) {
+		kw := strings.ToLower(strings.TrimSpace(raw))
+		if kw == "" {
+			continue
+		}
+		if strings.Contains(m, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) enabledChannels(ctx context.Context, ownerID string, model string) []sqlc.FallbackChannel {
 	chs, err := s.Q.ListEnabledFallbackChannels(ctx)
 	if err != nil {
 		return nil
 	}
 	out := chs[:0]
 	for _, c := range chs {
-		if c.OwnerID == ownerID { // strict owner scoping: admin(owner="") uses owner="" channels; tenant uses own
-			out = append(out, c)
+		if c.OwnerID != ownerID { // strict owner scoping: admin(owner="") uses owner="" channels; tenant uses own
+			continue
 		}
+		if !channelAllowsModel(c.ModelAllowlist, model) {
+			continue
+		}
+		out = append(out, c)
 	}
 	return out
 }
@@ -696,7 +723,7 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 		BaseMs: cfg.CooldownBaseMs, MaxMs: cfg.CooldownMaxMs, Mult: cfg.CooldownMult,
 	}
 	order, resolver := s.buildCandidates(ctx, ownerID, model, cfg)
-	channels := s.enabledChannels(ctx, ownerID)
+	channels := s.enabledChannels(ctx, ownerID, model)
 
 	conv := session.ConvID(body)
 	nowMs := s.Now()
