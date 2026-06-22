@@ -39,12 +39,12 @@ func TestBreaker_TrialOnceThenResult(t *testing.T) {
 	if !b.TakeTrial(1100) { t.Fatal("first TakeTrial in half_open should succeed") }
 	if b.TakeTrial(1100) { t.Fatal("second TakeTrial should be false (trial in flight)") }
 	// trial fails → reopen with bigger backoff (base*mult^1 = 2000 → openUntil=1100+2000=3100)
-	b.OnTrialResult(c, 1100, false)
+	b.OnTrialResult(c, 1100, false, true)
 	if b.State(3099) != "open" { t.Fatalf("state=%s, want open after failed trial", b.State(3099)) }
 	if b.State(3100) != "half_open" { t.Fatal("half_open again after bigger backoff") }
 	// trial succeeds → closed
 	b.TakeTrial(3100)
-	b.OnTrialResult(c, 3100, true)
+	b.OnTrialResult(c, 3100, true, false)
 	if b.State(9999) != "closed" { t.Fatalf("state=%s, want closed after success", b.State(9999)) }
 }
 
@@ -52,7 +52,7 @@ func TestBreaker_BackoffCappedAtMax(t *testing.T) {
 	var b Breaker
 	c := BreakerCfg{PersistStreak: 1, BaseMs: 1000, MaxMs: 1500, Mult: 10}
 	b.OnBanSignal(c, 0) // open: base=1000 → openUntil 1000
-	b.TakeTrial(1000); b.OnTrialResult(c, 1000, false) // reopen: 1000*10=10000 capped to 1500 → openUntil 2500
+	b.TakeTrial(1000); b.OnTrialResult(c, 1000, false, true) // reopen: 1000*10=10000 capped to 1500 → openUntil 2500
 	if b.State(2499) != "open" { t.Fatal("should still be open") }
 	if b.State(2500) != "half_open" { t.Fatalf("state=%s, want half_open (capped backoff)", b.State(2500)) }
 }

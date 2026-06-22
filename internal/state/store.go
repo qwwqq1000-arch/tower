@@ -111,11 +111,11 @@ func (s *Store) TryDispatchTrial(key, model string, cfg BreakerCfg) (ok bool, tr
 
 // OnTrialResult settles a half-open trial: success closes the breaker, failure
 // reopens it (always clearing the in-flight trial flag — no wedge possible).
-func (s *Store) OnTrialResult(key string, cfg BreakerCfg, ok bool) {
+func (s *Store) OnTrialResult(key string, cfg BreakerCfg, ok, banned bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if a := s.accts[key]; a != nil {
-		a.Breaker.OnTrialResult(cfg, s.now(), ok)
+		a.Breaker.OnTrialResult(cfg, s.now(), ok, banned)
 	}
 }
 

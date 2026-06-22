@@ -96,7 +96,7 @@ function QuotaBadge({
         {label} {pct}%
       </span>
       {resetStr && (
-        <span className="text-[9px] text-muted pl-0.5">恢复 {resetStr}</span>
+        <span className="text-[9px] text-muted pl-0.5">重置 {resetStr}</span>
       )}
     </span>
   );

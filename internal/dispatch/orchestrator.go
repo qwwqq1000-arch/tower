@@ -57,13 +57,15 @@ func (o *Orchestrator) attempt(ctx context.Context, model, key string, px Proxy)
 			return
 		}
 		if trial {
-			o.Store.OnTrialResult(key, o.Cfg, success)
-			if !success && o.OnBan != nil {
+			o.Store.OnTrialResult(key, o.Cfg, success, res.Banned)
+			if !success && res.Banned && o.OnBan != nil {
 				o.OnBan(key, res.Status)
 			}
 		} else if success {
 			o.Store.OnSuccess(key)
-		} else {
+		} else if res.Banned {
+			// Only a classified ban signal (per BanSignals/BanKeywords) advances the
+			// breaker. Transient failures (502/429/network) fail over without banning.
 			if o.Store.OnBanSignal(key, o.Cfg) && o.OnBan != nil {
 				o.OnBan(key, res.Status)
 			}

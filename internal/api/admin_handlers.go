@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -94,6 +95,21 @@ func listNodesHandler(q *sqlc.Queries) http.HandlerFunc {
 		results := make([]healthResult, len(rows))
 		var wg sync.WaitGroup
 		for i, n := range rows {
+			// CPA nodes don't speak the meridian /health protocol. Report status
+			// from discovered accounts instead of a (failing) meridian probe, so
+			// the card doesn't show "未上传凭证".
+			if strings.EqualFold(n.Kind, "cpa") {
+				accs, _ := q.ListNodeAccountsByNode(r.Context(), n.ID)
+				email := ""
+				switch {
+				case len(accs) == 1:
+					email = "1 个账户"
+				case len(accs) > 1:
+					email = fmt.Sprintf("%d 个账户", len(accs))
+				}
+				results[i] = healthResult{loggedIn: len(accs) > 0, email: email}
+				continue
+			}
 			wg.Add(1)
 			go func(idx int, baseURL, apiKey string) {
 				defer wg.Done()

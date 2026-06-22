@@ -772,6 +772,7 @@ func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, 
 	settled := false
 	sendReturned := false
 	lastStatus := 0
+	lastBanned := false
 	settle := func(success bool) {
 		if settled {
 			return
@@ -782,13 +783,15 @@ func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, 
 			return // panic before upstream responded → release slot only, no ban
 		}
 		if trial {
-			s.Store.OnTrialResult(key, breaker, success)
-			if !success {
+			s.Store.OnTrialResult(key, breaker, success, lastBanned)
+			if !success && lastBanned {
 				s.recordBan(ctx, ownerID, key, lastStatus)
 			}
 		} else if success {
 			s.Store.OnSuccess(key)
-		} else {
+		} else if lastBanned {
+			// Only classified ban signals open the breaker; transient failures
+			// (502/429/network) fail over without banning.
 			if s.Store.OnBanSignal(key, breaker) {
 				s.recordBan(ctx, ownerID, key, lastStatus)
 			}
@@ -803,6 +806,7 @@ func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, 
 		return Outcome{}, false, "" // connection error → failover
 	}
 	lastStatus = st.Status
+	lastBanned = st.Banned
 	if st.Banned || st.Status < 200 || st.Status >= 300 {
 		httpStatus := st.Status
 		_ = st.Body.Close()

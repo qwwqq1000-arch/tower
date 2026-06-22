@@ -83,7 +83,7 @@ func TestBreaker_PermanentViaTrialFailures(t *testing.T) {
 		if !b.TakeTrial(now) {
 			t.Fatal("expected to claim a trial")
 		}
-		b.OnTrialResult(cfg, now, false)
+		b.OnTrialResult(cfg, now, false, true)
 	}
 	if !b.Permanent() {
 		t.Fatal("repeated failed trials must escalate to permanent ban")
