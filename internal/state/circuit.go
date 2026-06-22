@@ -129,3 +129,7 @@ func (b *Breaker) Restore(openUntil int64, streak, failCount int) {
 
 // SetPermanent sets the permanent-ban flag (used by warm-start restore).
 func (b *Breaker) SetPermanent(p bool) { b.permanent = p }
+
+// RecoverAt returns the ms timestamp when an open (cooling) breaker becomes
+// half-open and eligible for a recovery trial; 0 when closed.
+func (b *Breaker) RecoverAt() int64 { return b.openUntil }

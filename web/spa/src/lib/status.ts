@@ -4,7 +4,7 @@
 
 export const STATUS_LABELS: Record<string, string> = {
   active: '活跃',
-  banned: '封禁·冷却',
+  banned: '封控·冷却',
   half_open: '半开·探测',
   permanent: '封禁(永久)',
   offline: '离线',

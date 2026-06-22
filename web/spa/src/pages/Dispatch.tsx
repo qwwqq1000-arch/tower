@@ -20,6 +20,13 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+// fmtRecover formats a future ms timestamp as HH:MM:SS (or "即将" if elapsed).
+function fmtRecover(ms: number): string {
+  const d = new Date(ms);
+  if (ms <= Date.now()) return '即将';
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+}
+
 // ------------------------------------------------------------------
 // Top stats bar
 // ------------------------------------------------------------------
@@ -86,7 +93,12 @@ function ConcurrencyPanel({ accounts }: { accounts: DispatchAccountSnapshot[] })
                 <td className="px-4 py-2">
                   <p className="text-sm text-ink font-medium">{a.label || '—'}</p>
                 </td>
-                <td className="px-4 py-2"><StatusBadge status={a.status} /></td>
+                <td className="px-4 py-2">
+                  <StatusBadge status={a.status} />
+                  {(a.status === 'banned' || a.status === 'half_open') && a.recoverAt && a.recoverAt > 0 && (
+                    <div className="text-[10px] text-muted mt-0.5">恢复 {fmtRecover(a.recoverAt)}</div>
+                  )}
+                </td>
                 <td className="px-4 py-2 text-right tabular-nums">{a.inflight}</td>
                 <td className="px-4 py-2 text-right tabular-nums">{a.available}</td>
                 <td className="px-4 py-2 text-right tabular-nums text-xs text-muted">{fmtCost(a.todayCostUsd)}</td>
@@ -227,7 +239,7 @@ export function getEventLabel(type: string): EventLabel {
     case 'ban':           return { label: '封控',        cls: 'bg-red-500/20 text-red-400 border-red-500/40' };
     case 'ban_detected':  return { label: '封禁触发',    cls: 'bg-red-500/20 text-red-400 border-red-500/40' };
     case 'ban_permanent': return { label: '永久封禁',    cls: 'bg-red-600/30 text-red-300 border-red-600/50' };
-    case 'retry':         return { label: '失败转移',    cls: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/40' };
+    case 'retry':         return { label: '节点报错',    cls: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/40' };
     case 'account_recovered': return { label: '账户恢复', cls: 'bg-green-500/20 text-green-400 border-green-500/40' };
     case 'recover':       return { label: '恢复',        cls: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/40' };
     case 'fallback':      return { label: '保底触发',    cls: 'bg-blue-500/20 text-blue-400 border-blue-500/40' };
@@ -277,7 +289,7 @@ export function renderEventDetail(
     // account_recovered's target is the raw account id (not node:profile), so the
     // accountNames map misses — prefer the email carried in detail.
     const email = detailEmail ?? accountNames?.get(target) ?? target;
-    const head = type === 'ban_permanent' ? '永久封禁' : type === 'retry' ? '失败转移' : type === 'account_recovered' ? '账户恢复' : '封禁触发';
+    const head = type === 'ban_permanent' ? '永久封禁' : type === 'retry' ? '节点报错' : type === 'account_recovered' ? '账户恢复' : '封禁触发';
     const parts = [head, email];
     if (status) parts.push(`HTTP ${status}`);
     if (streak !== undefined && (type === 'ban_detected' || type === 'ban_permanent')) parts.push(`连续${streak}次`);

@@ -48,12 +48,16 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 			if !visible(s.Key) { // owner scoping
 				continue
 			}
+			if s.Status == "permanent" { // permanently banned → out of rotation, hide from the live pool
+				continue
+			}
 			accounts = append(accounts, map[string]any{
 				"key":          s.Key,
 				"label":        labels[s.Key],
 				"status":       s.Status,
 				"inflight":     s.Inflight,
 				"available":    s.Available,
+				"recoverAt":    s.RecoverAt,
 				"todayCostUsd": todayCostMap[s.Key],
 				"totalCostUsd": totalCostMap[s.Key],
 			})

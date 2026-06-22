@@ -720,6 +720,13 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 					_ = events.Record(ctx, s.Q, nowMs, events.Event{Type: "session_exile", Target: "cyber", OwnerID: ownerID})
 				}
 				// Cannot re-serve mid-stream — exile only affects future requests.
+			} else if out.Status >= 300 {
+				// Committed stream carried an upstream error (e.g. event:error with a
+				// 200 header). Can't fail over now, but count it as a session error so
+				// the conversation exiles to fallback on subsequent requests.
+				if justExiled := s.sess.RecordError(conv, int64(cfg.SessionErrorThreshold), int64(cfg.SessionCooldownSec)*1000, nowMs); justExiled {
+					_ = events.Record(ctx, s.Q, nowMs, events.Event{Type: "session_exile", Target: "session", OwnerID: ownerID})
+				}
 			} else {
 				s.sess.RecordSuccess(conv)
 				if cfg.AffinityTTLSec > 0 {
@@ -818,11 +825,29 @@ func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, 
 	w.WriteHeader(st.Status)
 	ttfb, sseBody := flushCopyCapture(w, st.Body, start)
 	_ = st.Body.Close()
-	settle(true)
+	// Claude can return a 200 header and then an `event: error` (e.g.
+	// overloaded_error) inside the SSE body. We've already committed (cannot fail
+	// over mid-stream), but it must be accounted as an ERROR, not 200 ok — and fed
+	// into the session-error counter so the conversation exiles to fallback next.
+	streamErr := sseHasError(sseBody)
+	settle(!streamErr)
 	in, out, cacheRead, cache5m, cache1h := parseUsageSSE(sseBody)
 	total := time.Since(start).Milliseconds()
-	s.logStream(ctx, ownerID, model, key, st.Status, in, out, cacheRead, cache5m, cache1h, total, ttfb)
-	return Outcome{Status: st.Status, Target: key}, true, sseBody
+	effStatus := st.Status
+	if streamErr {
+		effStatus = 500
+	}
+	s.logStream(ctx, ownerID, model, key, effStatus, in, out, cacheRead, cache5m, cache1h, total, ttfb)
+	return Outcome{Status: effStatus, Target: key}, true, sseBody
+}
+
+// sseHasError reports whether a committed SSE body carries an upstream error
+// event (Claude emits `event: error` with a 200 header for overloaded/api errors,
+// e.g. {"type":"error","error":{"type":"overloaded_error"}}).
+func sseHasError(body string) bool {
+	return strings.Contains(body, "event: error") ||
+		strings.Contains(body, `"type": "error"`) ||
+		strings.Contains(body, `"type":"error"`)
 }
 
 // recordBan records a ban episode and event for the given key (node:profile).

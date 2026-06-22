@@ -114,3 +114,15 @@ func TestTransientFailureDoesNotBan(t *testing.T) {
 		}
 	}
 }
+
+func TestSSEHasError(t *testing.T) {
+	good := "event: message_start\ndata: {\"type\":\"message_start\"}\n\nevent: message_stop\ndata: {}\n"
+	if sseHasError(good) {
+		t.Error("clean stream must not be flagged as error")
+	}
+	bad1 := "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\"}}\n"
+	bad2 := "data: {\"type\": \"error\", \"error\": {\"type\": \"api_error\"}}\n"
+	if !sseHasError(bad1) || !sseHasError(bad2) {
+		t.Error("error events must be detected (both spacing variants)")
+	}
+}

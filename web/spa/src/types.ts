@@ -410,9 +410,10 @@ export interface NodeTelemetry {
 export interface DispatchAccountSnapshot {
   key: string;
   label?: string;
-  status: string; // active | banned | half_open | offline | disabled
+  status: string; // active | banned(封控·冷却) | half_open | permanent | offline | disabled
   inflight: number;
   available: number;
+  recoverAt?: number; // ms; when a cooling breaker half-opens (0 if not cooling)
   todayCostUsd?: number;
   totalCostUsd?: number;
 }

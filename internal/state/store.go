@@ -281,6 +281,7 @@ type AccountSnapshot struct {
 	Status    string
 	Inflight  int
 	Available int
+	RecoverAt int64 // ms; when a cooling breaker half-opens (0 if not cooling)
 }
 
 // Snapshot returns a sorted, point-in-time view of every account's live state.
@@ -301,6 +302,7 @@ func (s *Store) Snapshot(now int64) []AccountSnapshot {
 		}
 		out = append(out, AccountSnapshot{
 			Key: key, Status: a.Status(now), Inflight: a.Slots.InUse(), Available: avail,
+			RecoverAt: a.Breaker.RecoverAt(),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })

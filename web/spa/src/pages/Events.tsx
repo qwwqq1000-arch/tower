@@ -21,7 +21,7 @@ const TYPE_STYLES: Record<string, { dot: string; badge: string; label?: string }
   ban:            { dot: 'bg-err',    badge: 'bg-err/10 text-err border-err/30',     label: '封控' },
   ban_detected:   { dot: 'bg-err',    badge: 'bg-err/10 text-err border-err/30',     label: '封禁触发' },
   ban_permanent:  { dot: 'bg-err',    badge: 'bg-err/20 text-err border-err/50',     label: '永久封禁' },
-  retry:          { dot: 'bg-warn',   badge: 'bg-warn/10 text-warn border-warn/30',  label: '失败转移' },
+  retry:          { dot: 'bg-warn',   badge: 'bg-warn/10 text-warn border-warn/30',  label: '节点报错' },
   account_recovered: { dot: 'bg-ok',  badge: 'bg-ok/10 text-ok border-ok/30',        label: '账户恢复' },
   unban:          { dot: 'bg-ok',     badge: 'bg-ok/10 text-ok border-ok/30' },
   recover:        { dot: 'bg-warn',   badge: 'bg-warn/10 text-warn border-warn/30',  label: '恢复' },
@@ -95,7 +95,7 @@ function renderTargetText(
   if (type === 'retry') {
     const email = accountMap.get(target) ?? target;
     const status = typeof detail['status'] === 'number' ? detail['status'] : undefined;
-    return status ? `失败转移 · ${email} · HTTP ${status}` : `失败转移 · ${email}`;
+    return status ? `节点报错 · ${email} · HTTP ${status}` : `节点报错 · ${email}`;
   }
   if (type === 'account_recovered') {
     const email = (typeof detail['email'] === 'string' && detail['email'])
