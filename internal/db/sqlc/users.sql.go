@@ -18,6 +18,34 @@ func (q *Queries) DeleteTenant(ctx context.Context, id string) error {
 	return err
 }
 
+const setTenantChannelRate = `-- name: SetTenantChannelRate :exec
+UPDATE tenants SET channel_rate = $2 WHERE id = $1
+`
+
+type SetTenantChannelRateParams struct {
+	ID          string  `json:"id"`
+	ChannelRate float64 `json:"channel_rate"`
+}
+
+func (q *Queries) SetTenantChannelRate(ctx context.Context, arg SetTenantChannelRateParams) error {
+	_, err := q.db.Exec(ctx, setTenantChannelRate, arg.ID, arg.ChannelRate)
+	return err
+}
+
+const setTenantFallbackLimit = `-- name: SetTenantFallbackLimit :exec
+UPDATE tenants SET fallback_limit = $2 WHERE id = $1
+`
+
+type SetTenantFallbackLimitParams struct {
+	ID            string `json:"id"`
+	FallbackLimit int32  `json:"fallback_limit"`
+}
+
+func (q *Queries) SetTenantFallbackLimit(ctx context.Context, arg SetTenantFallbackLimitParams) error {
+	_, err := q.db.Exec(ctx, setTenantFallbackLimit, arg.ID, arg.FallbackLimit)
+	return err
+}
+
 const setTenantPassword = `-- name: SetTenantPassword :exec
 UPDATE tenants SET pw_hash = $2, salt = $3, must_change_pw = FALSE WHERE id = $1
 `

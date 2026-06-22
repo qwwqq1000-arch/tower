@@ -32,3 +32,9 @@ ON CONFLICT (channel_id, day) DO UPDATE SET
   requests = fallback_spend.requests + EXCLUDED.requests,
   est_cost_usd = fallback_spend.est_cost_usd + EXCLUDED.est_cost_usd,
   balance_observed = EXCLUDED.balance_observed;
+
+-- name: SumFallbackSpendByOwner :one
+SELECT coalesce(sum(s.est_cost_usd),0)::float8 AS total
+FROM fallback_spend s
+JOIN fallback_channels c ON c.id = s.channel_id
+WHERE c.owner_id = $1;

@@ -245,12 +245,14 @@ type Slot struct {
 }
 
 type Tenant struct {
-	ID           string             `json:"id"`
-	Username     string             `json:"username"`
-	PwHash       string             `json:"pw_hash"`
-	Salt         string             `json:"salt"`
-	Role         string             `json:"role"`
-	IngestKey    string             `json:"ingest_key"`
-	MustChangePw bool               `json:"must_change_pw"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	ID            string             `json:"id"`
+	Username      string             `json:"username"`
+	PwHash        string             `json:"pw_hash"`
+	Salt          string             `json:"salt"`
+	Role          string             `json:"role"`
+	IngestKey     string             `json:"ingest_key"`
+	MustChangePw  bool               `json:"must_change_pw"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	ChannelRate   float64            `json:"channel_rate"`
+	FallbackLimit int32              `json:"fallback_limit"`
 }

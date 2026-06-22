@@ -12,7 +12,7 @@ import (
 const createTenant = `-- name: CreateTenant :one
 INSERT INTO tenants (id, username, pw_hash, salt, role, ingest_key, must_change_pw)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, username, pw_hash, salt, role, ingest_key, must_change_pw, created_at
+RETURNING id, username, pw_hash, salt, role, ingest_key, must_change_pw, created_at, channel_rate, fallback_limit
 `
 
 type CreateTenantParams struct {
@@ -45,12 +45,14 @@ func (q *Queries) CreateTenant(ctx context.Context, arg CreateTenantParams) (Ten
 		&i.IngestKey,
 		&i.MustChangePw,
 		&i.CreatedAt,
+		&i.ChannelRate,
+		&i.FallbackLimit,
 	)
 	return i, err
 }
 
 const getTenantByID = `-- name: GetTenantByID :one
-SELECT id, username, pw_hash, salt, role, ingest_key, must_change_pw, created_at FROM tenants WHERE id = $1
+SELECT id, username, pw_hash, salt, role, ingest_key, must_change_pw, created_at, channel_rate, fallback_limit FROM tenants WHERE id = $1
 `
 
 func (q *Queries) GetTenantByID(ctx context.Context, id string) (Tenant, error) {
@@ -65,12 +67,14 @@ func (q *Queries) GetTenantByID(ctx context.Context, id string) (Tenant, error) 
 		&i.IngestKey,
 		&i.MustChangePw,
 		&i.CreatedAt,
+		&i.ChannelRate,
+		&i.FallbackLimit,
 	)
 	return i, err
 }
 
 const getTenantByUsername = `-- name: GetTenantByUsername :one
-SELECT id, username, pw_hash, salt, role, ingest_key, must_change_pw, created_at FROM tenants WHERE username = $1
+SELECT id, username, pw_hash, salt, role, ingest_key, must_change_pw, created_at, channel_rate, fallback_limit FROM tenants WHERE username = $1
 `
 
 func (q *Queries) GetTenantByUsername(ctx context.Context, username string) (Tenant, error) {
@@ -85,6 +89,8 @@ func (q *Queries) GetTenantByUsername(ctx context.Context, username string) (Ten
 		&i.IngestKey,
 		&i.MustChangePw,
 		&i.CreatedAt,
+		&i.ChannelRate,
+		&i.FallbackLimit,
 	)
 	return i, err
 }

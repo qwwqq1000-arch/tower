@@ -148,13 +148,23 @@ func meDashboardHandler(q *sqlc.Queries) http.HandlerFunc {
 		consumption, _ := q.SumCostForOwner(ctx, owner)
 		rate, _ := q.GetHostingRate(ctx, owner)
 		unsettled, accumulated := billing.ComputeHostingFee(consumption, 0, rate)
+		// separate channel hosting billing at the tenant's channel_rate.
+		channelConsumption, _ := q.SumFallbackSpendByOwner(ctx, owner)
+		var channelRate float64
+		if t, err := q.GetTenantByID(ctx, owner); err == nil {
+			channelRate = t.ChannelRate
+		}
+		channelHostingFee := channelConsumption * channelRate
 		writeJSON(w, 200, map[string]any{
 			"accounts": map[string]any{"total": accTotal, "active": accActive},
 			"today":    map[string]any{"requests": todayReq, "costUsd": todayCost},
-			"consumptionUsd": consumption,
-			"hostingRate":    rate,
-			"unsettledUsd":   unsettled,
-			"accumulatedUsd": accumulated,
+			"consumptionUsd":        consumption,
+			"hostingRate":           rate,
+			"unsettledUsd":          unsettled,
+			"accumulatedUsd":        accumulated,
+			"channelConsumptionUsd": channelConsumption,
+			"channelRate":           channelRate,
+			"channelHostingFeeUsd":  channelHostingFee,
 		})
 	}
 }
@@ -291,6 +301,15 @@ func meCreateFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 		var b fallbackBody
 		if err := json.NewDecoder(r.Body).Decode(&b); err != nil || b.BaseUrl == "" {
 			writeJSON(w, 400, map[string]string{"error": "name/baseUrl required"})
+			return
+		}
+		// Enforce per-tenant fallback channel limit. Default (or 0) = max 1.
+		limit := int32(1)
+		if t, err := q.GetTenantByID(r.Context(), owner); err == nil && t.FallbackLimit > 0 {
+			limit = t.FallbackLimit
+		}
+		if existing, err := q.ListFallbackChannelsByOwner(r.Context(), owner); err == nil && int32(len(existing)) >= limit {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "fallback channel limit reached"})
 			return
 		}
 		c, err := q.CreateFallbackChannel(r.Context(), sqlc.CreateFallbackChannelParams{

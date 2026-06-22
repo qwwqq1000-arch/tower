@@ -45,6 +45,23 @@ func TestMeEndpointsOwnerScoping(t *testing.T) {
 	ownerA := randHex("owA_")
 	ownerB := randHex("owB_")
 
+	// real tenant rows so fallback_limit enforcement does not block fixtures.
+	// ownerA needs a limit >1 because this test creates 1 channel via DB fixture
+	// and another via the handler.
+	for _, o := range []string{ownerA, ownerB} {
+		if _, err := q.CreateTenant(ctx, sqlc.CreateTenantParams{ID: o, Username: o, PwHash: "h", Salt: "s", Role: "tenant", IngestKey: randHex("ik_")}); err != nil {
+			t.Fatalf("create tenant %s: %v", o, err)
+		}
+	}
+	if err := q.SetTenantFallbackLimit(ctx, sqlc.SetTenantFallbackLimitParams{ID: ownerA, FallbackLimit: 10}); err != nil {
+		t.Fatalf("set fallback limit: %v", err)
+	}
+	t.Cleanup(func() {
+		cctx := context.Background()
+		_ = q.DeleteTenant(cctx, ownerA)
+		_ = q.DeleteTenant(cctx, ownerB)
+	})
+
 	// nodes (each owned by respective tenant)
 	nodeA := randHex("nA_")
 	nodeB := randHex("nB_")
@@ -387,5 +404,63 @@ func TestMeSettingsOwnerScoping(t *testing.T) {
 	// A can delete own key.
 	if rec := do(ckA, "DELETE", "/api/me/dispatch-keys/"+ka.ID, ""); rec.Code != 200 {
 		t.Fatalf("A delete own key=%d %s", rec.Code, rec.Body)
+	}
+}
+
+// TestFallbackChannelLimit verifies a tenant with fallback_limit=1 can create one
+// channel but is rejected (403) when creating a second.
+func TestFallbackChannelLimit(t *testing.T) {
+	url := os.Getenv("TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	if err := db.Migrate(ctx, url); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	pool, err := db.Connect(ctx, url)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	q := sqlc.New(pool)
+	const secret = "test-secret-padding-to-32-chars!"
+	router := NewRouter(pool, secret, nil, q)
+
+	owner := randHex("owL_")
+	// tenant created with default fallback_limit=1.
+	if _, err := q.CreateTenant(ctx, sqlc.CreateTenantParams{ID: owner, Username: owner, PwHash: "h", Salt: "s", Role: "tenant", IngestKey: randHex("ik_")}); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	t.Cleanup(func() {
+		cctx := context.Background()
+		if rows, err := q.ListFallbackChannelsByOwner(cctx, owner); err == nil {
+			for _, c := range rows {
+				_ = q.DeleteFallbackChannel(cctx, c.ID)
+			}
+		}
+		_ = q.DeleteTenant(cctx, owner)
+	})
+
+	ck := sessionCookie(secret, owner, "tenant")
+	do := func(m, p, b string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(m, p, strings.NewReader(b))
+		r.AddCookie(ck)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, r)
+		return rec
+	}
+
+	// first channel succeeds.
+	if rec := do("POST", "/api/me/fallback-channels", `{"name":"c1","baseUrl":"http://a"}`); rec.Code != 200 {
+		t.Fatalf("create #1 = %d want 200; body=%s", rec.Code, rec.Body)
+	}
+	// second channel hits the limit → 403.
+	rec := do("POST", "/api/me/fallback-channels", `{"name":"c2","baseUrl":"http://b"}`)
+	if rec.Code != 403 {
+		t.Fatalf("create #2 = %d want 403; body=%s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "fallback channel limit reached") {
+		t.Fatalf("create #2 body=%s want limit error", rec.Body)
 	}
 }

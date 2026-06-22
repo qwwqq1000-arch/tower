@@ -78,6 +78,8 @@ func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc
 		mux.HandleFunc("DELETE /api/admin/users/{id}", requireAdmin(secret, deleteUserHandler(q)))
 		mux.HandleFunc("PATCH /api/admin/users/{id}/role", requireAdmin(secret, setUserRoleHandler(q)))
 		mux.HandleFunc("PATCH /api/admin/users/{id}/hosting-rate", requireAdmin(secret, setUserHostingRateHandler(q)))
+		mux.HandleFunc("PATCH /api/admin/users/{id}/channel-rate", requireAdmin(secret, setUserChannelRateHandler(q)))
+		mux.HandleFunc("PATCH /api/admin/users/{id}/fallback-limit", requireAdmin(secret, setUserFallbackLimitHandler(q)))
 		mux.HandleFunc("POST /auth/change-password", requireSession(secret, changePasswordHandler(q)))
 		// Tenant self-service: strictly scoped to the caller's session sub.
 		mux.HandleFunc("GET /api/me/accounts", requireSession(secret, meAccountsHandler(q)))

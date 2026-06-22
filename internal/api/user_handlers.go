@@ -21,7 +21,7 @@ func listUsersHandler(q *sqlc.Queries) http.HandlerFunc {
 		out := make([]map[string]any, 0, len(ts))
 		for _, t := range ts {
 			rate, _ := q.GetHostingRate(r.Context(), t.ID)
-			out = append(out, map[string]any{"id": t.ID, "username": t.Username, "role": t.Role, "rate": rate})
+			out = append(out, map[string]any{"id": t.ID, "username": t.Username, "role": t.Role, "rate": rate, "channelRate": t.ChannelRate, "fallbackLimit": t.FallbackLimit})
 		}
 		writeJSON(w, 200, out)
 	}
@@ -95,6 +95,36 @@ func setUserHostingRateHandler(q *sqlc.Queries) http.HandlerFunc {
 			return
 		}
 		if err := q.SetHostingRate(r.Context(), sqlc.SetHostingRateParams{TenantID: r.PathValue("id"), Rate: b.Rate, EffectiveFrom: time.Now().UnixMilli()}); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, 200, map[string]string{"ok": "true"})
+	}
+}
+
+func setUserChannelRateHandler(q *sqlc.Queries) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var b struct{ Rate float64 }
+		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "bad body"})
+			return
+		}
+		if err := q.SetTenantChannelRate(r.Context(), sqlc.SetTenantChannelRateParams{ID: r.PathValue("id"), ChannelRate: b.Rate}); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, 200, map[string]string{"ok": "true"})
+	}
+}
+
+func setUserFallbackLimitHandler(q *sqlc.Queries) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var b struct{ Limit int32 }
+		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "bad body"})
+			return
+		}
+		if err := q.SetTenantFallbackLimit(r.Context(), sqlc.SetTenantFallbackLimitParams{ID: r.PathValue("id"), FallbackLimit: b.Limit}); err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}

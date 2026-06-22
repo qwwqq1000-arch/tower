@@ -83,13 +83,15 @@ func (q *Queries) GetHostingRate(ctx context.Context, tenantID string) (float64,
 }
 
 const listTenantsBasic = `-- name: ListTenantsBasic :many
-SELECT id, username, role FROM tenants ORDER BY created_at
+SELECT id, username, role, channel_rate, fallback_limit FROM tenants ORDER BY created_at
 `
 
 type ListTenantsBasicRow struct {
-	ID       string `json:"id"`
-	Username string `json:"username"`
-	Role     string `json:"role"`
+	ID            string  `json:"id"`
+	Username      string  `json:"username"`
+	Role          string  `json:"role"`
+	ChannelRate   float64 `json:"channel_rate"`
+	FallbackLimit int32   `json:"fallback_limit"`
 }
 
 func (q *Queries) ListTenantsBasic(ctx context.Context) ([]ListTenantsBasicRow, error) {
@@ -101,7 +103,13 @@ func (q *Queries) ListTenantsBasic(ctx context.Context) ([]ListTenantsBasicRow, 
 	var items []ListTenantsBasicRow
 	for rows.Next() {
 		var i ListTenantsBasicRow
-		if err := rows.Scan(&i.ID, &i.Username, &i.Role); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Username,
+			&i.Role,
+			&i.ChannelRate,
+			&i.FallbackLimit,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

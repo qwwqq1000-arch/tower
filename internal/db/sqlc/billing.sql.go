@@ -178,6 +178,20 @@ func (q *Queries) SetHostingRate(ctx context.Context, arg SetHostingRateParams) 
 	return err
 }
 
+const sumFallbackSpendByOwner = `-- name: SumFallbackSpendByOwner :one
+SELECT coalesce(sum(s.est_cost_usd),0)::float8 AS total
+FROM fallback_spend s
+JOIN fallback_channels c ON c.id = s.channel_id
+WHERE c.owner_id = $1
+`
+
+func (q *Queries) SumFallbackSpendByOwner(ctx context.Context, ownerID string) (float64, error) {
+	row := q.db.QueryRow(ctx, sumFallbackSpendByOwner, ownerID)
+	var total float64
+	err := row.Scan(&total)
+	return total, err
+}
+
 const upsertFallbackSpend = `-- name: UpsertFallbackSpend :exec
 INSERT INTO fallback_spend (channel_id, day, requests, est_cost_usd, balance_observed)
 VALUES ($1,$2,$3,$4,$5)

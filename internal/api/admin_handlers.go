@@ -251,7 +251,9 @@ func dashboardHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
 				consumption, _ := q.SumCostForOwner(ctx, t.ID)
 				rate, _ := q.GetHostingRate(ctx, t.ID)
 				unsettled, accumulated := billing.ComputeHostingFee(consumption, 0, rate)
-				hosting = append(hosting, map[string]any{"tenantId": t.ID, "username": t.Username, "role": t.Role, "consumptionUsd": consumption, "rate": rate, "feeUsd": accumulated, "unsettledUsd": unsettled})
+				channelConsumption, _ := q.SumFallbackSpendByOwner(ctx, t.ID)
+				channelFee := channelConsumption * t.ChannelRate
+				hosting = append(hosting, map[string]any{"tenantId": t.ID, "username": t.Username, "role": t.Role, "consumptionUsd": consumption, "rate": rate, "feeUsd": accumulated, "unsettledUsd": unsettled, "channelRate": t.ChannelRate, "channelConsumptionUsd": channelConsumption, "channelFeeUsd": channelFee})
 			}
 		}
 

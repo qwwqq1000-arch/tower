@@ -9,7 +9,7 @@ FROM dispatch_logs WHERE ts >= $1
 GROUP BY model ORDER BY requests DESC;
 
 -- name: ListTenantsBasic :many
-SELECT id, username, role FROM tenants ORDER BY created_at;
+SELECT id, username, role, channel_rate, fallback_limit FROM tenants ORDER BY created_at;
 
 -- name: GetHostingRate :one
 SELECT rate FROM hosting_rates WHERE tenant_id = $1 ORDER BY effective_from DESC LIMIT 1;
