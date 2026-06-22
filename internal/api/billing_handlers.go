@@ -21,6 +21,10 @@ func settleHandler(pool *pgxpool.Pool, q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenantId required"})
 			return
 		}
+		if owner, all := scope(r); !all && body.TenantId != owner {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+			return
+		}
 		now := time.Now().UnixMilli()
 		st, err := billing.Settle(r.Context(), pool, body.TenantId, body.PeriodStart, body.PeriodEnd, now, randHex("s_"))
 		if err != nil {
