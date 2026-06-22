@@ -202,16 +202,23 @@ func putDesiredHandler(q *sqlc.Queries) http.HandlerFunc {
 func listLogsHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		owner, all := scope(r)
-		rows, err := q.ListRecentDispatchLogs(r.Context(), limitParam(r, 100))
+		limit := limitParam(r, 100)
+		// Push the owner filter into SQL so LIMIT applies after filtering (events-audit-4).
+		// A scoped admin calling with limit=100 would otherwise receive at most
+		// 100 global rows pre-filtered, potentially returning fewer than limit rows.
+		var rows []sqlc.DispatchLog
+		var err error
+		if all {
+			rows, err = q.ListRecentDispatchLogs(r.Context(), limit)
+		} else {
+			rows, err = q.ListLogsByOwner(r.Context(), sqlc.ListLogsByOwnerParams{OwnerID: owner, Limit: limit})
+		}
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
 		out := make([]map[string]any, 0, len(rows))
 		for _, l := range rows {
-			if !all && l.OwnerID != owner { // owner scoping: non-superadmin sees only own
-				continue
-			}
 			out = append(out, map[string]any{
 				"ts": l.Ts, "model": l.Model, "target": l.Target,
 				"status": l.Status, "httpStatus": l.HttpStatus,
@@ -227,16 +234,21 @@ func listLogsHandler(q *sqlc.Queries) http.HandlerFunc {
 func listEventsHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		owner, all := scope(r)
-		rows, err := q.ListRecentEvents(r.Context(), limitParam(r, 100))
+		limit := limitParam(r, 100)
+		// Push the owner filter into SQL so LIMIT applies after filtering (events-audit-4).
+		var rows []sqlc.DispatchEvent
+		var err error
+		if all {
+			rows, err = q.ListRecentEvents(r.Context(), limit)
+		} else {
+			rows, err = q.ListEventsByOwner(r.Context(), sqlc.ListEventsByOwnerParams{OwnerID: owner, Limit: limit})
+		}
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
 		out := make([]map[string]any, 0, len(rows))
 		for _, e := range rows {
-			if !all && e.OwnerID != owner { // owner scoping: non-superadmin sees only own
-				continue
-			}
 			out = append(out, map[string]any{
 				"ts": e.Ts, "type": e.Type, "target": e.Target,
 				"detail": json.RawMessage(e.Detail),
