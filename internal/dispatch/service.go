@@ -476,6 +476,21 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 	return order, resolver
 }
 
+// channelAboveBalanceAlert reports whether a fallback channel has a sufficient
+// observed balance to be eligible for routing. A channel is excluded when:
+//   - balance_alert_usd > 0 (a threshold is configured), AND
+//   - balance_usd < balance_alert_usd (the last observed balance is below it).
+//
+// When no alert threshold is configured (balance_alert_usd == 0) the channel is
+// always considered routable regardless of the observed balance. This ensures
+// that channels without balance monitoring are never silently excluded.
+func channelAboveBalanceAlert(ch sqlc.FallbackChannel) bool {
+	if ch.BalanceAlertUsd <= 0 {
+		return true // no threshold configured → always routable
+	}
+	return ch.BalanceUsd >= ch.BalanceAlertUsd
+}
+
 // channelAllowsModel reports whether model is permitted by a channel's allowlist.
 // The allowlist is a comma- or space-separated list of model-family keywords
 // (e.g. "opus", "haiku", "sonnet").  An empty allowlist permits all models.
@@ -510,6 +525,12 @@ func (s *Service) enabledChannels(ctx context.Context, ownerID string, model str
 			continue
 		}
 		if !channelAllowsModel(c.ModelAllowlist, model) {
+			continue
+		}
+		// Exclude channels whose last observed balance is below the alert
+		// threshold (fallback-5). Routing to a near-empty channel wastes the
+		// request; skip it so the caller tries the next channel or 503s cleanly.
+		if !channelAboveBalanceAlert(c) {
 			continue
 		}
 		out = append(out, c)
@@ -557,7 +578,9 @@ func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []
 		var cacheRead, cache5m, cache1h int64
 		in, out, cacheRead, cache5m, cache1h = parseUsage(res.Body)
 		cost = billing.CostUsdFull(model, in, out, cacheRead, cache5m, cache1h)
-		_ = s.Q.UpsertFallbackSpend(ctx, sqlc.UpsertFallbackSpendParams{ChannelID: ch.ID, Day: todayDayStr(), Requests: 1, EstCostUsd: cost, BalanceObserved: 0})
+		// Record the channel's last-observed balance so the spend row reflects
+		// the balance at dispatch time (fallback-5: write observed balance).
+		_ = s.Q.UpsertFallbackSpend(ctx, sqlc.UpsertFallbackSpendParams{ChannelID: ch.ID, Day: todayDayStr(), Requests: 1, EstCostUsd: cost, BalanceObserved: ch.BalanceUsd})
 	}
 	_ = s.Q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{
 		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: "fallback:" + ch.ID,
@@ -1087,7 +1110,9 @@ func (s *Service) streamChannel(ctx context.Context, w http.ResponseWriter, ch s
 	_ = st.Body.Close()
 	in, out, cacheRead, cache5m, cache1h := parseUsageSSE(sseBody)
 	cost := billing.CostUsdFull(model, in, out, cacheRead, cache5m, cache1h)
-	_ = s.Q.UpsertFallbackSpend(ctx, sqlc.UpsertFallbackSpendParams{ChannelID: ch.ID, Day: todayDayStr(), Requests: 1, EstCostUsd: cost, BalanceObserved: 0})
+	// Record the channel's last-observed balance so the spend row reflects
+	// the balance at dispatch time (fallback-5: write observed balance).
+	_ = s.Q.UpsertFallbackSpend(ctx, sqlc.UpsertFallbackSpendParams{ChannelID: ch.ID, Day: todayDayStr(), Requests: 1, EstCostUsd: cost, BalanceObserved: ch.BalanceUsd})
 	_ = s.Q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{
 		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: "fallback:" + ch.ID,
 		Status: "ok", HttpStatus: int32(st.Status), FallbackReason: reason,
