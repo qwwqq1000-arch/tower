@@ -39,13 +39,18 @@ func nextNodeName(ctx context.Context, q *sqlc.Queries) string {
 
 func createNodeHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var body struct{ Name, BaseUrl, ApiKey, OwnerId string }
+		var body struct{ Name, BaseUrl, ApiKey, OwnerId, Kind, MgmtKey string }
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.BaseUrl == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "baseUrl required"})
 			return
 		}
 		if body.Name == "" {
 			body.Name = nextNodeName(r.Context(), q)
+		}
+		// Node kind: "meridian" (default) or "cpa" (CLIProxyAPI).
+		kind := strings.ToLower(strings.TrimSpace(body.Kind))
+		if kind != "cpa" {
+			kind = "meridian"
 		}
 		// Owner default: a non-superadmin that does not specify an owner owns the
 		// node it creates (so it remains visible under owner scoping). superadmin
@@ -54,13 +59,14 @@ func createNodeHandler(q *sqlc.Queries) http.HandlerFunc {
 			body.OwnerId = owner
 		}
 		n, err := q.CreateNode(r.Context(), sqlc.CreateNodeParams{
-			ID: randHex("n_"), Name: body.Name, BaseUrl: body.BaseUrl, ApiKey: body.ApiKey, OwnerID: body.OwnerId,
+			ID: randHex("n_"), Name: body.Name, BaseUrl: body.BaseUrl, ApiKey: body.ApiKey,
+			MgmtKey: body.MgmtKey, OwnerID: body.OwnerId, Kind: kind,
 		})
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"id": n.ID, "name": n.Name, "baseUrl": n.BaseUrl, "ownerId": n.OwnerID, "enabled": n.Enabled})
+		writeJSON(w, http.StatusOK, map[string]any{"id": n.ID, "name": n.Name, "baseUrl": n.BaseUrl, "ownerId": n.OwnerID, "enabled": n.Enabled, "kind": n.Kind})
 	}
 }
 
@@ -119,6 +125,7 @@ func listNodesHandler(q *sqlc.Queries) http.HandlerFunc {
 				"baseUrl":     n.BaseUrl,
 				"ownerId":     n.OwnerID,
 				"enabled":     n.Enabled,
+				"kind":        n.Kind,
 				"version":     n.Version,
 				"createdAt":   createdAtMs,
 				"loggedIn":    results[i].loggedIn,

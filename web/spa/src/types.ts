@@ -15,6 +15,7 @@ export interface NodeRecord {
   baseUrl: string;
   ownerId: string;
   enabled: boolean;
+  kind?: string; // "meridian" | "cpa"
   version?: string;
   status?: string;
   createdAt?: number;

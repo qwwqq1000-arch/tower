@@ -21,3 +21,10 @@ DELETE FROM node_accounts WHERE node_id = $1 AND account_id = $2;
 -- name: UpdateNodeAccount :exec
 UPDATE node_accounts SET egress=$3, weight=$4, role=$5, enabled=$6, slot_id=$7
 WHERE node_id=$1 AND account_id=$2;
+
+-- name: UpsertCpaNodeAccount :exec
+INSERT INTO node_accounts (node_id, account_id, profile_id, enabled, weight, role)
+VALUES ($1,$2,$3,$4,100,'baseline')
+ON CONFLICT (node_id, account_id) DO UPDATE SET
+  profile_id = EXCLUDED.profile_id,
+  enabled = EXCLUDED.enabled;

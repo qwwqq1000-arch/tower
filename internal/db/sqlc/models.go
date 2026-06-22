@@ -177,6 +177,7 @@ type Node struct {
 	FingerprintSeed string             `json:"fingerprint_seed"`
 	Enabled         bool               `json:"enabled"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	Kind            string             `json:"kind"`
 }
 
 type NodeAccount struct {

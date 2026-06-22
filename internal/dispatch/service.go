@@ -340,7 +340,7 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 				continue
 			}
 			key := n.ID + ":" + na.ProfileID
-			refs[key] = NodeRef{BaseURL: n.BaseUrl, APIKey: n.ApiKey, ProfileID: na.ProfileID}
+			refs[key] = NodeRef{BaseURL: n.BaseUrl, APIKey: n.ApiKey, ProfileID: na.ProfileID, Kind: n.Kind}
 			s.Store.Ensure(key, cfg.MaxConcurrent)
 			s.Store.SetCapacity(key, cfg.MaxConcurrent)
 			// Apply or clear warmup cap.
