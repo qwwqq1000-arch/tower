@@ -255,6 +255,12 @@ func dashboardHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
 			}
 		}
 
-		writeJSON(w, http.StatusOK, map[string]any{"nodes": nodes, "accounts": map[string]any{"total": accTotal}, "today": today, "hosting": hosting, "totalCostUsd": totalCost})
+		// cached average utilization (0..1 fractions)
+		var a5h, a7d float64
+		if svc != nil && svc.Store != nil {
+			a5h, a7d = svc.Store.QuotaAvg()
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{"nodes": nodes, "accounts": map[string]any{"total": accTotal}, "today": today, "hosting": hosting, "totalCostUsd": totalCost, "quota5hAvg": a5h, "quota7dAvg": a7d})
 	}
 }

@@ -126,11 +126,17 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 			})
 		}
 	}
+	var a5h, a7d float64
+	if svc != nil && svc.Store != nil {
+		a5h, a7d = svc.Store.QuotaAvg()
+	}
 	return map[string]any{
 		"accounts": accounts, "traffic": traffic, "events": events,
 		"nodes":            map[string]any{"total": nodesTotal, "enabled": nodesEnabled},
 		"fallbackChannels": fallbackChannels,
 		"asOf":             now,
+		"quota5hAvg":       a5h,
+		"quota7dAvg":       a7d,
 	}
 }
 

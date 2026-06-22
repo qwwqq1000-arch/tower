@@ -37,6 +37,8 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 		return err
 	}
 	now := p.Now()
+	var sum5h, sum7d float64
+	var cnt5h, cnt7d int
 	for _, n := range nodes {
 		if !n.Enabled {
 			continue
@@ -54,6 +56,19 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 			quota, _ = cl.QuotaAll(ctx)
 			if healthErr == nil && health.Version != "" {
 				_ = p.Q.UpdateNodeVersion(ctx, sqlc.UpdateNodeVersionParams{ID: n.ID, Version: health.Version})
+			}
+			// Accumulate utilization across every profile window for averaging.
+			for _, pr := range quota.Profiles {
+				for _, win := range pr.Windows {
+					switch win.Type {
+					case "five_hour":
+						sum5h += win.Utilization
+						cnt5h++
+					case "seven_day":
+						sum7d += win.Utilization
+						cnt7d++
+					}
+				}
 			}
 		}
 
@@ -94,6 +109,14 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 			}
 		}
 	}
+	var avg5h, avg7d float64
+	if cnt5h > 0 {
+		avg5h = sum5h / float64(cnt5h)
+	}
+	if cnt7d > 0 {
+		avg7d = sum7d / float64(cnt7d)
+	}
+	p.Store.SetQuotaAvg(avg5h, avg7d)
 	return nil
 }
 

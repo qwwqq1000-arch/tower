@@ -15,6 +15,27 @@ type Store struct {
 	now   func() int64
 	rnd   func(min, max int64) int64
 	accts map[string]*Account
+
+	// quotaMu guards the cached average utilization metrics (refreshed by the
+	// telemetry poller each cycle).
+	quotaMu sync.Mutex
+	avg5h   float64
+	avg7d   float64
+}
+
+// SetQuotaAvg caches the latest average 5h/7d utilization (0..1 fractions).
+func (s *Store) SetQuotaAvg(a5h, a7d float64) {
+	s.quotaMu.Lock()
+	defer s.quotaMu.Unlock()
+	s.avg5h = a5h
+	s.avg7d = a7d
+}
+
+// QuotaAvg returns the cached average 5h/7d utilization (0..1 fractions).
+func (s *Store) QuotaAvg() (float64, float64) {
+	s.quotaMu.Lock()
+	defer s.quotaMu.Unlock()
+	return s.avg5h, s.avg7d
 }
 
 // NewStore builds a Store with injected clock and RNG (for deterministic tests).
