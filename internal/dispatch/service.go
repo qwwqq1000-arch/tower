@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -116,6 +117,38 @@ func maxTokensError(req, limit int, model string) string {
 	return fmt.Sprintf(`{"error":{"type":"invalid_request_error","message":"max_tokens %d exceeds the %d output-token limit for %s"}}`, req, limit, model)
 }
 
+var limitResetRe = regexp.MustCompile(`(?i)resets?\s+(\d{1,2}):(\d{2})\s*(am|pm)\s*\(?\s*utc\s*\)?`)
+
+// parseLimitReset detects a subscription usage-limit response and returns the reset
+// deadline (account-limit-reactive). The new-meridian node wraps the claude.ai limit
+// as a 500 api_error whose message is "...You've hit your limit · resets H:MMam/pm
+// (UTC)" — the reset lives ONLY in that text (no Retry-After / structured field), so
+// we parse the wall-clock UTC time and resolve it to the next occurrence after now.
+// Returns (false, 0) when body is not a usage-limit response.
+func parseLimitReset(body string, now int64) (bool, int64) {
+	lb := strings.ToLower(body)
+	if !strings.Contains(lb, "hit your limit") && !strings.Contains(lb, "usage limit") {
+		return false, 0
+	}
+	m := limitResetRe.FindStringSubmatch(body)
+	if m == nil {
+		return true, now + 60*60*1000 // limited but reset unparseable → 1h default
+	}
+	hh, _ := strconv.Atoi(m[1])
+	mm, _ := strconv.Atoi(m[2])
+	if strings.EqualFold(m[3], "pm") && hh != 12 {
+		hh += 12
+	} else if strings.EqualFold(m[3], "am") && hh == 12 {
+		hh = 0
+	}
+	t := time.UnixMilli(now).UTC()
+	reset := time.Date(t.Year(), t.Month(), t.Day(), hh, mm, 0, 0, time.UTC)
+	if !reset.After(t) {
+		reset = reset.Add(24 * time.Hour) // wall-clock already passed today → next day
+	}
+	return true, reset.UnixMilli()
+}
+
 const maxDetailBodyBytes = 64 * 1024
 
 // redactedHeaderKeys carry the dispatch key / cookies and are masked before the
@@ -177,6 +210,18 @@ func (s *Service) UpdateRequestDetailResponse(ctx context.Context, status int, b
 	}
 	_ = s.Q.UpdateDispatchLogDetailResponse(ctx, sqlc.UpdateDispatchLogDetailResponseParams{
 		RequestID: rid, RespStatus: int32(status), RespBody: body,
+	})
+}
+
+// applyReactiveLimit rotates an account out of dispatch until the reset time parsed
+// from a usage-limit RESPONSE (account-limit-reactive), and records the event. The
+// account auto-recovers when the limit expires — no polling. This is the primary
+// rotation signal; the periodic quota poll no longer rotates accounts.
+func (s *Service) applyReactiveLimit(ctx context.Context, ownerID, key string, resetMs int64) {
+	s.Store.SetLimited(key, s.Base.MaxConcurrent, map[string]int64{"all": resetMs})
+	_ = events.Record(ctx, s.Q, s.Now(), events.Event{
+		Type: "quota_limited", Target: key, OwnerID: ownerID,
+		Detail: map[string]any{"account": key, "resetsAt": resetMs, "source": "response"},
 	})
 }
 
@@ -249,11 +294,16 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 		orch := &Orchestrator{Store: s.Store, Cfg: breaker, CooldownMin: cfg.SlotCooldownMinMs, CooldownMax: cfg.SlotCooldownMaxMs, MaxAttempts: maxFailover,
 			OnBan:     func(key string, status int) { s.recordBan(ctx, acctOwnerOf(keyOwner, key, ownerID), key, status) },
 			OnRecover: func(key string) { s.recordRecover(ctx, key) },
-			OnAttempt: func(key string, status int, ok bool, banned bool) {
+			OnAttempt: func(key string, res ProxyResult, ok bool) {
 				if !ok {
-					s.logAttemptErr(ctx, ownerID, model, key, status)
-					s.recordRetry(ctx, acctOwnerOf(keyOwner, key, ownerID), model, key, status, banned)
-					s.maybeCooldown(ctx, acctOwnerOf(keyOwner, key, ownerID), key, status, cfg)
+					s.logAttemptErr(ctx, ownerID, model, key, res.Status)
+					s.recordRetry(ctx, acctOwnerOf(keyOwner, key, ownerID), model, key, res.Status, res.Banned)
+					s.maybeCooldown(ctx, acctOwnerOf(keyOwner, key, ownerID), key, res.Status, cfg)
+					// Reactive quota rotation: if the response is a usage-limit error,
+					// rotate the account out until the reset time parsed from it.
+					if limited, resetMs := parseLimitReset(res.Body, s.Now()); limited {
+						s.applyReactiveLimit(ctx, acctOwnerOf(keyOwner, key, ownerID), key, resetMs)
+					}
 				}
 			},
 			IsCooldownSignal: func(status int) bool { return isCooldownSignal(status, cfg) },
@@ -972,6 +1022,10 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 		s.logAttemptErr(ctx, ownerID, model, key, out.Status)
 		s.recordRetry(ctx, acctOwnerOf(keyOwner, key, ownerID), model, key, out.Status, ClassifyBanned(out.Status, "", cfg.BanSignals, nil))
 		s.maybeCooldown(ctx, acctOwnerOf(keyOwner, key, ownerID), key, out.Status, cfg)
+		// Reactive quota rotation on the stream path too (account-limit-reactive).
+		if limited, resetMs := parseLimitReset(out.Body, nowMs); limited {
+			s.applyReactiveLimit(ctx, acctOwnerOf(keyOwner, key, ownerID), key, resetMs)
+		}
 		if justExiled := s.sess.RecordError(conv, int64(cfg.SessionErrorThreshold), int64(cfg.SessionCooldownSec)*1000, nowMs); justExiled {
 			_ = events.Record(ctx, s.Q, nowMs, events.Event{Type: "session_exile", Target: "session", OwnerID: ownerID})
 		}

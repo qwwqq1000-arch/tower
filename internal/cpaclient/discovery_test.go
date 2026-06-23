@@ -135,10 +135,14 @@ func TestSync_LegacyPlaintextMgmtKey(t *testing.T) {
 // error for a claude/anthropic account, Sync records the error in the DB via
 // SetCpaQuotaFetchError (cpa-3) instead of silently ignoring it. This ensures
 // the UI can show "quota unavailable" rather than null/stale data.
-func TestSync_QuotaFetchError(t *testing.T) {
+// TestSync_NoAutoUsagePoll verifies the reactive design (account-limit-reactive):
+// the periodic discovery Sync discovers accounts but must NOT auto-poll the Anthropic
+// account-usage endpoint — that poll was slow, inaccurate, and risked 429s. Rotation
+// is now reactive (set from a usage-limit dispatch response); quota numbers refresh
+// only on the manual "刷新" button.
+func TestSync_NoAutoUsagePoll(t *testing.T) {
 	const mgmtSecret = "test-secret"
-	// Build a test server: accounts endpoint returns one claude account;
-	// usage endpoint fails with a non-2xx to simulate a quota fetch error.
+	usageHit := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+mgmtSecret {
 			w.WriteHeader(401)
@@ -150,46 +154,32 @@ func TestSync_QuotaFetchError(t *testing.T) {
 			return
 		}
 		if r.URL.Path == "/v0/management/account-usage" {
-			// Simulate a temporary upstream error so the quota fetch fails.
+			usageHit = true
 			w.WriteHeader(503)
-			_, _ = w.Write([]byte(`service unavailable`))
 			return
 		}
 		w.WriteHeader(404)
 	}))
 	defer srv.Close()
 
-	node := sqlc.Node{
-		ID:      "n_cpa_test",
-		Kind:    "cpa",
-		BaseUrl: srv.URL,
-		MgmtKey: mgmtSecret,
-		Enabled: true,
-	}
+	node := sqlc.Node{ID: "n_cpa_test", Kind: "cpa", BaseUrl: srv.URL, MgmtKey: mgmtSecret, Enabled: true}
 	stub := &stubSyncDB{}
-	rot := &RotateConfig{}
 
-	n, err := Sync(context.Background(), stub, node, rot)
+	n, err := Sync(context.Background(), stub, node, &RotateConfig{})
 	if err != nil {
-		t.Fatalf("Sync should not fail on quota fetch error: %v", err)
+		t.Fatalf("Sync: %v", err)
 	}
 	if n != 1 {
 		t.Fatalf("want 1 discovered account, got %d", n)
 	}
-	// UpsertCpaQuota must NOT have been called (usage fetch failed).
+	if usageHit {
+		t.Error("Sync must NOT call the account-usage endpoint — rotation is reactive now")
+	}
 	if stub.upsertQuotaCalled != 0 {
-		t.Errorf("UpsertCpaQuota should not be called when usage fetch fails, got %d calls", stub.upsertQuotaCalled)
+		t.Errorf("UpsertCpaQuota should not be called (no auto poll), got %d", stub.upsertQuotaCalled)
 	}
-	// SetCpaQuotaFetchError MUST have been called with a non-empty error message.
-	if stub.setFetchErrorCalled != 1 {
-		t.Errorf("SetCpaQuotaFetchError should be called once, got %d calls", stub.setFetchErrorCalled)
-	}
-	if stub.lastFetchErrorMsg == "" {
-		t.Error("quota fetch error message must not be empty")
-	}
-	expectedAID := "cpa:n_cpa_test:acct-1"
-	if stub.lastFetchErrorAccountID != expectedAID {
-		t.Errorf("fetch error account id: got %q want %q", stub.lastFetchErrorAccountID, expectedAID)
+	if stub.setFetchErrorCalled != 0 {
+		t.Errorf("SetCpaQuotaFetchError should not be called (no auto poll), got %d", stub.setFetchErrorCalled)
 	}
 }
 

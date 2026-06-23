@@ -29,7 +29,7 @@ type Orchestrator struct {
 	MaxAttempts int
 	OnBan       func(key string, status int)                 // optional: fired when an account is (re)banned
 	OnRecover   func(key string)                             // optional: fired when a half-open trial succeeds (account recovers)
-	OnAttempt   func(key string, status int, ok bool, banned bool) // optional: fired after each attempt
+	OnAttempt   func(key string, res ProxyResult, ok bool) // optional: fired after each attempt (res carries Status/Body/Banned)
 	IsCooldownSignal func(status int) bool                   // optional: status that cools (not bans) the account, e.g. 429
 }
 
@@ -114,7 +114,7 @@ func (o *Orchestrator) Dispatch(ctx context.Context, model string, order []strin
 		}
 		attempts++
 		if o.OnAttempt != nil {
-			o.OnAttempt(key, res.Status, ok, res.Banned)
+			o.OnAttempt(key, res, ok)
 		}
 		if ok {
 			return res, key, true

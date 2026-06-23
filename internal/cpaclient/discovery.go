@@ -3,7 +3,6 @@ package cpaclient
 import (
 	"context"
 	"strings"
-	"time"
 
 	"github.com/qwwqq1000-arch/tower/internal/crypto"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
@@ -183,30 +182,12 @@ func Sync(ctx context.Context, q syncQuerier, node sqlc.Node, rot *RotateConfig)
 		}); err != nil {
 			return 0, err
 		}
-		// Best-effort quota refresh (only for claude/anthropic accounts — the usage
-		// endpoint is Anthropic OAuth-only).
-		if strings.EqualFold(a.Provider, "claude") || strings.EqualFold(a.Provider, "anthropic") {
-			u, uerr := c.Usage(ctx, a.DispatchSelector())
-			if uerr != nil {
-				// Surface the fetch error in the DB so the UI shows "quota unavailable"
-				// instead of silently keeping the last known (stale) values (cpa-3).
-				_ = q.SetCpaQuotaFetchError(ctx, sqlc.SetCpaQuotaFetchErrorParams{
-					AccountID:       aid,
-					QuotaFetchError: uerr.Error(),
-					UpdatedAt:       time.Now().UnixMilli(),
-				})
-			} else if u != nil {
-				_ = q.UpsertCpaQuota(ctx, quotaParams(aid, u, time.Now().UnixMilli()))
-				// Project utilization into the live store so a saturated CPA
-				// account rotates out of dispatch, just like meridian accounts.
-				if rot != nil && rot.Store != nil {
-					now := time.Now().UnixMilli()
-					limits := telemetry.LimitsFromCpaQuota(cpaWindows(u), rot.Threshold, now, rot.DefaultTTLMs)
-					key := node.ID + ":" + a.DispatchSelector()
-					rot.Store.SetLimited(key, rot.Capacity, limits)
-				}
-			}
-		}
+		// NOTE: account discovery only — the Anthropic account-usage endpoint is NO
+		// LONGER polled here (account-limit-reactive). Auto-polling it was slow,
+		// inaccurate, and piled extra requests onto loaded accounts (risking 429s).
+		// Rotation is now reactive: a dispatch that returns a usage-limit response sets
+		// the account limited until the reset time parsed from it (auto-recovers). The
+		// quota numbers are refreshed only on the manual "刷新" button (node_control).
 	}
 	return len(accounts), nil
 }

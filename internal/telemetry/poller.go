@@ -9,7 +9,6 @@ import (
 
 	"github.com/qwwqq1000-arch/tower/internal/crypto"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
-	"github.com/qwwqq1000-arch/tower/internal/events"
 	"github.com/qwwqq1000-arch/tower/internal/nodeclient"
 	"github.com/qwwqq1000-arch/tower/internal/policy"
 	"github.com/qwwqq1000-arch/tower/internal/state"
@@ -36,13 +35,11 @@ type Poller struct {
 
 // PollOnce refreshes every enabled node's accounts once.
 func (p *Poller) PollOnce(ctx context.Context) error {
-	thresh := p.threshold(ctx)
 	mc := p.maxConcurrent(ctx)
 	nodes, err := p.Q.ListNodes(ctx)
 	if err != nil {
 		return err
 	}
-	now := p.Now()
 	var sum5h, sum7d float64
 	var cnt5h, cnt7d int
 	for _, n := range nodes {
@@ -115,30 +112,11 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 
 			p.Store.SetOffline(key, p.Capacity, profileOffline)
 			p.Store.SetCapacity(key, mc)
-			if profileOffline {
-				continue
-			}
-			wasLimited := p.Store.IsLimited(key, now)
-			limits := LimitsFromQuota(pq, thresh, now, p.DefaultTTLMs)
-			p.Store.SetLimited(key, p.Capacity, limits)
-			isLimited := p.Store.IsLimited(key, now)
-
-			p.limitedMu.Lock()
-			if p.lastLimited == nil {
-				p.lastLimited = make(map[string]bool)
-			}
-			prev := p.lastLimited[key]
-			if isLimited {
-				p.lastLimited[key] = true
-			} else {
-				delete(p.lastLimited, key)
-			}
-			p.limitedMu.Unlock()
-
-			// Record event only on false→true transition.
-			if !wasLimited && isLimited && !prev {
-				_ = events.Record(ctx, p.Q, now, events.Event{Type: "quota_limited", Target: key, OwnerID: ""})
-			}
+			// NOTE: quota-driven rotation removed (account-limit-reactive). The poll no
+			// longer projects quota utilization into LimitedUntil — rotation is now
+			// reactive (a usage-limit dispatch response sets the limit until its reset
+			// time, auto-recovering). This poll keeps only offline detection so it never
+			// fights the reactive limit.
 		}
 	}
 	// Calculate cluster-wide average utilization for display/monitoring only.
