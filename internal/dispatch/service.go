@@ -1029,6 +1029,11 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 					s.sess.SetAffinity(conv, key, int64(cfg.AffinityTTLSec)*1000, nowMs)
 				}
 			}
+			// Expose the captured SSE stream as the outcome body so the log-detail
+			// modal can show a streaming request's response, not just an empty 200
+			// (logs-detail-2). The handler caps it; nothing writes out.Body to the
+			// client (the stream already went to w).
+			out.Body = sseBody
 			return out
 		}
 		// not committed → failed before first byte → log per-attempt error + failover

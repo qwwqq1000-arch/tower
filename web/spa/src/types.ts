@@ -160,6 +160,7 @@ export interface PolicyPatch {
   SessionCooldownSec?: number;
   ResponseExileEnabled?: boolean;
   ResponseExileKeywords?: string[];
+  QuotaLimitKeywords?: string[];
   ElasticEnabled?: boolean;
   ElasticScaleUpUtil?: number;
   ElasticScaleDownUtil?: number;
