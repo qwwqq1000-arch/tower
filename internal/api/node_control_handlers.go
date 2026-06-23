@@ -36,6 +36,42 @@ func nodeConsoleURLHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerF
 	}
 }
 
+// accountsRefreshQuotaHandler refreshes quota for ALL CPA accounts on demand (the 号库
+// 刷新全部额度 button). Quota auto-polling is off, so this is the only refresh path.
+func accountsRefreshQuotaHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		n, err := cpaclient.RefreshAllQuota(r.Context(), q, cipher)
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"refreshed": n})
+	}
+}
+
+// accountRefreshQuotaHandler refreshes quota for one account (the per-row 刷新 button).
+// A CPA account triggers a re-fetch of its node's accounts; meridian quota is already
+// live (the 号库 re-fetches node quota), so it's a no-op there.
+func accountRefreshQuotaHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		aid := r.PathValue("accountId")
+		if strings.HasPrefix(aid, "cpa:") {
+			if parts := strings.SplitN(aid, ":", 3); len(parts) >= 2 {
+				if node, err := q.GetNode(r.Context(), parts[1]); err == nil {
+					n, rerr := cpaclient.RefreshQuotaForNode(r.Context(), q, node, cipher)
+					if rerr != nil {
+						writeJSON(w, http.StatusBadGateway, map[string]string{"error": rerr.Error()})
+						return
+					}
+					writeJSON(w, http.StatusOK, map[string]any{"refreshed": n})
+					return
+				}
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"refreshed": 0})
+	}
+}
+
 func nodeFeaturesGetHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		cl, n, ok := nodeClientFor(q, cipher, r, r.PathValue("id"))

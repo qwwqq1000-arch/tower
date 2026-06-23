@@ -3,6 +3,7 @@ package cpaclient
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/qwwqq1000-arch/tower/internal/crypto"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
@@ -10,6 +11,56 @@ import (
 	"github.com/qwwqq1000-arch/tower/internal/state"
 	"github.com/qwwqq1000-arch/tower/internal/telemetry"
 )
+
+// RefreshQuotaForNode fetches + persists the live usage for every claude/anthropic CPA
+// account on a node (manual on-demand — the periodic poll was removed; quota refreshes
+// only on the 刷新 button now). Display only: it does NOT project utilization into the
+// limit store, so it never re-introduces poll-based rotation (that stays reactive).
+// Returns the number of accounts whose quota was refreshed.
+func RefreshQuotaForNode(ctx context.Context, q syncQuerier, node sqlc.Node, cipher *crypto.Cipher) (int, error) {
+	if !strings.EqualFold(node.Kind, "cpa") || strings.TrimSpace(node.MgmtKey) == "" || !node.Enabled {
+		return 0, nil
+	}
+	c := New(node.BaseUrl, cipher.DecryptOrPlaintext(node.MgmtKey))
+	accounts, err := c.ListAccounts(ctx)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, a := range accounts {
+		// The account-usage endpoint is Anthropic OAuth-only.
+		if !strings.EqualFold(a.Provider, "claude") && !strings.EqualFold(a.Provider, "anthropic") {
+			continue
+		}
+		aid := accountID(node.ID, a)
+		now := time.Now().UnixMilli()
+		if u, uerr := c.Usage(ctx, a.DispatchSelector()); uerr != nil {
+			_ = q.SetCpaQuotaFetchError(ctx, sqlc.SetCpaQuotaFetchErrorParams{AccountID: aid, QuotaFetchError: uerr.Error(), UpdatedAt: now})
+		} else if u != nil {
+			_ = q.UpsertCpaQuota(ctx, quotaParams(aid, u, now))
+			n++
+		}
+	}
+	return n, nil
+}
+
+// RefreshAllQuota refreshes quota for every CPA node in the registry (the 刷新全部额度
+// button). Best-effort: a failing node does not abort the rest.
+func RefreshAllQuota(ctx context.Context, q *sqlc.Queries, cipher *crypto.Cipher) (int, error) {
+	nodes, err := q.ListNodes(ctx)
+	if err != nil {
+		return 0, err
+	}
+	total := 0
+	for _, n := range nodes {
+		if !strings.EqualFold(n.Kind, "cpa") {
+			continue
+		}
+		c, _ := RefreshQuotaForNode(ctx, q, n, cipher)
+		total += c
+	}
+	return total, nil
+}
 
 // syncQuerier is the narrow DB interface required by Sync. *sqlc.Queries satisfies it.
 // Using an interface lets unit tests inject a stub without a real database.

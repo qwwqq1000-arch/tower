@@ -12,6 +12,8 @@ import {
   setAccountExpiry,
   setAccountOwner,
   recoverAccount,
+  refreshAllQuota,
+  refreshAccountQuota,
   listUsers,
 } from '../api';
 import type { AccountRow, CpaQuota, QuotaAll, Slot, UserRow } from '../types';
@@ -512,6 +514,17 @@ function AccountTableRow({
     }
   }
 
+  const [refreshingQuota, setRefreshingQuota] = useState(false);
+  async function handleRefreshQuota() {
+    setRefreshingQuota(true);
+    try {
+      await refreshAccountQuota(account.accountId);
+      onRefresh();
+    } finally {
+      setRefreshingQuota(false);
+    }
+  }
+
   return (
     <>
       <tr className="border-t border-line hover:bg-line/30 transition">
@@ -541,6 +554,14 @@ function AccountTableRow({
         <td className="px-4 py-3 text-xs text-muted text-right tabular-nums">{fmtCost(account.totalCostUsd)}</td>
         <td className="px-4 py-3">
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => { void handleRefreshQuota(); }}
+              disabled={refreshingQuota}
+              className="text-xs text-accent hover:text-accent/70 disabled:opacity-50 transition"
+              title="刷新该号额度"
+            >
+              {refreshingQuota ? '刷新中…' : '刷新'}
+            </button>
             <button
               onClick={() => setEditing(true)}
               className="text-xs text-accent hover:text-accent/70 transition"
@@ -737,6 +758,7 @@ function AdminAccounts() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [refreshingAll, setRefreshingAll] = useState(false);
 
   // Search / sort / page
   const [search, setSearch] = useState('');
@@ -878,7 +900,27 @@ function AdminAccounts() {
             清除
           </button>
         )}
-        <span className="text-xs text-muted ml-auto">共 {filtered.length} 条</span>
+        <button
+          onClick={async () => {
+            setRefreshingAll(true);
+            try {
+              const r = await refreshAllQuota();
+              await fetchAll();
+              setToast(`已刷新 ${r?.refreshed ?? 0} 个号的额度`);
+            } catch {
+              setToast('刷新额度失败');
+            } finally {
+              setRefreshingAll(false);
+            }
+          }}
+          disabled={refreshingAll || loading}
+          className="ml-auto text-xs px-3 py-1.5 rounded-lg border border-accent/40 text-accent
+                     hover:bg-accent/10 disabled:opacity-50 transition"
+          title="拉取全部 CPA 号的最新额度"
+        >
+          {refreshingAll ? '刷新中…' : '刷新全部额度'}
+        </button>
+        <span className="text-xs text-muted">共 {filtered.length} 条</span>
       </div>
 
       {/* Loading */}

@@ -199,6 +199,13 @@ export const setAccountOwner = (accountId: string, ownerId: string) =>
 export const recoverAccount = (accountId: string) =>
   api<{ ok: boolean; accountId: string }>('POST', `/api/admin/accounts/${accountId}/recover`, {});
 
+// Quota refresh (manual, on-demand — auto-polling is off). All CPA accounts, or one.
+export const refreshAllQuota = () =>
+  api<{ refreshed: number }>('POST', '/api/admin/accounts/refresh-quota', {});
+
+export const refreshAccountQuota = (accountId: string) =>
+  api<{ refreshed: number }>('POST', `/api/admin/accounts/${accountId}/refresh-quota`, {});
+
 export const listNodeProfiles = (nodeId: string) =>
   api<NodeProfile[]>('GET', `/api/admin/nodes/${nodeId}/profiles`);
 
