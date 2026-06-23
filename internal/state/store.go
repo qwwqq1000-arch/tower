@@ -24,6 +24,9 @@ type Store struct {
 }
 
 // SetQuotaAvg caches the latest average 5h/7d utilization (0..1 fractions).
+// This is a display-only aggregate metric (nodeclient-telemetry-3) and does not
+// drive elastic scaling or rate-limiting decisions; those use per-account quotas
+// and the dispatcher's breaker/cooldown logic instead.
 func (s *Store) SetQuotaAvg(a5h, a7d float64) {
 	s.quotaMu.Lock()
 	defer s.quotaMu.Unlock()
@@ -32,6 +35,8 @@ func (s *Store) SetQuotaAvg(a5h, a7d float64) {
 }
 
 // QuotaAvg returns the cached average 5h/7d utilization (0..1 fractions).
+// This is a display-only aggregate metric for monitoring/dashboard visibility.
+// It is not consulted by dispatch, elastic scaling, or policy logic.
 func (s *Store) QuotaAvg() (float64, float64) {
 	s.quotaMu.Lock()
 	defer s.quotaMu.Unlock()

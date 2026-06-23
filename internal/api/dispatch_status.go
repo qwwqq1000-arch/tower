@@ -167,6 +167,7 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 		}
 	}
 	// global average across all accounts → superadmin only (no cross-owner leak).
+	// Display-only metric (nodeclient-telemetry-3); does not drive dispatch or scaling.
 	var a5h, a7d float64
 	if all && svc != nil && svc.Store != nil {
 		a5h, a7d = svc.Store.QuotaAvg()

@@ -141,6 +141,9 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 			}
 		}
 	}
+	// Calculate cluster-wide average utilization for display/monitoring only.
+	// This does not drive elastic scaling or dispatch decisions; per-account quotas
+	// and account-level rate-limit logic (LimitedUntil) own those responsibilities.
 	var avg5h, avg7d float64
 	if cnt5h > 0 {
 		avg5h = sum5h / float64(cnt5h)
