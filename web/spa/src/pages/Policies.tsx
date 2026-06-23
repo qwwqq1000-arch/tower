@@ -202,7 +202,11 @@ export default function Policies() {
           if (key in p) { f.set(Boolean(p[key])); if (!f.enabled) f.toggle(); }
         };
         const setArr = (f: FieldState<string> & { set: (v: string) => void; toggle: () => void }, key: string) => {
-          if (key in p) { f.set((p[key] as unknown[]).join(',')); if (!f.enabled) f.toggle(); }
+          if (key in p) {
+            const arr = p[key] ?? [];
+            f.set((arr as unknown[]).join(','));
+            if (!f.enabled) f.toggle();
+          }
         };
         setNum(maxConcurrent, 'MaxConcurrent');
         setNum(slotCooldownMinMs, 'SlotCooldownMinMs');
