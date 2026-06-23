@@ -702,6 +702,7 @@ func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []
 	}
 	key := fbSlotKey(ch.ID)
 	s.Store.Ensure(key, cap)
+	s.Store.SetCapacity(key, cap) // apply live MaxConcurrent changes (Ensure is create-only) (fallback-cap-1)
 	bk := state.BreakerCfg{PersistStreak: 1 << 30, BaseMs: 0, MaxMs: 0, Mult: 1}
 	// TryDispatch returns false when the channel's slot set is full (MaxConcurrent
 	// reached). Reject with backpressure (503) rather than forwarding anyway, so
@@ -1325,6 +1326,7 @@ func (s *Service) streamChannel(ctx context.Context, w http.ResponseWriter, ch s
 	}
 	key := fbSlotKey(ch.ID)
 	s.Store.Ensure(key, cap)
+	s.Store.SetCapacity(key, cap) // apply live MaxConcurrent changes (Ensure is create-only) (fallback-cap-1)
 	bk := state.BreakerCfg{PersistStreak: 1 << 30, BaseMs: 0, MaxMs: 0, Mult: 1}
 	// Slot set full (MaxConcurrent reached): do not forward. Return committed=false
 	// so the caller falls through to the next attempt / 503 (fallback-2).
