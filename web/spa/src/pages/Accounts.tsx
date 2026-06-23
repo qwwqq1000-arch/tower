@@ -777,17 +777,27 @@ function AdminAccounts() {
       setUsers(userList ?? []);
       const accs = accountList ?? [];
       setAccounts(accs);
+      setLoading(false); // show the list immediately; quota badges fill in async below
 
-      // Fetch quota for each distinct nodeId (best-effort, resilient)
-      const distinctNodeIds = [...new Set(accs.map((a) => a.nodeId))];
-      const results = await Promise.allSettled(
-        distinctNodeIds.map((id) => getNodeQuota(id).then((q) => ({ id, q }))),
-      );
-      const m = new Map<string, QuotaAll>();
-      for (const r of results) {
-        if (r.status === 'fulfilled') m.set(r.value.id, r.value.q);
+      // Only meridian accounts render from the live node-quota map (QuotaCell). CPA
+      // accounts render from the persisted account.cpaQuota that listAccounts already
+      // returned — so DON'T fetch their nodes' quota here. getNodeQuota on a CPA node
+      // hits the upstream usage endpoint once PER account, which was the slow part of
+      // every 号库 load (and the result wasn't even displayed). CPA quota refreshes via
+      // the 刷新 buttons now.
+      const meridianNodeIds = [...new Set(
+        accs.filter((a) => !a.accountId?.startsWith('cpa:')).map((a) => a.nodeId),
+      )];
+      if (meridianNodeIds.length > 0) {
+        const results = await Promise.allSettled(
+          meridianNodeIds.map((id) => getNodeQuota(id).then((q) => ({ id, q }))),
+        );
+        const m = new Map<string, QuotaAll>();
+        for (const r of results) {
+          if (r.status === 'fulfilled') m.set(r.value.id, r.value.q);
+        }
+        setQuotaMap(m);
       }
-      setQuotaMap(m);
     } catch (e) {
       setError(e instanceof Error ? e.message : '加载失败');
     } finally {
