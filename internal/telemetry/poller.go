@@ -2,7 +2,6 @@ package telemetry
 
 import (
 	"context"
-	"log"
 	"strings"
 	"sync"
 	"time"
@@ -62,29 +61,8 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 		// In that case all profiles on the node go offline regardless of quota.
 		nodeDown := healthErr != nil || health.Status == "unhealthy"
 
-		var quota nodeclient.QuotaAll
-		var quotaErr error
-		if !nodeDown {
-			quota, quotaErr = cl.QuotaAll(ctx)
-			if quotaErr != nil {
-				log.Printf("poller: node %s health OK but QuotaAll failed (transient?): %v — skipping offline update this cycle", n.ID, quotaErr)
-			}
-			if health.Version != "" {
-				_ = p.Q.UpdateNodeVersion(ctx, sqlc.UpdateNodeVersionParams{ID: n.ID, Version: health.Version})
-			}
-			// Accumulate utilization across every profile window for averaging.
-			for _, pr := range quota.Profiles {
-				for _, win := range pr.Windows {
-					switch win.Type {
-					case "five_hour":
-						sum5h += win.Utilization
-						cnt5h++
-					case "seven_day":
-						sum7d += win.Utilization
-						cnt7d++
-					}
-				}
-			}
+		if !nodeDown && health.Version != "" {
+			_ = p.Q.UpdateNodeVersion(ctx, sqlc.UpdateNodeVersionParams{ID: n.ID, Version: health.Version})
 		}
 
 		for _, a := range accs {
@@ -92,31 +70,13 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 				continue
 			}
 			key := n.ID + ":" + a.ProfileID
-
-			// Derive per-account offline from per-profile IsActive so a single
-			// logged-out profile does not take all sibling profiles offline.
-			//
-			// When the node is reachable (nodeDown=false) but QuotaAll returned a
-			// transient error, we cannot distinguish "profile absent" from "fetch
-			// failed". Flipping all profiles offline in that case causes unnecessary
-			// dispatch disruption. Instead we skip the SetOffline update for this
-			// cycle and preserve whatever stale state the store already holds.
-			pq, foundInQuota := findProfile(quota, a.ProfileID)
-			if quotaErr != nil && !nodeDown {
-				// Transient quota fetch failure on an otherwise healthy node:
-				// keep stale offline state; skip limit update too.
-				p.Store.SetCapacity(key, mc)
-				continue
-			}
-			profileOffline := OfflineForProfile(health, healthErr, pq, foundInQuota && !nodeDown)
-
-			p.Store.SetOffline(key, p.Capacity, profileOffline)
+			// Offline is node-level only: the quota endpoint is NO LONGER polled here
+			// (account-limit-reactive — quota reads are manual-only, "所有刷新都关了").
+			// A reachable node ⇒ accounts online; a down/unhealthy node ⇒ all its
+			// accounts offline. Per-account quota-limit + auth/ban are detected
+			// reactively (dispatch responses) and on the manual 刷新 button — not here.
+			p.Store.SetOffline(key, p.Capacity, nodeDown)
 			p.Store.SetCapacity(key, mc)
-			// NOTE: quota-driven rotation removed (account-limit-reactive). The poll no
-			// longer projects quota utilization into LimitedUntil — rotation is now
-			// reactive (a usage-limit dispatch response sets the limit until its reset
-			// time, auto-recovering). This poll keeps only offline detection so it never
-			// fights the reactive limit.
 		}
 	}
 	// Calculate cluster-wide average utilization for display/monitoring only.
