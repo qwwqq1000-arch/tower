@@ -243,6 +243,7 @@ export interface SettleResult {
   id: string;
   tenantId: string;
   gross: number;
+  settled?: number;
   status: string;
 }
 

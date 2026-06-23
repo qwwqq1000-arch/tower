@@ -20,6 +20,9 @@ import Settings     from './pages/Settings';
 
 // Roles that count as admin-or-above.
 const ADMIN_ROLES = ['admin', 'superadmin', 'operator'];
+// Mixed views that admins AND tenants can reach (the page renders the tenant
+// variant internally when isTenant is true).
+const TENANT_ACCESSIBLE = [...ADMIN_ROLES, 'tenant'];
 // Only superadmin can reach certain pages.
 const SUPERADMIN_ROLES = ['superadmin'];
 
@@ -39,7 +42,7 @@ export default function App() {
 
               {/* Admin-or-above routes */}
               <Route path="/dispatch"  element={
-                <RequireRole allow={ADMIN_ROLES}><Dispatch /></RequireRole>
+                <RequireRole allow={TENANT_ACCESSIBLE}><Dispatch /></RequireRole>
               } />
               <Route path="/keys"      element={
                 <RequireRole allow={ADMIN_ROLES}><Keys /></RequireRole>
@@ -48,16 +51,16 @@ export default function App() {
                 <RequireRole allow={ADMIN_ROLES}><Slots /></RequireRole>
               } />
               <Route path="/billing"   element={
-                <RequireRole allow={ADMIN_ROLES}><Billing /></RequireRole>
+                <RequireRole allow={TENANT_ACCESSIBLE}><Billing /></RequireRole>
               } />
               <Route path="/ban-analysis" element={
                 <RequireRole allow={ADMIN_ROLES}><BanAnalysis /></RequireRole>
               } />
               <Route path="/fallback"     element={
-                <RequireRole allow={ADMIN_ROLES}><Fallback /></RequireRole>
+                <RequireRole allow={TENANT_ACCESSIBLE}><Fallback /></RequireRole>
               } />
               <Route path="/settings"     element={
-                <RequireRole allow={ADMIN_ROLES}><Settings /></RequireRole>
+                <RequireRole allow={TENANT_ACCESSIBLE}><Settings /></RequireRole>
               } />
               <Route path="/desired"   element={
                 <RequireRole allow={ADMIN_ROLES}><Desired /></RequireRole>
