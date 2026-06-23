@@ -119,6 +119,16 @@ func maxTokensError(req, limit int, model string) string {
 
 var limitResetRe = regexp.MustCompile(`(?i)resets?\s+(\d{1,2}):(\d{2})\s*(am|pm)\s*\(?\s*utc\s*\)?`)
 
+// limitResetDateRe matches the 7-day quota wording that carries a date, e.g.
+// "resets Jun 28 12:50pm (UTC)" — parsed before the time-only regex (which would
+// otherwise grab "12:50pm" and resolve it to today).
+var limitResetDateRe = regexp.MustCompile(`(?i)resets?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})\s+(\d{1,2}):(\d{2})\s*(am|pm)\s*\(?\s*utc\s*\)?`)
+
+var monthAbbr = map[string]time.Month{
+	"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+	"jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
 // parseLimitReset detects a usage-EXHAUSTION response and returns the reset deadline
 // (account-limit-reactive). Detection is error + KEYWORD: the body must contain one of
 // the configured QuotaLimitKeywords (precise phrases like "hit your limit"). A bare
@@ -127,7 +137,21 @@ var limitResetRe = regexp.MustCompile(`(?i)resets?\s+(\d{1,2}):(\d{2})\s*(am|pm)
 // api_error "...You've hit your limit · resets H:MMam/pm (UTC)"; the reset lives only in
 // that text, so we parse the wall-clock UTC time to the next occurrence (else 1h).
 // Returns (false, 0) when no keyword matches.
-func parseLimitReset(body string, now int64, keywords []string) (bool, int64) {
+func parseLimitReset(status int, body string, now int64, keywords []string, codes []int) (bool, int64) {
+	// Gate by status code first so the body scan does not run on every response — only
+	// the codes a quota limit actually arrives on (429/500). Empty codes = scan all.
+	if len(codes) > 0 {
+		ok := false
+		for _, c := range codes {
+			if c == status {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return false, 0
+		}
+	}
 	lb := strings.ToLower(body)
 	matched := false
 	for _, kw := range keywords {
@@ -138,6 +162,25 @@ func parseLimitReset(body string, now int64, keywords []string) (bool, int64) {
 	}
 	if !matched {
 		return false, 0
+	}
+	// Date+time reset (7-day quota: "resets Jun 28 12:50pm (UTC)") — try first, since
+	// it also contains a H:MM the time-only regex would otherwise misread as today.
+	if m := limitResetDateRe.FindStringSubmatch(body); m != nil {
+		mon := monthAbbr[strings.ToLower(m[1])]
+		day, _ := strconv.Atoi(m[2])
+		hh, _ := strconv.Atoi(m[3])
+		mm, _ := strconv.Atoi(m[4])
+		if strings.EqualFold(m[5], "pm") && hh != 12 {
+			hh += 12
+		} else if strings.EqualFold(m[5], "am") && hh == 12 {
+			hh = 0
+		}
+		t := time.UnixMilli(now).UTC()
+		reset := time.Date(t.Year(), mon, day, hh, mm, 0, 0, time.UTC)
+		if reset.Before(t) {
+			reset = reset.AddDate(1, 0, 0) // month/day already passed this year → next year
+		}
+		return true, reset.UnixMilli()
 	}
 	// Explicit wall-clock reset (subscription format) → resolve to next occurrence.
 	if m := limitResetRe.FindStringSubmatch(body); m != nil {
@@ -333,7 +376,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 					s.maybeCooldown(ctx, acctOwnerOf(keyOwner, key, ownerID), key, res.Status, cfg)
 					// Reactive quota rotation: if the response is a usage-limit error,
 					// rotate the account out until the reset time parsed from it.
-					if limited, resetMs := parseLimitReset(res.Body, s.Now(), cfg.QuotaLimitKeywords); limited {
+					if limited, resetMs := parseLimitReset(res.Status, res.Body, s.Now(), cfg.QuotaLimitKeywords, cfg.QuotaLimitStatusCodes); limited {
 						s.applyReactiveLimit(ctx, acctOwnerOf(keyOwner, key, ownerID), key, resetMs)
 					}
 				}
@@ -1062,7 +1105,7 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 		s.recordRetry(ctx, acctOwnerOf(keyOwner, key, ownerID), model, key, out.Status, ClassifyBanned(out.Status, "", cfg.BanSignals, nil))
 		s.maybeCooldown(ctx, acctOwnerOf(keyOwner, key, ownerID), key, out.Status, cfg)
 		// Reactive quota rotation on the stream path too (account-limit-reactive).
-		if limited, resetMs := parseLimitReset(out.Body, nowMs, cfg.QuotaLimitKeywords); limited {
+		if limited, resetMs := parseLimitReset(out.Status, out.Body, nowMs, cfg.QuotaLimitKeywords, cfg.QuotaLimitStatusCodes); limited {
 			s.applyReactiveLimit(ctx, acctOwnerOf(keyOwner, key, ownerID), key, resetMs)
 		}
 		if justExiled := s.sess.RecordError(conv, int64(cfg.SessionErrorThreshold), int64(cfg.SessionCooldownSec)*1000, nowMs); justExiled {

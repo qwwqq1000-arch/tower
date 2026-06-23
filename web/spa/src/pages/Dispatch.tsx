@@ -6,19 +6,8 @@ import { useEffect, useRef, useState } from 'react';
 import { getDispatchStatus, listFallbackChannels, listAccounts, getServerStatus } from '../api';
 import type { DispatchStatus, DispatchAccountSnapshot, DispatchEvent, DispatchFallbackChannel, ServerStatus } from '../types';
 import { useAuth } from '../auth';
-import { statusColor, statusLabel } from '../lib/status';
 import { TenantDispatch } from './tenant';
-
-// ------------------------------------------------------------------
-// Badge
-// ------------------------------------------------------------------
-function StatusBadge({ status }: { status: string }) {
-  return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded border text-xs font-mono ${statusColor(status)}`}>
-      {statusLabel(status)}
-    </span>
-  );
-}
+import { StatusBadge, statusRank } from '../components/AccountStatus';
 
 // fmtRecover formats a future ms timestamp as a countdown ("剩 20秒" / "剩 1:23" / "即将").
 function fmtRecover(ms: number, now: number): string {
@@ -102,13 +91,13 @@ function ConcurrencyPanel({ accounts }: { accounts: DispatchAccountSnapshot[] })
                 <td colSpan={6} className="px-4 py-6 text-center text-muted text-xs">无数据</td>
               </tr>
             )}
-            {accounts.map((a) => (
+            {[...accounts].sort((x, y) => statusRank(x.status) - statusRank(y.status)).map((a) => (
               <tr key={a.key} className="border-b border-line/50 hover:bg-line/30 transition">
                 <td className="px-4 py-2">
                   <p className="text-sm text-ink font-medium">{a.label || '—'}</p>
                 </td>
                 <td className="px-4 py-2">
-                  <StatusBadge status={a.status} />
+                  <StatusBadge status={a.status} limitedUntil={a.limitedUntil} />
                   {(a.status === 'banned' || a.status === 'half_open' || a.status === 'cooldown') && a.recoverAt && a.recoverAt > 0 && (
                     <div className="text-[10px] text-muted mt-0.5"><RecoverCountdown recoverAt={a.recoverAt} /></div>
                   )}

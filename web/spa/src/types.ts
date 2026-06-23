@@ -161,6 +161,7 @@ export interface PolicyPatch {
   ResponseExileEnabled?: boolean;
   ResponseExileKeywords?: string[];
   QuotaLimitKeywords?: string[];
+  QuotaLimitStatusCodes?: number[];
   ElasticEnabled?: boolean;
   ElasticScaleUpUtil?: number;
   ElasticScaleDownUtil?: number;
@@ -424,6 +425,7 @@ export interface DispatchAccountSnapshot {
   inflight: number;
   available: number;
   recoverAt?: number; // ms; when a cooling breaker half-opens (0 if not cooling)
+  limitedUntil?: number; // ms; quota-limit reset deadline when status==='limited'
   todayCostUsd?: number;
   totalCostUsd?: number;
 }
@@ -484,7 +486,8 @@ export interface MeAccountRow {
   profileId: string;
   email: string;
   enabled: boolean;
-  status?: string;           // live breaker status: active|banned|half_open|permanent|cooldown
+  status?: string;           // live breaker status: active|banned|half_open|permanent|cooldown|limited
+  limitedUntil?: number;     // quota-limit reset deadline (unix ms) when status==='limited'
   weight: number;
   role: string;
   expiresAt?: number;        // unix ms

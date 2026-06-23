@@ -59,6 +59,17 @@ function fmtCost(usd?: number): string {
   return `$${usd.toFixed(4)}`;
 }
 
+// resolveEmail maps a dispatch target to an account email. The target is the dispatch
+// key "<nodeId>:<profileId>"; the admin map is keyed by that full key, the tenant map by
+// profileId alone (no nodeId), so try the full key first then the profileId part.
+function resolveEmail(target: string, accountMap: Map<string, string>): string | undefined {
+  if (!target) return undefined;
+  const direct = accountMap.get(target);
+  if (direct) return direct;
+  const i = target.indexOf(':');
+  return i >= 0 ? accountMap.get(target.slice(i + 1)) : undefined;
+}
+
 function renderTarget(target: string, channelMap: Map<string, string>, accountMap: Map<string, string>): React.ReactNode {
   if (!target) return '—';
   if (target.startsWith('fallback:')) {
@@ -66,7 +77,7 @@ function renderTarget(target: string, channelMap: Map<string, string>, accountMa
     const name = channelMap.get(id);
     return name ? `保底: ${name}` : '保底';
   }
-  const email = accountMap.get(target);
+  const email = resolveEmail(target, accountMap);
   return email ?? '节点';
 }
 
@@ -532,11 +543,11 @@ function renderTargetText(
   channelMap: Map<string, string>,
 ): string {
   if (type === 'dispatch_ok') {
-    const email = accountMap.get(target);
+    const email = resolveEmail(target, accountMap);
     return email ? `派单成功 · ${email}` : `派单成功 · ${target || '节点'}`;
   }
   if (type === 'ban') {
-    const email = accountMap.get(target);
+    const email = resolveEmail(target, accountMap);
     return email ? `封控 · ${email}` : `封控 · ${target || '节点'}`;
   }
   if (type === 'fallback') {
@@ -547,7 +558,7 @@ function renderTargetText(
     return channelName ? `${base} · ${channelName}` : base;
   }
   if (type === 'quota_limited') {
-    const email = accountMap.get(target);
+    const email = resolveEmail(target, accountMap);
     return email ? `账户限额 · ${email}` : `账户限额 · ${target || '节点'}`;
   }
   if (type === 'session_exile') {

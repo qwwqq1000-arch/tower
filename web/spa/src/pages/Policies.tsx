@@ -170,6 +170,7 @@ export default function Policies() {
   const responseExileEnabled = useField<boolean>(false);
   const responseExileKeywords = useField<string>('');
   const quotaLimitKeywords = useField<string>('');
+  const quotaLimitCodes = useField<string>('');
   // Elastic
   const elasticEnabled = useField<boolean>(false);
   const elasticScaleUpUtil = useField<number>(0.8);
@@ -252,6 +253,7 @@ export default function Policies() {
         setBool(responseExileEnabled, 'ResponseExileEnabled');
         setArr(responseExileKeywords, 'ResponseExileKeywords');
         setArr(quotaLimitKeywords, 'QuotaLimitKeywords');
+        setArr(quotaLimitCodes, 'QuotaLimitStatusCodes');
         setBool(elasticEnabled, 'ElasticEnabled');
         setNum(elasticScaleUpUtil, 'ElasticScaleUpUtil');
         setNum(elasticScaleDownUtil, 'ElasticScaleDownUtil');
@@ -324,6 +326,7 @@ export default function Policies() {
     if (responseExileEnabled.enabled) patch.ResponseExileEnabled = responseExileEnabled.value;
     if (responseExileKeywords.enabled) patch.ResponseExileKeywords = responseExileKeywords.value.split(',').map(s => s.trim()).filter(Boolean);
     if (quotaLimitKeywords.enabled) patch.QuotaLimitKeywords = quotaLimitKeywords.value.split(',').map(s => s.trim()).filter(Boolean);
+    if (quotaLimitCodes.enabled) patch.QuotaLimitStatusCodes = quotaLimitCodes.value.split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
     if (elasticEnabled.enabled) patch.ElasticEnabled = elasticEnabled.value;
     if (elasticScaleUpUtil.enabled) patch.ElasticScaleUpUtil = elasticScaleUpUtil.value;
     if (elasticScaleDownUtil.enabled) patch.ElasticScaleDownUtil = elasticScaleDownUtil.value;
@@ -367,7 +370,7 @@ export default function Policies() {
     fallbackEnabled, fallbackPriceThresholdUsd, fallbackKeywords, fallbackModels, fallbackProbeEnabled, banSignals, banKeywords, cooldownSignals, cooldownSignalSec,
     quotaRotateThreshold, maxFailover,
     warmupHours, warmupMaxConcurrent, warmupBlockOpus,
-    sessionErrorThreshold, sessionCooldownSec, responseExileEnabled, responseExileKeywords, quotaLimitKeywords,
+    sessionErrorThreshold, sessionCooldownSec, responseExileEnabled, responseExileKeywords, quotaLimitKeywords, quotaLimitCodes,
     elasticEnabled, elasticScaleUpUtil, elasticScaleDownUtil, elasticMaxReserve, elasticBaselineCount,
   ].some((f) => f.enabled);
 
@@ -728,6 +731,24 @@ export default function Policies() {
             onChange={(e) => quotaLimitKeywords.set(e.target.value)}
             disabled={!quotaLimitKeywords.enabled}
             placeholder="hit your limit,usage limit"
+            className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink
+                       placeholder:text-muted focus:outline-none focus:border-accent transition
+                       disabled:cursor-not-allowed"
+          />
+        </FieldRow>
+
+        <FieldRow
+          label="限额拦截错误码(逗号分隔)"
+          desc="只在这些 HTTP 状态码的响应上扫描限额关键词,避免每个请求都扫描影响速率。默认 429(CPA冷却)+500(meridian/内嵌错误);留空=所有错误响应都扫"
+          enabled={quotaLimitCodes.enabled}
+          onToggle={quotaLimitCodes.toggle}
+        >
+          <input
+            type="text"
+            value={quotaLimitCodes.value}
+            onChange={(e) => quotaLimitCodes.set(e.target.value)}
+            disabled={!quotaLimitCodes.enabled}
+            placeholder="429,500"
             className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink
                        placeholder:text-muted focus:outline-none focus:border-accent transition
                        disabled:cursor-not-allowed"

@@ -36,8 +36,10 @@ func meAccountsHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc 
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
-		// Live status overlay (banned/half_open/permanent/cooldown) from the store.
+		// Live status overlay (banned/half_open/permanent/cooldown + quota limit) from
+		// the store — mirrors the admin 号库 so a tenant sees the same live state.
 		liveStatus := map[string]string{}
+		liveLimitedUntil := map[string]int64{} // key -> quota-limit reset deadline
 		if svc != nil && svc.Store != nil {
 			now := int64(0)
 			if svc.Now != nil {
@@ -45,6 +47,9 @@ func meAccountsHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc 
 			}
 			for _, snap := range svc.Store.Snapshot(now) {
 				liveStatus[snap.Key] = snap.Status
+				if snap.Limited {
+					liveLimitedUntil[snap.Key] = snap.LimitedUntil
+				}
 			}
 		}
 		todayCostMap := map[string]float64{}
@@ -69,6 +74,10 @@ func meAccountsHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc 
 			if ls, ok := liveStatus[key]; ok {
 				status = ls // live ban/half_open/permanent/cooldown wins over stored value
 			}
+			limitedUntil := liveLimitedUntil[key]
+			if limitedUntil > 0 {
+				status = "limited" // quota-rotated out — show 限额 like the admin 号库
+			}
 			out = append(out, map[string]any{
 				"accountId":        a.AccountID,
 				"nodeName":         a.NodeName,
@@ -79,6 +88,7 @@ func meAccountsHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc 
 				"role":             a.Role,
 				"enabled":          a.Enabled,
 				"status":           status,
+				"limitedUntil":     limitedUntil,
 				"todayCostUsd":     todayCostMap[key],
 				"totalCostUsd":     totalCostMap[key],
 			})

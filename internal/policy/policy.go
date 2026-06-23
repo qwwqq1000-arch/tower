@@ -109,6 +109,12 @@ type Config struct {
 	// (e.g. "hit your limit · resets …") does (account-limit-reactive). Empty = off.
 	QuotaLimitKeywords []string
 
+	// QuotaLimitStatusCodes gates the keyword scan to specific HTTP status codes so it
+	// does not run the body scan on every response (perf). Only responses whose status
+	// is in this set are scanned for QuotaLimitKeywords. Empty = scan all error
+	// responses. Defaults to the codes a quota limit actually arrives on (429 + 500).
+	QuotaLimitStatusCodes []int
+
 	// ModelMaxTokens caps the requested output tokens (the body's max_tokens) per
 	// model. A request whose max_tokens exceeds the matched ceiling is rejected with
 	// a 400 BEFORE any node/fallback attempt (no retry) — an over-limit request fails
@@ -158,6 +164,8 @@ func Defaults() Config {
 		// the subscription wording ("hit your limit" / "usage limit") AND CPA's
 		// ("All credentials for model … are cooling down via provider claude").
 		QuotaLimitKeywords: []string{"hit your limit", "usage limit", "cooling down"},
+		// Quota limits arrive as 429 (CPA cooling-down) or 500 (meridian / in-body errors).
+		QuotaLimitStatusCodes: []int{429, 500},
 		// Official Anthropic per-model output ceilings (max_tokens). Editable per
 		// tenant via the policy patch; an over-limit request is rejected 400 without
 		// retry (limits-1).
@@ -206,6 +214,7 @@ type Patch struct {
 	ResponseExileKeywords     *[]string
 	StreamIdleTimeoutSec      *int
 	QuotaLimitKeywords        *[]string
+	QuotaLimitStatusCodes     *[]int
 	ModelMaxTokens            *map[string]int
 }
 
@@ -315,6 +324,9 @@ func apply(c *Config, p Patch) {
 	}
 	if p.QuotaLimitKeywords != nil {
 		c.QuotaLimitKeywords = *p.QuotaLimitKeywords
+	}
+	if p.QuotaLimitStatusCodes != nil {
+		c.QuotaLimitStatusCodes = *p.QuotaLimitStatusCodes
 	}
 	if p.ModelMaxTokens != nil {
 		c.ModelMaxTokens = *p.ModelMaxTokens
