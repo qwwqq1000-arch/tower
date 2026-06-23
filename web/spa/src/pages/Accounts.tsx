@@ -135,7 +135,9 @@ function QuotaCell({
   quotaMap: Map<string, QuotaAll>;
 }) {
   const quota = quotaMap.get(nodeId);
-  if (!quota) return <span className="text-xs text-muted">—</span>;
+  // quota.profiles can be null/absent (e.g. a node whose quota was never polled or
+  // returned empty) — guard before .find() or the whole 号库 render crashes.
+  if (!quota || !quota.profiles) return <span className="text-xs text-muted">—</span>;
 
   const profile = quota.profiles.find((p) => p.id === profileId);
   if (!profile || !profile.windows || profile.windows.length === 0) {
