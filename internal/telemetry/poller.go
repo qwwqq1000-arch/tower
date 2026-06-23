@@ -60,12 +60,14 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 		}
 		cl := nodeclient.New(n.BaseUrl, p.Cipher.DecryptOrPlaintext(n.ApiKey))
 		health, healthErr := cl.Health(ctx)
-		offline := OfflineFromHealth(health, healthErr)
+		// nodeDown is true when the node is unreachable or reports unhealthy.
+		// In that case all profiles on the node go offline regardless of quota.
+		nodeDown := healthErr != nil || health.Status == "unhealthy"
 
 		var quota nodeclient.QuotaAll
-		if !offline {
+		if !nodeDown {
 			quota, _ = cl.QuotaAll(ctx)
-			if healthErr == nil && health.Version != "" {
+			if health.Version != "" {
 				_ = p.Q.UpdateNodeVersion(ctx, sqlc.UpdateNodeVersionParams{ID: n.ID, Version: health.Version})
 			}
 			// Accumulate utilization across every profile window for averaging.
@@ -88,35 +90,37 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 				continue
 			}
 			key := n.ID + ":" + a.ProfileID
-			if offline {
-				p.Store.SetOffline(key, p.Capacity, true)
-				p.Store.SetCapacity(key, mc)
+
+			// Derive per-account offline from per-profile IsActive so a single
+			// logged-out profile does not take all sibling profiles offline.
+			pq, foundInQuota := findProfile(quota, a.ProfileID)
+			profileOffline := OfflineForProfile(health, healthErr, pq, foundInQuota && !nodeDown)
+
+			p.Store.SetOffline(key, p.Capacity, profileOffline)
+			p.Store.SetCapacity(key, mc)
+			if profileOffline {
 				continue
 			}
-			p.Store.SetOffline(key, p.Capacity, false)
-			p.Store.SetCapacity(key, mc)
-			if pq, ok := findProfile(quota, a.ProfileID); ok {
-				wasLimited := p.Store.IsLimited(key, now)
-				limits := LimitsFromQuota(pq, thresh, now, p.DefaultTTLMs)
-				p.Store.SetLimited(key, p.Capacity, limits)
-				isLimited := p.Store.IsLimited(key, now)
+			wasLimited := p.Store.IsLimited(key, now)
+			limits := LimitsFromQuota(pq, thresh, now, p.DefaultTTLMs)
+			p.Store.SetLimited(key, p.Capacity, limits)
+			isLimited := p.Store.IsLimited(key, now)
 
-				p.limitedMu.Lock()
-				if p.lastLimited == nil {
-					p.lastLimited = make(map[string]bool)
-				}
-				prev := p.lastLimited[key]
-				if isLimited {
-					p.lastLimited[key] = true
-				} else {
-					delete(p.lastLimited, key)
-				}
-				p.limitedMu.Unlock()
+			p.limitedMu.Lock()
+			if p.lastLimited == nil {
+				p.lastLimited = make(map[string]bool)
+			}
+			prev := p.lastLimited[key]
+			if isLimited {
+				p.lastLimited[key] = true
+			} else {
+				delete(p.lastLimited, key)
+			}
+			p.limitedMu.Unlock()
 
-				// Record event only on false→true transition.
-				if !wasLimited && isLimited && !prev {
-					_ = events.Record(ctx, p.Q, now, events.Event{Type: "quota_limited", Target: key, OwnerID: ""})
-				}
+			// Record event only on false→true transition.
+			if !wasLimited && isLimited && !prev {
+				_ = events.Record(ctx, p.Q, now, events.Event{Type: "quota_limited", Target: key, OwnerID: ""})
 			}
 		}
 	}
