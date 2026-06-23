@@ -335,6 +335,12 @@ type AccountSnapshot struct {
 	Inflight  int
 	Available int
 	RecoverAt int64 // ms; when a cooling breaker half-opens (0 if not cooling)
+	// Limited reports whether the account is currently rotated out of dispatch by
+	// quota saturation (LimitedUntil active). The breaker Status above can still be
+	// "active" while Limited is true — the two are independent, so the UI must read
+	// Limited to show a quota-rotated account as "限额" instead of "活跃".
+	Limited      bool
+	LimitedUntil int64 // ms; latest active quota-limit reset deadline (0 if not limited)
 }
 
 // Snapshot returns a sorted, point-in-time view of every account's live state.
@@ -358,9 +364,10 @@ func (s *Store) Snapshot(now int64) []AccountSnapshot {
 		if st == "cooldown" && a.CoolUntil > recoverAt {
 			recoverAt = a.CoolUntil // temporary error-cooldown (429): show its remaining time
 		}
+		limited, limitUntil := a.LimitState(now)
 		out = append(out, AccountSnapshot{
 			Key: key, Status: st, Inflight: a.Slots.InUse(), Available: avail,
-			RecoverAt: recoverAt,
+			RecoverAt: recoverAt, Limited: limited, LimitedUntil: limitUntil,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })

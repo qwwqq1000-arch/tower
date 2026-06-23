@@ -10,6 +10,30 @@ func ptrB(b bool) *bool       { return &b }
 func ptrF(f float64) *float64 { return &f }
 func ptrSS(ss []string) *[]string { return &ss }
 
+func TestMaxTokensFor(t *testing.T) {
+	c := Defaults()
+	cases := []struct {
+		model string
+		want  int
+	}{
+		{"claude-opus-4-8", 128000},
+		{"claude-haiku-4-5-20251001", 64000}, // dated suffix matches the base key
+		{"claude-sonnet-4-6", 64000},
+		{"claude-3-opus-20240229", 0}, // no key matches → unlimited
+		{"gpt-4", 0},
+	}
+	for _, tc := range cases {
+		if got := c.MaxTokensFor(tc.model); got != tc.want {
+			t.Errorf("MaxTokensFor(%q)=%d, want %d", tc.model, got, tc.want)
+		}
+	}
+	// Tenant patch overrides the whole map.
+	patched := Resolve(c, Patch{ModelMaxTokens: &map[string]int{"claude-opus-4-8": 32000}})
+	if got := patched.MaxTokensFor("claude-opus-4-8"); got != 32000 {
+		t.Errorf("patched opus limit=%d, want 32000", got)
+	}
+}
+
 func TestResolve_LayeredOverride(t *testing.T) {
 	base := Defaults()
 	got := Resolve(base,

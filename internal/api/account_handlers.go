@@ -249,6 +249,7 @@ func listAccountsHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFun
 		}
 		// Live status overlay (banned/half_open/permanent/...) from the in-memory store.
 		liveStatus := map[string]string{}
+		liveLimitedUntil := map[string]int64{} // key -> quota-limit reset deadline (quota-rotated accounts)
 		if svc != nil && svc.Store != nil {
 			now := int64(0)
 			if svc.Now != nil {
@@ -256,6 +257,9 @@ func listAccountsHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFun
 			}
 			for _, snap := range svc.Store.Snapshot(now) {
 				liveStatus[snap.Key] = snap.Status
+				if snap.Limited {
+					liveLimitedUntil[snap.Key] = snap.LimitedUntil
+				}
 			}
 		}
 		// Build today cost map: target -> cost
@@ -282,6 +286,13 @@ func listAccountsHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFun
 			if ls, ok := liveStatus[key]; ok {
 				status = ls // live ban/half_open/permanent state wins over stored value
 			}
+			// Quota rotation overlay: an account saturated past QuotaRotateThreshold is
+			// rotated out of dispatch but its breaker stays "active" — surface it as
+			// "limited" so the UI shows 限额 instead of a misleading 活跃 (quota-3).
+			limitedUntil := liveLimitedUntil[key]
+			if limitedUntil > 0 {
+				status = "limited"
+			}
 			var quota map[string]any
 			if qr, ok := quotaByAccount[a.AccountID]; ok {
 				quota = map[string]any{
@@ -304,6 +315,7 @@ func listAccountsHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFun
 				"egress":           a.Egress,
 				"email":            a.Email,
 				"status":           status,
+				"limitedUntil":     limitedUntil,
 				"todayCostUsd":     todayCostMap[key],
 				"totalCostUsd":     totalCostMap[key],
 				"expiresAt":        a.ExpiresAt,

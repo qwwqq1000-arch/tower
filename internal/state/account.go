@@ -86,6 +86,20 @@ func (a *Account) limitedFor(now int64, model string) bool {
 	return false
 }
 
+// LimitState reports whether the account is currently quota-limited (rotated out
+// of dispatch for any model class) and the latest active reset deadline. Used by
+// Snapshot so the UI can surface a quota-rotated account as "限额" — the breaker
+// Status() is independent and stays "active" while the account is rate-limited.
+func (a *Account) LimitState(now int64) (bool, int64) {
+	var until int64
+	for _, t := range a.LimitedUntil {
+		if t > now && t > until {
+			until = t
+		}
+	}
+	return until > now, until
+}
+
 // CanDispatch reports whether the account may take a request for model at now,
 // and whether this dispatch would be a half-open recovery trial. It has no side
 // effects; the caller claims the trial via Breaker.TakeTrial when trial is true.

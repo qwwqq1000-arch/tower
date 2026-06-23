@@ -103,10 +103,34 @@ func parseUsage(body string) (in, out, cacheRead, cache5m, cache1h int64) {
 
 // Dispatch routes one request: fallback decision → our nodes (failover) →
 // fallback backstop, logging and cost-rolling the outcome.
+// reqMaxTokens extracts the requested output cap (max_tokens) from a Messages
+// request body, or 0 when absent/unparseable.
+func reqMaxTokens(body []byte) int {
+	var p struct {
+		MaxTokens int `json:"max_tokens"`
+	}
+	_ = json.Unmarshal(body, &p)
+	return p.MaxTokens
+}
+
+// maxTokensError builds the 400 body for an over-limit request.
+func maxTokensError(req, limit int, model string) string {
+	return fmt.Sprintf(`{"error":{"type":"invalid_request_error","message":"max_tokens %d exceeds the %d output-token limit for %s"}}`, req, limit, model)
+}
+
 func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string, body []byte) Outcome {
 	start := time.Now()
 
 	cfg := s.resolveConfig(ctx, ownerID)
+	// Per-model max_tokens ceiling: reject an over-limit request 400 BEFORE any
+	// node/fallback attempt — it fails on every upstream, so retrying wastes
+	// attempts (limits-1).
+	if limit := cfg.MaxTokensFor(model); limit > 0 {
+		if req := reqMaxTokens(body); req > limit {
+			s.logErr(ctx, ownerID, model, 400, time.Since(start).Milliseconds(), "max_tokens_exceeded")
+			return Outcome{Status: 400, Body: maxTokensError(req, limit, model), Target: "none", Reason: "max_tokens_exceeded"}
+		}
+	}
 	breaker := state.BreakerCfg{
 		PersistStreak: cfg.BanPersistStreak, PermStreak: cfg.PermanentBanStreak,
 		BaseMs: cfg.CooldownBaseMs, MaxMs: cfg.CooldownMaxMs, Mult: cfg.CooldownMult,
@@ -786,6 +810,18 @@ func flushCopy(dst http.ResponseWriter, src io.Reader) {
 // before the first byte; once streaming to the client starts, it commits.
 func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, ownerID, model string, body []byte) Outcome {
 	cfg := s.resolveConfig(ctx, ownerID)
+	// Per-model max_tokens ceiling (limits-1): reject 400 before any attempt. The
+	// stream handler does not write our return value, so emit the 400 to w here.
+	if limit := cfg.MaxTokensFor(model); limit > 0 {
+		if req := reqMaxTokens(body); req > limit {
+			s.logErr(ctx, ownerID, model, 400, 0, "max_tokens_exceeded")
+			msg := maxTokensError(req, limit, model)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(400)
+			_, _ = w.Write([]byte(msg))
+			return Outcome{Status: 400, Body: msg, Target: "none", Reason: "max_tokens_exceeded"}
+		}
+	}
 	breaker := state.BreakerCfg{
 		PersistStreak: cfg.BanPersistStreak, PermStreak: cfg.PermanentBanStreak,
 		BaseMs: cfg.CooldownBaseMs, MaxMs: cfg.CooldownMaxMs, Mult: cfg.CooldownMult,

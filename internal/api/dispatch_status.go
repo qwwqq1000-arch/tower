@@ -60,10 +60,17 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 			if s.Status == "permanent" { // permanently banned → out of rotation, hide from the live pool
 				continue
 			}
+			// Quota rotation overlay: surface a quota-saturated account as "limited"
+			// (its breaker stays "active" while rotated out) so the pool shows 限额 (quota-3).
+			status := s.Status
+			if s.Limited {
+				status = "limited"
+			}
 			accounts = append(accounts, map[string]any{
 				"key":          s.Key,
 				"label":        labels[s.Key],
-				"status":       s.Status,
+				"status":       status,
+				"limitedUntil": s.LimitedUntil,
 				"inflight":     s.Inflight,
 				"available":    s.Available,
 				"recoverAt":    s.RecoverAt,

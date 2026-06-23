@@ -5,6 +5,7 @@ package policy
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // PickThreshold extracts QuotaRotateThreshold from a JSON policy patch (the
@@ -100,6 +101,14 @@ type Config struct {
 	// the dispatch slot is released (dispatch-core-6). 0 means no idle timeout.
 	// Default 120.
 	StreamIdleTimeoutSec int
+
+	// ModelMaxTokens caps the requested output tokens (the body's max_tokens) per
+	// model. A request whose max_tokens exceeds the matched ceiling is rejected with
+	// a 400 BEFORE any node/fallback attempt (no retry) — an over-limit request fails
+	// on every upstream, so retrying wastes attempts (limits-1). Keys match a model
+	// by longest substring (e.g. "claude-opus-4-8" matches "claude-opus-4-8" and any
+	// dated suffix). Empty/zero ceiling = unlimited for that model.
+	ModelMaxTokens map[string]int
 }
 
 // Defaults returns sane baseline configuration.
@@ -138,6 +147,15 @@ func Defaults() Config {
 		ResponseExileEnabled:      false,
 		ResponseExileKeywords:     []string{"usage policy", "i can't help with that request"},
 		StreamIdleTimeoutSec:      120,
+		// Official Anthropic per-model output ceilings (max_tokens). Editable per
+		// tenant via the policy patch; an over-limit request is rejected 400 without
+		// retry (limits-1).
+		ModelMaxTokens: map[string]int{
+			"claude-opus-4-8":   128000,
+			"claude-opus-4-7":   128000,
+			"claude-sonnet-4-6": 64000,
+			"claude-haiku-4-5":  64000,
+		},
 	}
 }
 
@@ -176,6 +194,7 @@ type Patch struct {
 	ResponseExileEnabled      *bool
 	ResponseExileKeywords     *[]string
 	StreamIdleTimeoutSec      *int
+	ModelMaxTokens            *map[string]int
 }
 
 func apply(c *Config, p Patch) {
@@ -282,6 +301,25 @@ func apply(c *Config, p Patch) {
 	if p.StreamIdleTimeoutSec != nil {
 		c.StreamIdleTimeoutSec = *p.StreamIdleTimeoutSec
 	}
+	if p.ModelMaxTokens != nil {
+		c.ModelMaxTokens = *p.ModelMaxTokens
+	}
+}
+
+// MaxTokensFor returns the configured output-token ceiling for model, matching the
+// longest ModelMaxTokens key that is a substring of model (case-insensitive), or 0
+// when no key matches (unlimited). Tolerates dated suffixes like
+// "claude-haiku-4-5-20251001" matching the "claude-haiku-4-5" key.
+func (c Config) MaxTokensFor(model string) int {
+	m := strings.ToLower(model)
+	best, bestLen := 0, -1
+	for k, v := range c.ModelMaxTokens {
+		lk := strings.ToLower(k)
+		if strings.Contains(m, lk) && len(lk) > bestLen {
+			best, bestLen = v, len(lk)
+		}
+	}
+	return best
 }
 
 // Resolve applies patches in order onto base (later patches win).
