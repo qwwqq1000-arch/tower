@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"context"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -65,8 +66,12 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 		nodeDown := healthErr != nil || health.Status == "unhealthy"
 
 		var quota nodeclient.QuotaAll
+		var quotaErr error
 		if !nodeDown {
-			quota, _ = cl.QuotaAll(ctx)
+			quota, quotaErr = cl.QuotaAll(ctx)
+			if quotaErr != nil {
+				log.Printf("poller: node %s health OK but QuotaAll failed (transient?): %v — skipping offline update this cycle", n.ID, quotaErr)
+			}
 			if health.Version != "" {
 				_ = p.Q.UpdateNodeVersion(ctx, sqlc.UpdateNodeVersionParams{ID: n.ID, Version: health.Version})
 			}
@@ -93,7 +98,19 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 
 			// Derive per-account offline from per-profile IsActive so a single
 			// logged-out profile does not take all sibling profiles offline.
+			//
+			// When the node is reachable (nodeDown=false) but QuotaAll returned a
+			// transient error, we cannot distinguish "profile absent" from "fetch
+			// failed". Flipping all profiles offline in that case causes unnecessary
+			// dispatch disruption. Instead we skip the SetOffline update for this
+			// cycle and preserve whatever stale state the store already holds.
 			pq, foundInQuota := findProfile(quota, a.ProfileID)
+			if quotaErr != nil && !nodeDown {
+				// Transient quota fetch failure on an otherwise healthy node:
+				// keep stale offline state; skip limit update too.
+				p.Store.SetCapacity(key, mc)
+				continue
+			}
 			profileOffline := OfflineForProfile(health, healthErr, pq, foundInQuota && !nodeDown)
 
 			p.Store.SetOffline(key, p.Capacity, profileOffline)
