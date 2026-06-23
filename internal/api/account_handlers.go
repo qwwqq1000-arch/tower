@@ -180,19 +180,7 @@ func importProfileHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFu
 			}
 		}
 		accID := randHex("acc_")
-		// Tower's import path is pointer-only: the session lives on the node keyed
-		// by profile_id (stored in node_accounts.profile_id). Tower does not capture
-		// raw OAuth access/refresh tokens, so OauthAccessEnc and OauthRefreshEnc are
-		// intentionally left empty here. If real OAuth tokens become available in
-		// future, write them via internal/vault.Vault.Store().
-		if _, err := q.CreateAccount(r.Context(), sqlc.CreateAccountParams{
-			ID:               accID,
-			OwnerID:          n.OwnerID,
-			Email:            matched.Email,
-			SubscriptionType: "",
-			ExpiresAt:        time.Now().Add(30 * 24 * time.Hour).UnixMilli(),
-			OnboardedAt:      time.Now().UnixMilli(),
-		}); err != nil {
+		if _, err := q.CreateAccount(r.Context(), buildImportAccountParams(accID, n.OwnerID, matched.Email, time.Now().Add(30*24*time.Hour).UnixMilli(), time.Now().UnixMilli())); err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
@@ -209,6 +197,21 @@ func importProfileHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFu
 			return
 		}
 		writeJSON(w, 200, map[string]any{"ok": true, "profileId": matched.ID, "email": matched.Email})
+	}
+}
+
+// buildImportAccountParams constructs the CreateAccountParams for the import path.
+// Tower's import is pointer-only: OauthAccessEnc and OauthRefreshEnc are intentionally
+// left empty because Tower does not capture raw OAuth tokens from the node.
+// The session lives on the node keyed by profile_id (stored in node_accounts.profile_id).
+// If real OAuth tokens become available in future, write them via internal/vault.Vault.Store().
+func buildImportAccountParams(id, ownerID, email string, expiresAt, onboardedAt int64) sqlc.CreateAccountParams {
+	return sqlc.CreateAccountParams{
+		ID:          id,
+		OwnerID:     ownerID,
+		Email:       email,
+		ExpiresAt:   expiresAt,
+		OnboardedAt: onboardedAt,
 	}
 }
 
