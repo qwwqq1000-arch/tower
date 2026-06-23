@@ -152,6 +152,7 @@ export interface PolicyPatch {
   BanKeywords?: string[];
   QuotaRotateThreshold?: number;
   MaxFailover?: number;
+  ModelMaxTokens?: Record<string, number>; // per-model output (max_tokens) ceiling; over-limit → 400 no retry
   WarmupHours?: number;
   WarmupMaxConcurrent?: number;
   WarmupBlockOpus?: boolean;

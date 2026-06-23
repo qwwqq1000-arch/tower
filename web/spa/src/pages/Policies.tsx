@@ -155,6 +155,11 @@ export default function Policies() {
   const fallbackPriceThresholdUsd = useField<number>(0.005);
   const quotaRotateThreshold = useField<number>(0.95);
   const maxFailover = useField<number>(50);
+  // Per-model max_tokens ceilings (official defaults). Over-limit → 400, no retry.
+  const limitOpus48 = useField<number>(128000);
+  const limitOpus47 = useField<number>(128000);
+  const limitSonnet46 = useField<number>(64000);
+  const limitHaiku45 = useField<number>(64000);
   // Warmup
   const warmupHours = useField<number>(0);
   const warmupMaxConcurrent = useField<number>(1);
@@ -228,6 +233,16 @@ export default function Policies() {
         setNum(cooldownSignalSec, 'CooldownSignalSec');
         setNum(quotaRotateThreshold, 'QuotaRotateThreshold');
         setNum(maxFailover, 'MaxFailover');
+        {
+          const mmt = p.ModelMaxTokens as Record<string, number> | undefined;
+          const setMMT = (f: typeof limitOpus48, model: string) => {
+            if (mmt && model in mmt) { f.set(Number(mmt[model])); if (!f.enabled) f.toggle(); }
+          };
+          setMMT(limitOpus48, 'claude-opus-4-8');
+          setMMT(limitOpus47, 'claude-opus-4-7');
+          setMMT(limitSonnet46, 'claude-sonnet-4-6');
+          setMMT(limitHaiku45, 'claude-haiku-4-5');
+        }
         setNum(warmupHours, 'WarmupHours');
         setNum(warmupMaxConcurrent, 'WarmupMaxConcurrent');
         setBool(warmupBlockOpus, 'WarmupBlockOpus');
@@ -289,6 +304,16 @@ export default function Policies() {
     if (cooldownSignalSec.enabled) patch.CooldownSignalSec = cooldownSignalSec.value;
     if (quotaRotateThreshold.enabled) patch.QuotaRotateThreshold = quotaRotateThreshold.value;
     if (maxFailover.enabled) patch.MaxFailover = maxFailover.value;
+    // ModelMaxTokens is a full-map replacement: when any override is enabled, send all
+    // four models so the un-overridden ones keep their official ceiling (not unlimited).
+    if (limitOpus48.enabled || limitOpus47.enabled || limitSonnet46.enabled || limitHaiku45.enabled) {
+      patch.ModelMaxTokens = {
+        'claude-opus-4-8': limitOpus48.value,
+        'claude-opus-4-7': limitOpus47.value,
+        'claude-sonnet-4-6': limitSonnet46.value,
+        'claude-haiku-4-5': limitHaiku45.value,
+      };
+    }
     if (warmupHours.enabled) patch.WarmupHours = warmupHours.value;
     if (warmupMaxConcurrent.enabled) patch.WarmupMaxConcurrent = warmupMaxConcurrent.value;
     if (warmupBlockOpus.enabled) patch.WarmupBlockOpus = warmupBlockOpus.value;
@@ -775,6 +800,19 @@ export default function Policies() {
             step={0.01}
           />
         </FieldRow>
+
+        <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2 pt-4">模型输出上限(max_tokens)</h2>
+        <p className="text-xs text-muted/70 -mt-1 mb-1">请求的 max_tokens 超过该模型上限时直接返回 400、不重试不兜底。默认值为官方上限。</p>
+        {([
+          ['claude-opus-4-8', limitOpus48],
+          ['claude-opus-4-7', limitOpus47],
+          ['claude-sonnet-4-6', limitSonnet46],
+          ['claude-haiku-4-5', limitHaiku45],
+        ] as [string, typeof limitOpus48][]).map(([model, f]) => (
+          <FieldRow key={model} label={model} desc="" enabled={f.enabled} onToggle={f.toggle}>
+            <NumInput value={f.value} onChange={f.set} disabled={!f.enabled} min={1} step={1000} />
+          </FieldRow>
+        ))}
 
         <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2 pt-4">故障转移</h2>
 
