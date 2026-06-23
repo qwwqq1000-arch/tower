@@ -105,11 +105,17 @@ func TestNodeProxy_SendInBodyBanOn200(t *testing.T) {
 	}
 }
 
-func TestNodeProxy_Send_SetsXAppNotFakeUA(t *testing.T) {
-	var gotUA, gotApp string
+func TestNodeProxy_Send_PassesThroughClientHeaders(t *testing.T) {
+	// Pure passthrough: the client's original headers (anthropic-version, its own
+	// User-Agent) reach the upstream verbatim; Tower adds NO x-app / forged UA and
+	// re-sets only the node auth (the client's Authorization is stripped).
+	var gotUA, gotApp, gotVer, gotKey, gotAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotUA = r.Header.Get("User-Agent")
 		gotApp = r.Header.Get("x-app")
+		gotVer = r.Header.Get("Anthropic-Version")
+		gotKey = r.Header.Get("x-api-key")
+		gotAuth = r.Header.Get("Authorization")
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
 	defer srv.Close()
@@ -119,52 +125,68 @@ func TestNodeProxy_Send_SetsXAppNotFakeUA(t *testing.T) {
 	}
 	p := &NodeProxy{Body: []byte(`{"model":"opus"}`), Resolve: resolve}
 
-	_, err := p.Send(context.Background(), "node1:default")
-	if err != nil {
+	client := http.Header{}
+	client.Set("Anthropic-Version", "2023-06-01")
+	client.Set("User-Agent", "newapi/1.0")
+	client.Set("Authorization", "Bearer dk_client_should_be_stripped")
+	ctx := WithClientHeaders(context.Background(), client)
+
+	if _, err := p.Send(ctx, "node1:default"); err != nil {
 		t.Fatalf("send error: %v", err)
 	}
-	if gotApp != "cli" {
-		t.Fatalf("x-app=%q, want cli", gotApp)
+	if gotVer != "2023-06-01" {
+		t.Fatalf("Anthropic-Version not forwarded, got %q", gotVer)
 	}
-	// Never forge a claude-cli User-Agent — it tightens the upstream rate limit.
-	if strings.Contains(strings.ToLower(gotUA), "claude-cli") {
-		t.Fatalf("must not forge a claude-cli User-Agent, got %q", gotUA)
+	if gotUA != "newapi/1.0" {
+		t.Fatalf("client User-Agent not forwarded verbatim, got %q", gotUA)
+	}
+	if gotApp != "" {
+		t.Fatalf("x-app must not be added (pure passthrough), got %q", gotApp)
+	}
+	if gotKey != "k1" {
+		t.Fatalf("node x-api-key not set, got %q", gotKey)
+	}
+	if strings.Contains(gotAuth, "dk_client") {
+		t.Fatalf("client Authorization must be stripped, got %q", gotAuth)
 	}
 }
 
-func TestNodeProxy_Send_CPA_NoFakeUA(t *testing.T) {
-	// CPA nodes authenticate via Bearer + the X-CLIProxy-Account pin and carry
-	// x-app:cli, but MUST NOT carry a fake claude-cli User-Agent — that is passed
-	// through to Anthropic and trips stricter claude-code rate limits (429 +
-	// account cooldown). CPA fills the correct per-profile UA itself.
-	var gotUA, gotApp, gotAuth, gotAcct string
+func TestNodeProxy_Send_CPA_Passthrough(t *testing.T) {
+	// CPA: re-set only the Bearer node key + the X-CLIProxy-Account pin, forward the
+	// client headers verbatim, and add NOTHING else (no x-app) — identical to a
+	// direct cpa-key call, so CPA applies its own cloak/fingerprint.
+	var gotApp, gotAuth, gotAcct, gotVer string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotUA = r.Header.Get("User-Agent")
 		gotApp = r.Header.Get("x-app")
 		gotAuth = r.Header.Get("Authorization")
 		gotAcct = r.Header.Get("X-CLIProxy-Account")
+		gotVer = r.Header.Get("Anthropic-Version")
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
 	defer srv.Close()
 
 	resolve := func(key string) (NodeRef, bool) {
-		return NodeRef{BaseURL: srv.URL, APIKey: "mgmt-key", ProfileID: "acct.json", Kind: "cpa"}, true
+		return NodeRef{BaseURL: srv.URL, APIKey: "sk-node", ProfileID: "acct.json", Kind: "cpa"}, true
 	}
 	p := &NodeProxy{Body: []byte(`{"model":"opus"}`), Resolve: resolve}
-	if _, err := p.Send(context.Background(), "n:acct"); err != nil {
+	client := http.Header{}
+	client.Set("Anthropic-Version", "2023-06-01")
+	ctx := WithClientHeaders(context.Background(), client)
+
+	if _, err := p.Send(ctx, "n:acct"); err != nil {
 		t.Fatalf("send error: %v", err)
 	}
-	if gotAuth != "Bearer mgmt-key" {
-		t.Fatalf("Authorization=%q, want Bearer mgmt-key", gotAuth)
+	if gotAuth != "Bearer sk-node" {
+		t.Fatalf("Authorization=%q, want Bearer sk-node", gotAuth)
 	}
 	if gotAcct != "acct.json" {
 		t.Fatalf("X-CLIProxy-Account=%q, want acct.json", gotAcct)
 	}
-	if gotApp != "cli" {
-		t.Fatalf("x-app=%q, want cli", gotApp)
+	if gotVer != "2023-06-01" {
+		t.Fatalf("Anthropic-Version not forwarded, got %q", gotVer)
 	}
-	if strings.Contains(strings.ToLower(gotUA), "claude-cli") {
-		t.Fatalf("User-Agent=%q must not be a forged claude-cli UA", gotUA)
+	if gotApp != "" {
+		t.Fatalf("x-app must not be added (pure passthrough), got %q", gotApp)
 	}
 }
 

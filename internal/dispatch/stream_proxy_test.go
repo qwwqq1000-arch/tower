@@ -12,9 +12,7 @@ import (
 
 func TestNodeProxy_OpenStream_OK(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("x-app") != "cli" {
-			t.Errorf("forge header missing")
-		}
+		// Pure passthrough: Tower no longer forges x-app/UA on the node path.
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(200)
 		fl, _ := w.(http.Flusher)

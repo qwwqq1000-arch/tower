@@ -140,9 +140,15 @@ func (p *NodeProxy) Send(ctx context.Context, key string) (ProxyResult, error) {
 	if err != nil {
 		return ProxyResult{}, err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	// Pure passthrough: forward the client's original request headers verbatim
+	// (CopyForwardableHeaders strips auth/host/length/hop-by-hop), then set only the
+	// node's own auth + account pin. Nothing is forged — the upstream request is
+	// identical to a direct cpa-key call, so CPA applies its normal cloak/fingerprint.
+	CopyForwardableHeaders(req.Header, clientHeadersFrom(ctx))
+	if req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	setNodeAuthHeaders(req.Header, ref)
-	ForgeClaudeCodeHeaders(req.Header)
 	resp, err := p.client().Do(req)
 	if err != nil {
 		return ProxyResult{}, err
@@ -197,7 +203,10 @@ func (p *ChannelProxy) Send(ctx context.Context, _ string) (ProxyResult, error) 
 	if err != nil {
 		return ProxyResult{}, err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	CopyForwardableHeaders(req.Header, clientHeadersFrom(ctx))
+	if req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	req.Header.Set("x-api-key", p.Ch.APIKey)
 	resp, err := p.client().Do(req)
 	if err != nil {
@@ -230,9 +239,15 @@ func (p *NodeProxy) OpenStream(ctx context.Context, key string) (*Stream, error)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	// Pure passthrough: forward the client's original request headers verbatim
+	// (CopyForwardableHeaders strips auth/host/length/hop-by-hop), then set only the
+	// node's own auth + account pin. Nothing is forged — the upstream request is
+	// identical to a direct cpa-key call, so CPA applies its normal cloak/fingerprint.
+	CopyForwardableHeaders(req.Header, clientHeadersFrom(ctx))
+	if req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	setNodeAuthHeaders(req.Header, ref)
-	ForgeClaudeCodeHeaders(req.Header)
 	resp, err := streamClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -255,7 +270,10 @@ func (p *ChannelProxy) OpenStream(ctx context.Context, _ string) (*Stream, error
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	CopyForwardableHeaders(req.Header, clientHeadersFrom(ctx))
+	if req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	req.Header.Set("x-api-key", p.Ch.APIKey)
 	resp, err := streamClient.Do(req)
 	if err != nil {

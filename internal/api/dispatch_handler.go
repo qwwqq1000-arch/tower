@@ -53,11 +53,14 @@ func dispatchMessagesHandler(svc *dispatch.Service, q *sqlc.Queries) http.Handle
 			Stream bool   `json:"stream"`
 		}
 		_ = json.Unmarshal(body, &parsed)
+		// Pure passthrough: carry the client's original request headers so the proxy
+		// forwards them verbatim upstream (only auth/host/account-pin are re-set).
+		ctx := dispatch.WithClientHeaders(r.Context(), r.Header.Clone())
 		if parsed.Stream {
-			svc.DispatchStream(r.Context(), w, ownerID, parsed.Model, body)
+			svc.DispatchStream(ctx, w, ownerID, parsed.Model, body)
 			return
 		}
-		out := svc.Dispatch(r.Context(), ownerID, parsed.Model, string(body), body)
+		out := svc.Dispatch(ctx, ownerID, parsed.Model, string(body), body)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(out.Status)
 		_, _ = w.Write([]byte(out.Body))

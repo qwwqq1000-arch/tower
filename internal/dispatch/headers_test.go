@@ -22,19 +22,6 @@ func TestStripHopByHop(t *testing.T) {
 	}
 }
 
-func TestForgeClaudeCodeHeaders(t *testing.T) {
-	h := http.Header{}
-	ForgeClaudeCodeHeaders(h)
-	if h.Get("x-app") != "cli" {
-		t.Fatalf("x-app=%q", h.Get("x-app"))
-	}
-	// Must NOT forge a fake claude-cli User-Agent — it is passed through to
-	// Anthropic and tightens the account's rate limit; the node fills the real UA.
-	if ua := h.Get("User-Agent"); ua != "" {
-		t.Fatalf("User-Agent must not be forged, got %q", ua)
-	}
-}
-
 func TestCopyForwardableHeaders(t *testing.T) {
 	src := http.Header{}
 	src.Set("Content-Type", "application/json")

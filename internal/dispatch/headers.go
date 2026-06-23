@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"context"
 	"net/http"
 	"strings"
 )
@@ -26,15 +27,22 @@ func StripHopByHop(h http.Header) {
 	}
 }
 
-// ForgeClaudeCodeHeaders marks the request as a Claude Code client via x-app. It
-// deliberately does NOT set a User-Agent: a fake/outdated "claude-cli/1.0" UA is
-// passed through verbatim by CLIProxyAPI to Anthropic, which then flags the
-// account as a suspicious client and tightens its rate limit (real 429 + account
-// cooldown that then 429s every later request). Leaving the UA unset lets the
-// node fill in the correct per-profile fingerprint — dispatch passes client
-// identity through, it does not forge it.
-func ForgeClaudeCodeHeaders(h http.Header) {
-	h.Set("x-app", "cli")
+// clientHeadersKeyT is the context key for the original downstream request headers.
+type clientHeadersKeyT struct{}
+
+// WithClientHeaders stashes the original downstream (new-api) request headers on
+// ctx so the proxy can forward them verbatim to the upstream node/channel — pure
+// passthrough: the upstream sees the same request a direct cpa-key call would send,
+// adding nothing (no x-app, no forged User-Agent), so CPA applies its own cloak.
+func WithClientHeaders(ctx context.Context, h http.Header) context.Context {
+	return context.WithValue(ctx, clientHeadersKeyT{}, h)
+}
+
+// clientHeadersFrom returns the headers stashed by WithClientHeaders, or nil.
+// CopyForwardableHeaders tolerates a nil source (copies nothing).
+func clientHeadersFrom(ctx context.Context) http.Header {
+	h, _ := ctx.Value(clientHeadersKeyT{}).(http.Header)
+	return h
 }
 
 var noCopy = map[string]bool{
