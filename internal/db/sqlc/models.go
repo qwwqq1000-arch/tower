@@ -84,6 +84,7 @@ type CpaAccountQuotum struct {
 	SevenDaySonnetUtil     float64 `json:"seven_day_sonnet_util"`
 	SevenDaySonnetResetsAt string  `json:"seven_day_sonnet_resets_at"`
 	UpdatedAt              int64   `json:"updated_at"`
+	QuotaFetchError        string  `json:"quota_fetch_error"`
 }
 
 type DesiredFeature struct {

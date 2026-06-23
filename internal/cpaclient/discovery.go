@@ -12,6 +12,15 @@ import (
 	"github.com/qwwqq1000-arch/tower/internal/telemetry"
 )
 
+// syncQuerier is the narrow DB interface required by Sync. *sqlc.Queries satisfies it.
+// Using an interface lets unit tests inject a stub without a real database.
+type syncQuerier interface {
+	UpsertCpaAccount(ctx context.Context, arg sqlc.UpsertCpaAccountParams) error
+	UpsertCpaNodeAccount(ctx context.Context, arg sqlc.UpsertCpaNodeAccountParams) error
+	UpsertCpaQuota(ctx context.Context, arg sqlc.UpsertCpaQuotaParams) error
+	SetCpaQuotaFetchError(ctx context.Context, arg sqlc.SetCpaQuotaFetchErrorParams) error
+}
+
 // RotateConfig threads the live state store and rotation parameters into CPA
 // discovery so a CPA account's quota utilization gates dispatch the same way the
 // meridian telemetry poller gates meridian accounts. A nil Store disables the
@@ -131,7 +140,11 @@ func accountID(nodeID string, a Account) string {
 // pool (accounts + node_accounts) so each appears in the 号库 and is dispatchable
 // (profile_id carries the X-CLIProxy-Account selector). Returns the number of
 // accounts discovered.
-func Sync(ctx context.Context, q *sqlc.Queries, node sqlc.Node, rot *RotateConfig) (int, error) {
+//
+// When a quota fetch fails for a claude/anthropic account, Sync records the
+// error message in cpa_account_quota.quota_fetch_error so the UI can show
+// "quota unavailable" instead of silently displaying null (cpa-3).
+func Sync(ctx context.Context, q syncQuerier, node sqlc.Node, rot *RotateConfig) (int, error) {
 	if !strings.EqualFold(node.Kind, "cpa") || strings.TrimSpace(node.MgmtKey) == "" || !node.Enabled {
 		return 0, nil
 	}
@@ -173,7 +186,16 @@ func Sync(ctx context.Context, q *sqlc.Queries, node sqlc.Node, rot *RotateConfi
 		// Best-effort quota refresh (only for claude/anthropic accounts — the usage
 		// endpoint is Anthropic OAuth-only).
 		if strings.EqualFold(a.Provider, "claude") || strings.EqualFold(a.Provider, "anthropic") {
-			if u, uerr := c.Usage(ctx, a.DispatchSelector()); uerr == nil && u != nil {
+			u, uerr := c.Usage(ctx, a.DispatchSelector())
+			if uerr != nil {
+				// Surface the fetch error in the DB so the UI shows "quota unavailable"
+				// instead of silently keeping the last known (stale) values (cpa-3).
+				_ = q.SetCpaQuotaFetchError(ctx, sqlc.SetCpaQuotaFetchErrorParams{
+					AccountID:       aid,
+					QuotaFetchError: uerr.Error(),
+					UpdatedAt:       time.Now().UnixMilli(),
+				})
+			} else if u != nil {
 				_ = q.UpsertCpaQuota(ctx, quotaParams(aid, u, time.Now().UnixMilli()))
 				// Project utilization into the live store so a saturated CPA
 				// account rotates out of dispatch, just like meridian accounts.
