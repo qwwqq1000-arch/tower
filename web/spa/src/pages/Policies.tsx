@@ -385,7 +385,7 @@ export default function Policies() {
       )}
 
       {/* Fields form */}
-      <fieldset disabled={!isSuperadmin} className="contents">
+      <fieldset disabled={!isSuperadmin}>
       <div className="bg-surface border border-line rounded-xl px-4 py-2">
         <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2">并发 / 冷却</h2>
 
