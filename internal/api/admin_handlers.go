@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/qwwqq1000-arch/tower/internal/auth"
 	"github.com/qwwqq1000-arch/tower/internal/billing"
 	"github.com/qwwqq1000-arch/tower/internal/crypto"
@@ -161,20 +162,32 @@ func listNodesHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	}
 }
 
-func deleteNodeHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
+func deleteNodeHandler(pool *pgxpool.Pool, q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		if !ownsNodeID(r, q, id) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
 			return
 		}
-		// Remove account_state rows for this node so deleted nodes don't
-		// resurrect ghost accounts or stale permanent bans on restart.
-		if err := q.DeleteAccountStateByNode(r.Context(), id); err != nil {
+		// Atomically delete account_state rows and the node itself so a partial
+		// failure cannot leave ghost account_state rows for a node that still exists,
+		// or an orphaned node with no way to clean up its account_state (state-store-1).
+		tx, err := pool.Begin(r.Context())
+		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		if err := q.DeleteNode(r.Context(), id); err != nil {
+		defer tx.Rollback(r.Context())
+		qtx := sqlc.New(tx)
+		if err := qtx.DeleteAccountStateByNode(r.Context(), id); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := qtx.DeleteNode(r.Context(), id); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := tx.Commit(r.Context()); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
