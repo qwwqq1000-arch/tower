@@ -11,3 +11,6 @@ ON CONFLICT (node_id, profile_id) DO UPDATE SET
 
 -- name: ListAccountState :many
 SELECT * FROM account_state;
+
+-- name: DeleteAccountStateByNode :exec
+DELETE FROM account_state WHERE node_id = $1;

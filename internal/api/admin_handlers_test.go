@@ -153,3 +153,85 @@ func TestCreateNodeForceOwner(t *testing.T) {
 		t.Fatalf("expected ownerId=u_admin1 (caller), got %q (body supplied %q)", nodeResp.OwnerId, foreignOwner)
 	}
 }
+
+// TestDeleteNodeClearsAccountState verifies that deleting a node also removes
+// its account_state rows so ghost accounts don't resurrect on restart.
+func TestDeleteNodeClearsAccountState(t *testing.T) {
+	url := os.Getenv("TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	if err := db.Migrate(ctx, url); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	pool, err := db.Connect(ctx, url)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer pool.Close()
+	q := sqlc.New(pool)
+
+	const secret = "test-secret-padding-to-32-chars!"
+	router := NewRouter(pool, secret, nil, q, false, nil)
+	ck := adminCookie(t, ctx, q, secret)
+
+	// Create a node.
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/nodes",
+		strings.NewReader(`{"name":"n_state_test","baseUrl":"http://x:7777","apiKey":"k"}`))
+	req.AddCookie(ck)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create node: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var nodeResp struct{ ID string }
+	if err := json.NewDecoder(rec.Body).Decode(&nodeResp); err != nil {
+		t.Fatalf("decode node resp: %v", err)
+	}
+	nodeID := nodeResp.ID
+
+	// Seed an account_state row for this node.
+	if err := q.UpsertAccountState(ctx, sqlc.UpsertAccountStateParams{
+		NodeID: nodeID, ProfileID: "p1", Status: "active",
+		CooldownUntil: 0, BanStreak: 0, FailCount: 0, Permanent: false, UpdatedAt: 0,
+	}); err != nil {
+		t.Fatalf("seed account_state: %v", err)
+	}
+
+	// Confirm the row exists before deletion.
+	rows, err := q.ListAccountState(ctx)
+	if err != nil {
+		t.Fatalf("list account_state: %v", err)
+	}
+	found := false
+	for _, r := range rows {
+		if r.NodeID == nodeID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("account_state row not found before delete")
+	}
+
+	// Delete the node.
+	req2 := httptest.NewRequest(http.MethodDelete, "/api/admin/nodes/"+nodeID, nil)
+	req2.AddCookie(ck)
+	rec2 := httptest.NewRecorder()
+	router.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("delete node: status=%d body=%s", rec2.Code, rec2.Body.String())
+	}
+
+	// Confirm the account_state row was removed.
+	rows2, err := q.ListAccountState(ctx)
+	if err != nil {
+		t.Fatalf("list account_state after delete: %v", err)
+	}
+	for _, r := range rows2 {
+		if r.NodeID == nodeID {
+			t.Fatalf("account_state row for node %s still present after node delete", nodeID)
+		}
+	}
+}

@@ -168,6 +168,12 @@ func deleteNodeHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc 
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
 			return
 		}
+		// Remove account_state rows for this node so deleted nodes don't
+		// resurrect ghost accounts or stale permanent bans on restart.
+		if err := q.DeleteAccountStateByNode(r.Context(), id); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
 		if err := q.DeleteNode(r.Context(), id); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
