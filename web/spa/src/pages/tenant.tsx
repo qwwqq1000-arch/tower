@@ -31,6 +31,7 @@ import type { BanAnalysis, BanBucket } from '../api';
 import { EventTimeline } from './Dispatch';
 import { copyText } from '../lib/clipboard';
 import { statusColor, statusLabel } from '../lib/status';
+import { StatusBadge, statusRank } from '../components/AccountStatus';
 
 // ------------------------------------------------------------------
 // Shared formatters
@@ -163,7 +164,7 @@ export function TenantDashboard() {
                 </tr>
               </thead>
               <tbody>
-                {accounts.map((a) => (
+                {[...accounts].sort((x, y) => statusRank(x.status) - statusRank(y.status)).map((a) => (
                   <tr key={a.accountId} className="border-t border-line hover:bg-line/20 transition">
                     <td className="py-2 pr-3 pl-3 text-sm text-ink truncate max-w-[200px]">{a.email || '—'}</td>
                     <td className="py-2 pr-3 text-xs text-muted">{a.nodeName || '—'}</td>
@@ -236,9 +237,7 @@ function TenantAccountRow({ account, onChanged }: { account: MeAccountRow; onCha
       <td className="px-4 py-3 text-xs text-muted text-right tabular-nums">{fmtCost(account.totalCostUsd)}</td>
       <td className="px-4 py-3">
         {liveBanned ? (
-          <span className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-mono ${statusColor(account.status!)}`}>
-            {statusLabel(account.status!)}
-          </span>
+          <StatusBadge status={account.status} limitedUntil={account.limitedUntil} />
         ) : (
           <span className={`flex items-center gap-1 text-xs ${account.enabled ? 'text-ok' : 'text-muted'}`}>
             <span className={`w-1.5 h-1.5 rounded-full ${account.enabled ? 'bg-ok' : 'bg-muted'}`} />
@@ -304,9 +303,7 @@ function TenantAccountCard({ account, onChanged }: { account: MeAccountRow; onCh
       </div>
       <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
         {liveBanned ? (
-          <span className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-mono ${statusColor(account.status!)}`}>
-            {statusLabel(account.status!)}
-          </span>
+          <StatusBadge status={account.status} limitedUntil={account.limitedUntil} />
         ) : (
           <span className={`flex items-center gap-1 ${account.enabled ? 'text-ok' : 'text-muted'}`}>
             <span className={`w-1.5 h-1.5 rounded-full ${account.enabled ? 'bg-ok' : 'bg-muted'}`} />
@@ -391,14 +388,14 @@ export function TenantAccounts() {
                 </tr>
               </thead>
               <tbody>
-                {accounts.map((a) => (
+                {[...accounts].sort((x, y) => statusRank(x.status) - statusRank(y.status)).map((a) => (
                   <TenantAccountRow key={a.accountId} account={a} onChanged={() => { void load(); }} />
                 ))}
               </tbody>
             </table>
           </div>
           <div className="md:hidden space-y-3">
-            {accounts.map((a) => (
+            {[...accounts].sort((x, y) => statusRank(x.status) - statusRank(y.status)).map((a) => (
               <TenantAccountCard key={a.accountId} account={a} onChanged={() => { void load(); }} />
             ))}
           </div>
@@ -689,7 +686,7 @@ export function TenantDispatch() {
                     {accounts.length === 0 && (
                       <tr><td colSpan={6} className="px-4 py-6 text-center text-muted text-xs">无数据</td></tr>
                     )}
-                    {accounts.map((a) => (
+                    {[...accounts].sort((x, y) => statusRank(x.status) - statusRank(y.status)).map((a) => (
                       <tr key={a.key} className="border-b border-line/50 hover:bg-line/30 transition">
                         <td className="px-4 py-2 text-sm text-ink font-medium truncate max-w-[200px]">{a.label || '—'}</td>
                         <td className="px-4 py-2">

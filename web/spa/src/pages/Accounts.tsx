@@ -17,6 +17,7 @@ import {
 import type { AccountRow, CpaQuota, QuotaAll, Slot, UserRow } from '../types';
 import { useAuth } from '../auth';
 import { statusColor, statusLabel } from '../lib/status';
+import { statusRank } from '../components/AccountStatus';
 import { TenantAccounts } from './tenant';
 
 // ------------------------------------------------------------------
@@ -831,6 +832,9 @@ function AdminAccounts() {
         const cmp = av < bv ? -1 : av > bv ? 1 : 0;
         return sortDir === 'asc' ? cmp : -cmp;
       });
+    } else {
+      // Default order: active first, quota-limited last (限额排最后，正常排前面).
+      list = [...list].sort((a, b) => statusRank(a.status) - statusRank(b.status));
     }
     return list;
   }, [accounts, search, sortKey, sortDir, users]);
