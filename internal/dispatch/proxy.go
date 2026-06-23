@@ -10,6 +10,63 @@ import (
 	"time"
 )
 
+// idleTimeoutReader wraps an io.ReadCloser and returns an error if no data
+// is received within idleTimeout between consecutive reads. The underlying
+// body is closed when the idle timeout fires or when Close is called.
+//
+// This prevents a silently-stalled upstream from holding a dispatch slot
+// indefinitely (dispatch-core-6).
+type idleTimeoutReader struct {
+	src     io.ReadCloser
+	timeout time.Duration
+
+	pr *io.PipeReader
+	pw *io.PipeWriter
+}
+
+// newIdleTimeoutReader wraps src so that each successive read must arrive within
+// timeout. If the upstream stalls longer than timeout, the pipe is closed with
+// an error and future reads return immediately.
+func newIdleTimeoutReader(src io.ReadCloser, timeout time.Duration) *idleTimeoutReader {
+	pr, pw := io.Pipe()
+	r := &idleTimeoutReader{src: src, timeout: timeout, pr: pr, pw: pw}
+	go r.pump()
+	return r
+}
+
+func (r *idleTimeoutReader) pump() {
+	buf := make([]byte, 32*1024)
+	// timer fires if no data arrives within the idle window
+	t := time.AfterFunc(r.timeout, func() {
+		_ = r.pw.CloseWithError(fmt.Errorf("stream idle timeout after %v", r.timeout))
+	})
+	defer t.Stop()
+	for {
+		n, err := r.src.Read(buf)
+		// Reset the idle timer after every successful read
+		if n > 0 {
+			t.Reset(r.timeout)
+		}
+		if n > 0 {
+			if _, werr := r.pw.Write(buf[:n]); werr != nil {
+				// pipe reader closed (e.g. caller gave up) — stop pumping
+				return
+			}
+		}
+		if err != nil {
+			_ = r.pw.CloseWithError(err)
+			return
+		}
+	}
+}
+
+func (r *idleTimeoutReader) Read(p []byte) (int, error) { return r.pr.Read(p) }
+func (r *idleTimeoutReader) Close() error {
+	// Close both ends; pump goroutine will exit on next read error.
+	_ = r.pr.Close()
+	return r.src.Close()
+}
+
 func newHTTP() *http.Client { return &http.Client{Timeout: 300 * time.Second} }
 
 // msgURL builds the /v1/messages URL, tolerating a trailing slash on baseURL
@@ -56,6 +113,11 @@ type NodeProxy struct {
 	BanSignals  []int
 	BanKeywords []string
 	HTTP        *http.Client
+	// IdleTimeout, when non-zero, sets the maximum time between successive reads
+	// from a streaming response body. A silently-stalled upstream triggers the
+	// timeout and releases the dispatch slot (dispatch-core-6). Zero means no
+	// idle timeout (the request context timeout governs instead).
+	IdleTimeout time.Duration
 }
 
 func (p *NodeProxy) client() *http.Client {
@@ -169,10 +231,14 @@ func (p *NodeProxy) OpenStream(ctx context.Context, key string) (*Stream, error)
 	if err != nil {
 		return nil, err
 	}
+	body := io.ReadCloser(resp.Body)
+	if p.IdleTimeout > 0 {
+		body = newIdleTimeoutReader(resp.Body, p.IdleTimeout)
+	}
 	return &Stream{
 		Status: resp.StatusCode,
 		Header: resp.Header,
-		Body:   resp.Body,
+		Body:   body,
 		Banned: ClassifyBanned(resp.StatusCode, "", p.BanSignals, nil),
 	}, nil
 }
