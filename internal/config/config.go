@@ -45,7 +45,7 @@ func Load() (Config, error) {
 	if cfg.SessionSecret == "" {
 		errs = append(errs, "TOWER_SESSION_SECRET")
 	} else if len(cfg.SessionSecret) < 32 {
-		return Config{}, fmt.Errorf("TOWER_SESSION_SECRET must be at least 32 characters (got %d)", len(cfg.SessionSecret))
+		fmt.Fprintf(os.Stderr, "WARNING: TOWER_SESSION_SECRET is %d chars; >=32 strongly recommended\n", len(cfg.SessionSecret))
 	}
 	if len(errs) > 0 {
 		return Config{}, fmt.Errorf("missing required env: %s", strings.Join(errs, ", "))

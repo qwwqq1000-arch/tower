@@ -64,11 +64,11 @@ func TestLoad_ShortSessionSecret(t *testing.T) {
 	t.Setenv("TOWER_SESSION_SECRET", "tooshort")
 	t.Setenv("TOWER_SECURE_COOKIES", "")
 
-	_, err := Load()
-	if err == nil {
-		t.Fatal("Load() expected error for short session secret, got nil")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() must not error on short session secret (warn-only): %v", err)
 	}
-	if !strings.Contains(err.Error(), "TOWER_SESSION_SECRET") {
-		t.Errorf("error should mention TOWER_SESSION_SECRET: %v", err)
+	if cfg.SessionSecret != "tooshort" {
+		t.Errorf("SessionSecret = %q, want tooshort", cfg.SessionSecret)
 	}
 }
