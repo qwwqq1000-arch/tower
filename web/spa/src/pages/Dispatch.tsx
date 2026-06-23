@@ -21,13 +21,24 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 // fmtRecover formats a future ms timestamp as a countdown ("剩 20秒" / "剩 1:23" / "即将").
-function fmtRecover(ms: number): string {
-  const remain = ms - Date.now();
+function fmtRecover(ms: number, now: number): string {
+  const remain = ms - now;
   if (remain <= 0) return '即将';
   const s = Math.ceil(remain / 1000);
   if (s < 60) return `剩 ${s}秒`;
   const m = Math.floor(s / 60);
   return `剩 ${m}:${String(s % 60).padStart(2, '0')}`;
+}
+
+// RecoverCountdown ticks every second so the display updates without waiting for
+// the next SSE push (which arrives every ~2 s).
+function RecoverCountdown({ recoverAt }: { recoverAt: number }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  return <span>恢复 {fmtRecover(recoverAt, now)}</span>;
 }
 
 // ------------------------------------------------------------------
@@ -99,7 +110,7 @@ function ConcurrencyPanel({ accounts }: { accounts: DispatchAccountSnapshot[] })
                 <td className="px-4 py-2">
                   <StatusBadge status={a.status} />
                   {(a.status === 'banned' || a.status === 'half_open' || a.status === 'cooldown') && a.recoverAt && a.recoverAt > 0 && (
-                    <div className="text-[10px] text-muted mt-0.5">恢复 {fmtRecover(a.recoverAt)}</div>
+                    <div className="text-[10px] text-muted mt-0.5"><RecoverCountdown recoverAt={a.recoverAt} /></div>
                   )}
                 </td>
                 <td className="px-4 py-2 text-right tabular-nums">{a.inflight}</td>
