@@ -7,11 +7,12 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/qwwqq1000-arch/tower/internal/crypto"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 	"github.com/qwwqq1000-arch/tower/internal/provision"
 )
 
-func startProvisionHandler(q *sqlc.Queries) http.HandlerFunc {
+func startProvisionHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// PinnedKey is the base64-encoded SSH wire-format public key of the target
 		// host (provision-4). When supplied, DialWithHostKey is used and the
@@ -69,7 +70,7 @@ func startProvisionHandler(q *sqlc.Queries) http.HandlerFunc {
 				return
 			}
 			defer closer()
-			provision.Provision(ctx, q, ex, jobID, name, host, ownerID, now)
+			provision.Provision(ctx, q, ex, jobID, name, host, ownerID, now, cipher)
 		}(body.Host, user, body.Password, body.PinnedKey, body.Name, body.OwnerId)
 
 		writeJSON(w, http.StatusAccepted, map[string]string{"jobId": jobID})

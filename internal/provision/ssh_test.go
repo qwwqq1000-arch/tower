@@ -166,7 +166,7 @@ func TestProvision_KindMeridian(t *testing.T) {
 	// fakeExec (from runner_test.go) succeeds for every step.
 	ex := &fakeExec{}
 
-	provisionCore(ctx, recorder, sink, nopStatus, ex, "job1", "n1", "10.0.0.1", "o1")
+	provisionCore(ctx, recorder, sink, nopStatus, ex, "job1", "n1", "10.0.0.1", "o1", nil)
 
 	if len(recorder.params) != 1 {
 		t.Fatalf("expected CreateNode called once, got %d calls", len(recorder.params))

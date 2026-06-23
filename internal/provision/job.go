@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 
+	"github.com/qwwqq1000-arch/tower/internal/crypto"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 )
 
@@ -39,17 +40,19 @@ func newRand() (apiKey, seed string) {
 }
 
 // Provision runs the full provisioning flow and registers the node on success.
-func Provision(ctx context.Context, q *sqlc.Queries, ex Executor, jobID, name, host, ownerID string, now func() int64) {
+// cipher is used to encrypt the generated api_key before storage; if nil the
+// key is stored as plaintext (matches test behaviour where cipher is absent).
+func Provision(ctx context.Context, q *sqlc.Queries, ex Executor, jobID, name, host, ownerID string, now func() int64, cipher *crypto.Cipher) {
 	sink := &DBSink{Q: q, ID: jobID, Now: now}
 	statusFn := func(status, step string) {
 		_ = q.SetProvisionStatus(ctx, sqlc.SetProvisionStatusParams{ID: jobID, Status: status, Step: step, UpdatedAt: now()})
 	}
-	provisionCore(ctx, q, sink, statusFn, ex, jobID, name, host, ownerID)
+	provisionCore(ctx, q, sink, statusFn, ex, jobID, name, host, ownerID, cipher)
 }
 
 // provisionCore is the internal implementation that accepts a Sink and nodeCreator
 // so that unit tests can stub both without a real DB.
-func provisionCore(ctx context.Context, nc nodeCreator, sink Sink, statusFn func(status, step string), ex Executor, jobID, name, host, ownerID string) {
+func provisionCore(ctx context.Context, nc nodeCreator, sink Sink, statusFn func(status, step string), ex Executor, jobID, name, host, ownerID string, cipher *crypto.Cipher) {
 	apiKey, seed := newRand()
 	steps := Steps(Input{
 		APIKey:          apiKey,
@@ -61,11 +64,19 @@ func provisionCore(ctx context.Context, nc nodeCreator, sink Sink, statusFn func
 		statusFn("failed", "")
 		return
 	}
+	// Encrypt the api_key before storage so it matches the manual createNode path
+	// (admin_handlers.go). If cipher is nil (tests without a master key), store
+	// plaintext — the reconciler read path uses DecryptOrPlaintext which is a
+	// transparent no-op for unencrypted values.
+	storedKey := apiKey
+	if cipher != nil {
+		storedKey = cipher.EncryptStr(apiKey)
+	}
 	_, err := nc.CreateNode(ctx, sqlc.CreateNodeParams{
 		ID:              "n_" + jobID,
 		Name:            name,
 		BaseUrl:         "http://" + host + ":3456",
-		ApiKey:          apiKey,
+		ApiKey:          storedKey,
 		MgmtKey:         "",
 		OwnerID:         ownerID,
 		GroupID:         "",

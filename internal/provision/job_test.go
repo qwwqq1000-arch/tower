@@ -40,7 +40,7 @@ func TestProvision_SuccessRegistersNode(t *testing.T) {
 		t.Fatalf("create job: %v", err)
 	}
 
-	Provision(ctx, q, &fakeExec{}, jobID, "node-"+s, "10.0.0.5", "o_"+s, now)
+	Provision(ctx, q, &fakeExec{}, jobID, "node-"+s, "10.0.0.5", "o_"+s, now, nil)
 
 	j, _ := q.GetProvisionJob(ctx, jobID)
 	if j.Status != "success" {
@@ -70,7 +70,7 @@ func TestProvision_FailureMarksJob(t *testing.T) {
 	jobID := "job_" + s
 	_, _ = q.CreateProvisionJob(ctx, sqlc.CreateProvisionJobParams{ID: jobID, Host: "10.0.0.6", Name: "n", OwnerID: "o_" + s, CreatedAt: 1})
 
-	Provision(ctx, q, &fakeExec{failAt: 1}, jobID, "n", "10.0.0.6", "o_"+s, func() int64 { return 1 })
+	Provision(ctx, q, &fakeExec{failAt: 1}, jobID, "n", "10.0.0.6", "o_"+s, func() int64 { return 1 }, nil)
 
 	j, _ := q.GetProvisionJob(ctx, jobID)
 	if j.Status != "failed" {

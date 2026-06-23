@@ -11,19 +11,28 @@ import (
 	"github.com/qwwqq1000-arch/tower/internal/rbac"
 )
 
-// clientIP extracts the caller's source IP: the first hop of X-Forwarded-For
-// when present (the box runs behind a proxy), otherwise the RemoteAddr host.
+// clientIP extracts the caller's source IP.
+//
+// X-Forwarded-For is only trusted when the actual TCP peer (RemoteAddr) is a
+// loopback address (127.0.0.1 / ::1), which is the case when Tower sits behind
+// a local reverse proxy (e.g. nginx on the same host). When Tower is exposed
+// directly, XFF is attacker-controlled and must NOT be used — doing so would
+// allow an attacker to spoof their IP and bypass the login throttle.
 func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		first, _, _ := strings.Cut(xff, ",")
-		if ip := strings.TrimSpace(first); ip != "" {
-			return ip
+	remoteHost, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if remoteHost == "" {
+		remoteHost = r.RemoteAddr
+	}
+	// Only honour XFF when the immediate peer is a trusted loopback proxy.
+	if remoteHost == "127.0.0.1" || remoteHost == "::1" {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			first, _, _ := strings.Cut(xff, ",")
+			if ip := strings.TrimSpace(first); ip != "" {
+				return ip
+			}
 		}
 	}
-	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		return host
-	}
-	return r.RemoteAddr
+	return remoteHost
 }
 
 type ctxKey string

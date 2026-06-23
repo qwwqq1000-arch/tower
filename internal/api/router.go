@@ -43,7 +43,7 @@ func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc
 		mux.HandleFunc("GET /api/admin/dispatch-keys", requireAdmin(secret, q, listDispatchKeysHandler(q)))
 		mux.HandleFunc("DELETE /api/admin/dispatch-keys/{id}", requireAdmin(secret, q, deleteDispatchKeyHandler(q)))
 		mux.HandleFunc("GET /api/dashboard", requireAdmin(secret, q, dashboardHandler(q, svc)))
-		mux.HandleFunc("POST /api/admin/provision", requireAdmin(secret, q, startProvisionHandler(q)))
+		mux.HandleFunc("POST /api/admin/provision", requireAdmin(secret, q, startProvisionHandler(q, cipher)))
 		mux.HandleFunc("GET /api/admin/provision/{id}", requireAdmin(secret, q, getProvisionHandler(q)))
 		mux.HandleFunc("POST /api/admin/settle", requireSuperadmin(secret, q, requirePerm(secret, q, loadRolePerms, "billing:settle", settleHandler(pool, q))))
 		mux.HandleFunc("GET /api/admin/ledger", requireAdmin(secret, q, ledgerHandler(q)))
