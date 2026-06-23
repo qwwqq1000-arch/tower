@@ -127,26 +127,31 @@ var limitResetRe = regexp.MustCompile(`(?i)resets?\s+(\d{1,2}):(\d{2})\s*(am|pm)
 // Returns (false, 0) when body is not a usage-limit response.
 func parseLimitReset(body string, now int64) (bool, int64) {
 	lb := strings.ToLower(body)
-	if !strings.Contains(lb, "hit your limit") && !strings.Contains(lb, "usage limit") {
+	// Detect a usage/rate limit. Subscription nodes (new-meridian) say "hit your
+	// limit"; CPA/Anthropic-API nodes return a `rate_limit_error` (no reset time).
+	if !strings.Contains(lb, "hit your limit") && !strings.Contains(lb, "usage limit") && !strings.Contains(lb, "rate_limit_error") {
 		return false, 0
 	}
-	m := limitResetRe.FindStringSubmatch(body)
-	if m == nil {
-		return true, now + 60*60*1000 // limited but reset unparseable → 1h default
+	// Explicit wall-clock reset (subscription format) → resolve to next occurrence.
+	if m := limitResetRe.FindStringSubmatch(body); m != nil {
+		hh, _ := strconv.Atoi(m[1])
+		mm, _ := strconv.Atoi(m[2])
+		if strings.EqualFold(m[3], "pm") && hh != 12 {
+			hh += 12
+		} else if strings.EqualFold(m[3], "am") && hh == 12 {
+			hh = 0
+		}
+		t := time.UnixMilli(now).UTC()
+		reset := time.Date(t.Year(), t.Month(), t.Day(), hh, mm, 0, 0, time.UTC)
+		if !reset.After(t) {
+			reset = reset.Add(24 * time.Hour) // wall-clock already passed today → next day
+		}
+		return true, reset.UnixMilli()
 	}
-	hh, _ := strconv.Atoi(m[1])
-	mm, _ := strconv.Atoi(m[2])
-	if strings.EqualFold(m[3], "pm") && hh != 12 {
-		hh += 12
-	} else if strings.EqualFold(m[3], "am") && hh == 12 {
-		hh = 0
-	}
-	t := time.UnixMilli(now).UTC()
-	reset := time.Date(t.Year(), t.Month(), t.Day(), hh, mm, 0, 0, time.UTC)
-	if !reset.After(t) {
-		reset = reset.Add(24 * time.Hour) // wall-clock already passed today → next day
-	}
-	return true, reset.UnixMilli()
+	// Limited but no explicit reset (API rate_limit_error) → default 1h. The account
+	// re-limits on the next attempt if still limited, so it self-corrects without
+	// polling and recovers automatically once it stops returning the limit.
+	return true, now + 60*60*1000
 }
 
 const maxDetailBodyBytes = 64 * 1024

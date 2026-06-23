@@ -38,4 +38,10 @@ func TestParseLimitReset(t *testing.T) {
 	if l, r := parseLimitReset("you've hit your limit, try again later", now); !l || r != now+60*60*1000 {
 		t.Fatalf("unparseable reset should default to now+1h, got limited=%v reset=%d", l, r)
 	}
+
+	// CPA / Anthropic-API style: rate_limit_error with no reset → detected, 1h default.
+	cpaBody := `{"type":"error","error":{"type":"rate_limit_error","message":"Rate limited. Please try again later."}}`
+	if l, r := parseLimitReset(cpaBody, now); !l || r != now+60*60*1000 {
+		t.Fatalf("rate_limit_error should be detected with 1h default, got limited=%v reset=%d", l, r)
+	}
 }
