@@ -136,12 +136,12 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 
 	// Fallback-first when triggered (and channels exist).
 	if cfg.FallbackEnabled && trig != fallback.None && trig != fallback.Exhausted && len(channels) > 0 {
-		return s.viaChannel(ctx, ownerID, model, body, channels[0], string(trig), time.Since(start).Milliseconds(), cfg)
+		return s.viaChannels(ctx, ownerID, model, body, channels, string(trig), time.Since(start).Milliseconds(), cfg)
 	}
 
 	// PRE-FLIGHT: session exile check — route exiled conversations to fallback.
 	if (cfg.SessionErrorThreshold > 0 || cfg.ResponseExileEnabled) && s.sess.Exiled(conv, nowMs) && cfg.FallbackEnabled && len(channels) > 0 {
-		return s.viaChannel(ctx, ownerID, model, body, channels[0], "session", time.Since(start).Milliseconds(), cfg)
+		return s.viaChannels(ctx, ownerID, model, body, channels, "session", time.Since(start).Milliseconds(), cfg)
 	}
 
 	// Our nodes.
@@ -172,7 +172,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 					_ = events.Record(ctx, s.Q, nowMs, events.Event{Type: "session_exile", Target: "cyber", OwnerID: ownerID})
 				}
 				if len(channels) > 0 {
-					return s.viaChannel(ctx, ownerID, model, body, channels[0], "cyber", time.Since(start).Milliseconds(), cfg)
+					return s.viaChannels(ctx, ownerID, model, body, channels, "cyber", time.Since(start).Milliseconds(), cfg)
 				}
 				// No fallback channel — log and return the original response.
 				s.logOK(ctx, ownerID, model, res, winKey, time.Since(start).Milliseconds(), "cyber")
@@ -191,7 +191,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 		}
 		// fallback backstop
 		if cfg.FallbackEnabled && len(channels) > 0 {
-			return s.viaChannel(ctx, ownerID, model, body, channels[0], "exhausted", time.Since(start).Milliseconds(), cfg)
+			return s.viaChannels(ctx, ownerID, model, body, channels, "exhausted", time.Since(start).Milliseconds(), cfg)
 		}
 		s.logErr(ctx, ownerID, model, res.Status, 0, "")
 		return Outcome{Status: 503, Body: `{"error":"all accounts exhausted"}`, Target: "node", Reason: ""}
@@ -199,7 +199,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 
 	// No nodes at all → fallback if possible.
 	if cfg.FallbackEnabled && len(channels) > 0 {
-		return s.viaChannel(ctx, ownerID, model, body, channels[0], "no_nodes", time.Since(start).Milliseconds(), cfg)
+		return s.viaChannels(ctx, ownerID, model, body, channels, "no_nodes", time.Since(start).Milliseconds(), cfg)
 	}
 	s.logErr(ctx, ownerID, model, 503, 0, "no_nodes")
 	return Outcome{Status: 503, Body: `{"error":"no nodes available"}`, Target: "none", Reason: ""}
@@ -539,7 +539,11 @@ func (s *Service) enabledChannels(ctx context.Context, ownerID string, model str
 // fbSlotKey returns the store key for a fallback channel's concurrency slot.
 func fbSlotKey(id string) string { return "fb:" + id }
 
-func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []byte, ch sqlc.FallbackChannel, reason string, latencyMs int64, cfg policy.Config) Outcome {
+// viaChannel forwards one non-streaming request through a single fallback
+// channel. served=false means the channel was at MaxConcurrent capacity and the
+// caller should try the next channel; served=true means this channel handled the
+// request (success or a real error response).
+func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []byte, ch sqlc.FallbackChannel, reason string, latencyMs int64, cfg policy.Config) (Outcome, bool) {
 	cap := int(ch.MaxConcurrent)
 	if cap <= 0 {
 		cap = 1000
@@ -554,7 +558,7 @@ func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []
 	// receiving this Outcome is responsible for its own logging, and keeping this
 	// path Q-free lets it be unit-tested without a database.
 	if !s.Store.TryDispatch(key, model, bk) {
-		return Outcome{Status: 503, Body: `{"error":"fallback channel at capacity"}`, Target: "fallback:" + ch.ID, Reason: reason}
+		return Outcome{Status: 503, Body: `{"error":"fallback channel at capacity"}`, Target: "fallback:" + ch.ID, Reason: reason}, false
 	}
 	defer s.Store.Complete(key, int64(ch.CooldownMs), int64(ch.CooldownMs))
 
@@ -565,7 +569,7 @@ func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []
 	res, err := cp.Send(ctx, ch.ID)
 	if err != nil {
 		s.logErr(ctx, ownerID, model, 502, latencyMs, reason)
-		return Outcome{Status: 502, Body: `{"error":"fallback channel error"}`, Target: "fallback", Reason: reason}
+		return Outcome{Status: 502, Body: `{"error":"fallback channel error"}`, Target: "fallback", Reason: reason}, true
 	}
 	status := "ok"
 	if res.Status < 200 || res.Status >= 300 {
@@ -586,7 +590,37 @@ func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []
 		ProfileID: "", Status: status, HttpStatus: int32(res.Status), LatencyMs: latencyMs, FallbackReason: reason,
 		TokensIn: in, TokensOut: out, Stream: false, CostUsd: cost,
 	})
-	return Outcome{Status: res.Status, Body: res.Body, Target: "fallback:" + ch.ID, Reason: reason}
+	return Outcome{Status: res.Status, Body: res.Body, Target: "fallback:" + ch.ID, Reason: reason}, true
+}
+
+// viaChannels forwards a non-streaming request through the owner's fallback
+// channels in priority order, skipping any that are at MaxConcurrent capacity,
+// and returns the first that serves it. Only when EVERY channel is at capacity
+// does it return the last 503 (fallback-1: failover to the next fallback channel
+// instead of 503-ing when channels[0] is full).
+func (s *Service) viaChannels(ctx context.Context, ownerID, model string, body []byte, channels []sqlc.FallbackChannel, reason string, latencyMs int64, cfg policy.Config) Outcome {
+	var capOut Outcome
+	for _, ch := range channels {
+		out, served := s.viaChannel(ctx, ownerID, model, body, ch, reason, latencyMs, cfg)
+		if served {
+			return out
+		}
+		capOut = out // channel at capacity — remember its 503 and try the next
+	}
+	return capOut
+}
+
+// streamChannels forwards a streaming request through the owner's fallback
+// channels in priority order, skipping any that are at capacity or unreachable
+// (committed=false ⟹ nothing written to w yet, safe to try the next), and returns
+// committed=true for the first that serves the stream (fallback-1).
+func (s *Service) streamChannels(ctx context.Context, w http.ResponseWriter, channels []sqlc.FallbackChannel, body []byte, ownerID, model, reason string, cfg policy.Config) (Outcome, bool) {
+	for _, ch := range channels {
+		if out, committed := s.streamChannel(ctx, w, ch, body, ownerID, model, reason, cfg); committed {
+			return out, true
+		}
+	}
+	return Outcome{}, false
 }
 
 func (s *Service) logOK(ctx context.Context, ownerID, model string, res ProxyResult, key string, latencyMs int64, reason string) {
@@ -779,14 +813,14 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 		ProbeEnabled: cfg.FallbackProbeEnabled,
 	})
 	if cfg.FallbackEnabled && trig != fallback.None && trig != fallback.Exhausted && len(channels) > 0 {
-		if out, committed := s.streamChannel(ctx, w, channels[0], body, ownerID, model, string(trig), cfg); committed {
+		if out, committed := s.streamChannels(ctx, w, channels, body, ownerID, model, string(trig), cfg); committed {
 			return out
 		}
 	}
 
 	// PRE-FLIGHT: session exile check — route exiled conversations to fallback.
 	if (cfg.SessionErrorThreshold > 0 || cfg.ResponseExileEnabled) && s.sess.Exiled(conv, nowMs) && cfg.FallbackEnabled && len(channels) > 0 {
-		if out, committed := s.streamChannel(ctx, w, channels[0], body, ownerID, model, "session", cfg); committed {
+		if out, committed := s.streamChannels(ctx, w, channels, body, ownerID, model, "session", cfg); committed {
 			return out
 		}
 	}
@@ -843,7 +877,7 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 		if len(order) == 0 {
 			exReason = "no_nodes"
 		}
-		if out, committed := s.streamChannel(ctx, w, channels[0], body, ownerID, model, exReason, cfg); committed {
+		if out, committed := s.streamChannels(ctx, w, channels, body, ownerID, model, exReason, cfg); committed {
 			return out
 		}
 	}
