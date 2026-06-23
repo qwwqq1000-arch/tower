@@ -42,8 +42,20 @@ func TestParseLimitReset(t *testing.T) {
 		t.Fatalf("12am should be hour 0, got %s", time.UnixMilli(r).UTC())
 	}
 
-	// Keyword matched but no parseable reset → 1h default.
-	if l, r := parseLimitReset("you've hit your limit, try again later", now, kw); !l || r != now+60*60*1000 {
-		t.Fatalf("keyword-without-reset should default to now+1h, got limited=%v reset=%d", l, r)
+	// Keyword matched but no parseable reset → 5min default (transient cooldown).
+	if l, r := parseLimitReset("you've hit your limit, try again later", now, kw); !l || r != now+5*60*1000 {
+		t.Fatalf("keyword-without-reset should default to now+5min, got limited=%v reset=%d", l, r)
+	}
+
+	// CPA's "cooling down" wording IS a limit when that keyword is configured (no reset
+	// → 5min). CPA returns it differently from the subscription "hit your limit".
+	kwCpa := []string{"hit your limit", "usage limit", "cooling down"}
+	cpaCooling := `{"type":"error","error":{"type":"rate_limit_error","message":"All credentials for model claude-opus-4-7 are cooling down via provider claude"}}`
+	if l, r := parseLimitReset(cpaCooling, now, kwCpa); !l || r != now+5*60*1000 {
+		t.Fatalf("CPA cooling-down should limit with 5min default, got limited=%v reset=%d", l, r)
+	}
+	// ...but NOT when "cooling down" isn't in the keyword set (it's still a bare rate_limit_error).
+	if l, _ := parseLimitReset(cpaCooling, now, kw); l {
+		t.Fatal("cooling-down must not limit when the keyword isn't configured")
 	}
 }

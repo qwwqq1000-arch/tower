@@ -154,8 +154,10 @@ func Defaults() Config {
 		ResponseExileEnabled:      false,
 		ResponseExileKeywords:     []string{"usage policy", "i can't help with that request"},
 		StreamIdleTimeoutSec:      120,
-		// Precise usage-exhaustion phrases only — NOT "rate_limit_error" (transient).
-		QuotaLimitKeywords: []string{"hit your limit", "usage limit"},
+		// Precise limit phrases — NOT the bare "rate_limit_error" (transient). Covers
+		// the subscription wording ("hit your limit" / "usage limit") AND CPA's
+		// ("All credentials for model … are cooling down via provider claude").
+		QuotaLimitKeywords: []string{"hit your limit", "usage limit", "cooling down"},
 		// Official Anthropic per-model output ceilings (max_tokens). Editable per
 		// tenant via the policy patch; an over-limit request is rejected 400 without
 		// retry (limits-1).

@@ -155,10 +155,11 @@ func parseLimitReset(body string, now int64, keywords []string) (bool, int64) {
 		}
 		return true, reset.UnixMilli()
 	}
-	// Keyword matched but no explicit reset time → default 1h. The account re-limits
-	// on the next attempt if still limited (self-correcting, no polling) and recovers
-	// automatically once it stops returning the limit keyword.
-	return true, now + 60*60*1000
+	// Keyword matched but no explicit reset time (e.g. CPA "cooling down") → default
+	// 5 min. These are transient cooldowns that recover fast, so a long block would
+	// over-rotate; the account re-limits on the next attempt if still limited
+	// (self-correcting, no polling) and recovers as soon as it stops returning it.
+	return true, now + 5*60*1000
 }
 
 const maxDetailBodyBytes = 64 * 1024
@@ -1145,8 +1146,13 @@ func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, 
 	lastBanned = st.Banned
 	if st.Banned || st.Status < 200 || st.Status >= 300 {
 		httpStatus := st.Status
+		// Read the error body (capped) before closing. Previously it was discarded,
+		// which left the log detail empty for stream failures (e.g. a 429) AND blinded
+		// reactive-limit keyword detection to streamed usage-limit messages
+		// (logs-detail-3). st.Body is already gzip-decoded by OpenStream.
+		errBody, _ := io.ReadAll(io.LimitReader(st.Body, maxDetailBodyBytes))
 		_ = st.Body.Close()
-		return Outcome{Status: httpStatus, Target: key}, false, "" // bad status before first byte → settle(false) via defer, failover
+		return Outcome{Status: httpStatus, Target: key, Body: string(errBody)}, false, "" // bad status before first byte → settle(false) via defer, failover
 	}
 	// commit: stream to client
 	start := time.Now()
