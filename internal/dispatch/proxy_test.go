@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -127,6 +128,42 @@ func TestNodeProxy_Send_ForgesClaudeCodeHeaders(t *testing.T) {
 	}
 	if gotApp != "cli" {
 		t.Fatalf("x-app=%q, want cli", gotApp)
+	}
+}
+
+func TestNodeProxy_Send_CPADoesNotForge(t *testing.T) {
+	// CPA nodes proxy via CLIProxyAPI: authenticate with Bearer mgmtKey + the
+	// X-CLIProxy-Account pin, but DO NOT carry the claude-cli forge — it would pass
+	// through to the upstream and trip stricter claude-code rate limits (429). The
+	// request must look like a plain cpa-key call.
+	var gotUA, gotApp, gotAuth, gotAcct string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUA = r.Header.Get("User-Agent")
+		gotApp = r.Header.Get("x-app")
+		gotAuth = r.Header.Get("Authorization")
+		gotAcct = r.Header.Get("X-CLIProxy-Account")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	resolve := func(key string) (NodeRef, bool) {
+		return NodeRef{BaseURL: srv.URL, APIKey: "mgmt-key", ProfileID: "acct.json", Kind: "cpa"}, true
+	}
+	p := &NodeProxy{Body: []byte(`{"model":"opus"}`), Resolve: resolve}
+	if _, err := p.Send(context.Background(), "n:acct"); err != nil {
+		t.Fatalf("send error: %v", err)
+	}
+	if gotAuth != "Bearer mgmt-key" {
+		t.Fatalf("Authorization=%q, want Bearer mgmt-key", gotAuth)
+	}
+	if gotAcct != "acct.json" {
+		t.Fatalf("X-CLIProxy-Account=%q, want acct.json", gotAcct)
+	}
+	if gotApp != "" {
+		t.Fatalf("x-app=%q, want empty for cpa (no forge)", gotApp)
+	}
+	if strings.Contains(strings.ToLower(gotUA), "claude-cli") {
+		t.Fatalf("User-Agent=%q must not be the claude-cli forge for cpa", gotUA)
 	}
 }
 
