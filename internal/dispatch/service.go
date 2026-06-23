@@ -267,25 +267,6 @@ func (s *Service) resolveConfig(ctx context.Context, ownerID string) policy.Conf
 	return policy.Resolve(s.Base, patches...)
 }
 
-// pickElastic selects the ordered candidate list given the elastic configuration.
-// It is a pure function so it can be table-tested independently.
-// baseline and reserve are already sorted weight-desc.
-// util is baseline inflight / baseline capacity (1.0 when capacity == 0).
-// Returns the ordered slice to use.
-func pickElastic(baseline, reserve []string, util, threshold float64, maxReserve int) []string {
-	if util >= threshold {
-		n := len(reserve)
-		if maxReserve > 0 && n > maxReserve {
-			n = maxReserve
-		}
-		out := make([]string, 0, len(baseline)+n)
-		out = append(out, baseline...)
-		out = append(out, reserve[:n]...)
-		return out
-	}
-	return baseline
-}
-
 // slotActiveNow reports whether the given [startMin, endMin) window (minute-of-day,
 // Beijing time) is active at the instant represented by nowMs (Unix ms).
 // If start == end or the window is [0, 1440) it is treated as always-active.
