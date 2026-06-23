@@ -8,6 +8,7 @@
 import { useState, useEffect } from 'react';
 import { dryRunPolicy, listPolicies, putGlobalPolicy } from '../api';
 import type { PolicyPatch, PolicyDryRunResult } from '../types';
+import { useAuth } from '../auth';
 
 // ------------------------------------------------------------------
 // Field helpers
@@ -137,6 +138,9 @@ function DiffTable({ result }: { result: PolicyDryRunResult }) {
 // Policies page
 // ------------------------------------------------------------------
 export default function Policies() {
+  const { role } = useAuth();
+  const isSuperadmin = role === 'superadmin';
+
   // Integer fields
   const maxConcurrent = useField<number>(3);
   const slotCooldownMinMs = useField<number>(2000);
@@ -342,27 +346,31 @@ export default function Policies() {
         <div>
           <h1 className="text-2xl font-semibold text-ink">封控策略</h1>
           <p className="text-xs text-muted mt-1">
-            勾选字段并输入值，未勾选的字段将保持默认。
+            {isSuperadmin
+              ? '勾选字段并输入值，未勾选的字段将保持默认。'
+              : '只读 — 仅 superadmin 可修改策略。'}
           </p>
         </div>
-        <div className="flex gap-2 shrink-0">
-          <button
-            onClick={() => { void handlePreview(); }}
-            disabled={previewing || !anyEnabled}
-            className="px-4 py-2 text-sm font-medium border border-accent text-accent rounded-lg
-                       hover:bg-accent/10 disabled:opacity-50 disabled:cursor-not-allowed transition"
-          >
-            {previewing ? '预览中…' : '预览 (dry-run)'}
-          </button>
-          <button
-            onClick={() => { void handleSave(); }}
-            disabled={saving || !anyEnabled}
-            className="px-4 py-2 text-sm font-medium bg-accent text-white rounded-lg
-                       hover:bg-accent/80 disabled:opacity-50 disabled:cursor-not-allowed transition"
-          >
-            {saving ? '保存中…' : '保存全局'}
-          </button>
-        </div>
+        {isSuperadmin && (
+          <div className="flex gap-2 shrink-0">
+            <button
+              onClick={() => { void handlePreview(); }}
+              disabled={previewing || !anyEnabled}
+              className="px-4 py-2 text-sm font-medium border border-accent text-accent rounded-lg
+                         hover:bg-accent/10 disabled:opacity-50 disabled:cursor-not-allowed transition"
+            >
+              {previewing ? '预览中…' : '预览 (dry-run)'}
+            </button>
+            <button
+              onClick={() => { void handleSave(); }}
+              disabled={saving || !anyEnabled}
+              className="px-4 py-2 text-sm font-medium bg-accent text-white rounded-lg
+                         hover:bg-accent/80 disabled:opacity-50 disabled:cursor-not-allowed transition"
+            >
+              {saving ? '保存中…' : '保存全局'}
+            </button>
+          </div>
+        )}
       </div>
 
       {err && (
@@ -377,6 +385,7 @@ export default function Policies() {
       )}
 
       {/* Fields form */}
+      <fieldset disabled={!isSuperadmin} className="contents">
       <div className="bg-surface border border-line rounded-xl px-4 py-2">
         <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2">并发 / 冷却</h2>
 
@@ -911,6 +920,7 @@ export default function Policies() {
           />
         </FieldRow>
       </div>
+      </fieldset>
 
       {/* Dry-run result */}
       {dryRunResult && (
