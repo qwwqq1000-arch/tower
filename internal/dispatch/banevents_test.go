@@ -11,6 +11,48 @@ import (
 	"github.com/qwwqq1000-arch/tower/internal/state"
 )
 
+// TestBanInfoConsistency verifies that Store.BanInfo returns permanent and
+// streak under a single lock so recordBan sees a consistent snapshot
+// (events-audit-5, ban-classify-6). This is a pure in-memory test.
+func TestBanInfoConsistency(t *testing.T) {
+	cfg := state.BreakerCfg{PersistStreak: 2, PermStreak: 3, BaseMs: 1000, MaxMs: 9999, Mult: 2}
+	st := state.NewStore(func() int64 { return 0 }, func(a, b int64) int64 { return a })
+	st.Ensure("n:p", 1)
+
+	// No signals yet: closed breaker → permanent=false, streak=0.
+	perm, streak := st.BanInfo("n:p")
+	if perm || streak != 0 {
+		t.Fatalf("initial: permanent=%v streak=%d, want false/0", perm, streak)
+	}
+
+	// One ban signal: streak=1, still not permanent.
+	st.OnBanSignal("n:p", cfg)
+	perm, streak = st.BanInfo("n:p")
+	if perm || streak != 1 {
+		t.Fatalf("after 1 signal: permanent=%v streak=%d, want false/1", perm, streak)
+	}
+
+	// Second signal: reaches PersistStreak(2) → open, not yet permanent.
+	st.OnBanSignal("n:p", cfg)
+	perm, streak = st.BanInfo("n:p")
+	if perm || streak != 2 {
+		t.Fatalf("after 2 signals: permanent=%v streak=%d, want false/2", perm, streak)
+	}
+
+	// Third signal: reaches PermStreak(3) → permanent=true.
+	st.OnBanSignal("n:p", cfg)
+	perm, streak = st.BanInfo("n:p")
+	if !perm || streak != 3 {
+		t.Fatalf("after 3 signals: permanent=%v streak=%d, want true/3", perm, streak)
+	}
+
+	// Missing key returns zero values (no panic).
+	perm2, streak2 := st.BanInfo("missing:key")
+	if perm2 || streak2 != 0 {
+		t.Fatalf("missing key: permanent=%v streak=%d, want false/0", perm2, streak2)
+	}
+}
+
 // TestBanControlEvents verifies that a ban signal (401) from a node produces a
 // ban_detected event and that failover produces a retry event.
 func TestBanControlEvents(t *testing.T) {

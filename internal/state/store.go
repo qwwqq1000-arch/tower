@@ -185,6 +185,19 @@ func (s *Store) BanStreak(key string) int {
 	return 0
 }
 
+// BanInfo returns both the permanent-ban flag and the current ban-signal streak
+// under a single lock acquisition, preventing a race between two separate reads
+// (ban-classify-6). Use this in recordBan to get a consistent snapshot.
+func (s *Store) BanInfo(key string) (permanent bool, streak int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if a := s.accts[key]; a != nil {
+		_, sk, _ := a.Breaker.Snapshot()
+		return a.Breaker.Permanent(), sk
+	}
+	return false, 0
+}
+
 // Recover clears all ban/failure state (including a permanent ban) and re-enables
 // the account. Used by the manual "recover" admin action.
 func (s *Store) Recover(key string) {

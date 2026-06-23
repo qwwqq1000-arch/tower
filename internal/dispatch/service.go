@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"regexp"
 	"sort"
@@ -982,21 +983,31 @@ func sseHasError(body string) bool {
 // recordBan records a ban-control event (ban_detected, or ban_permanent when the
 // account was permanently banned) with the triggering account, streak, and
 // HTTP status, plus a durable ban_episode. ownerID/status give the event context.
+//
+// permanent and streak are read in a single BanInfo call (ban-classify-6) so
+// the event type and detail are always consistent with each other.
+// Errors from both writes are logged rather than silently discarded (events-audit-5).
 func (s *Service) recordBan(ctx context.Context, ownerID, key string, status int) {
 	node, profile, found := splitKey(key)
 	if !found {
 		return
 	}
-	permanent := s.Store.IsPermanent(key)
-	streak := s.Store.BanStreak(key)
+	// Read permanent + streak atomically under a single store lock to avoid
+	// the race where IsPermanent and BanStreak each acquire the lock separately
+	// and can observe different breaker generations (ban-classify-6).
+	permanent, streak := s.Store.BanInfo(key)
 	typ := "ban_detected"
 	if permanent {
 		typ = "ban_permanent"
 	}
 	detail := map[string]any{"account": key, "status": status, "streak": streak, "permanent": permanent}
-	_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: typ, Target: key, OwnerID: ownerID, Detail: detail})
+	if err := events.Record(ctx, s.Q, s.Now(), events.Event{Type: typ, Target: key, OwnerID: ownerID, Detail: detail}); err != nil {
+		log.Printf("recordBan: insert event key=%s: %v", key, err)
+	}
 	db, _ := json.Marshal(detail)
-	_ = s.Q.InsertBanEpisode(ctx, sqlc.InsertBanEpisodeParams{NodeID: node, ProfileID: profile, BannedAt: s.Now(), Detail: db})
+	if err := s.Q.InsertBanEpisode(ctx, sqlc.InsertBanEpisodeParams{NodeID: node, ProfileID: profile, BannedAt: s.Now(), Detail: db}); err != nil {
+		log.Printf("recordBan: insert episode key=%s: %v", key, err)
+	}
 }
 
 // recordRecover closes any open ban episodes for the given key (node:profile)
