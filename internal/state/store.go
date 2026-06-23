@@ -395,11 +395,16 @@ func (s *Store) PersistAll(ctx context.Context, q *sqlc.Queries, now int64) erro
 			nodeID:    key[:i],
 			profileID: key[i+1:],
 			// Copy the Account value; Breaker and scalar fields are value types.
+			// CoolUntil and LimitedUntil must be included so that Status(now)
+			// returns the correct "cooldown"/"limited" verdict when persisting
+			// (state-store-2: without them the status falls through to "active").
 			account: Account{
-				Breaker:  a.Breaker,
-				Slots:    a.Slots, // pointer — only durable Breaker fields are read by SaveState
-				Disabled: a.Disabled,
-				Offline:  a.Offline,
+				Breaker:      a.Breaker,
+				Slots:        a.Slots, // pointer — only durable Breaker fields are read by SaveState
+				Disabled:     a.Disabled,
+				Offline:      a.Offline,
+				CoolUntil:    a.CoolUntil,
+				LimitedUntil: a.LimitedUntil,
 			},
 			now: now,
 		})
