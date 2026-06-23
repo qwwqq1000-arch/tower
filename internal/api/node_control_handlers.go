@@ -82,6 +82,10 @@ func nodeEnableHandler(q *sqlc.Queries) http.HandlerFunc {
 	}
 }
 
+// isCPAKind reports whether a node kind string identifies a CLIProxyAPI node.
+// Extracted as a pure helper so it can be unit-tested independently of the DB.
+func isCPAKind(kind string) bool { return strings.EqualFold(kind, "cpa") }
+
 // cpaQuotaAll fetches usage for every account on a CPA node by listing accounts
 // and then calling the per-account usage endpoint. The result mirrors the shape of
 // nodeclient.QuotaAll so callers can render it uniformly.
@@ -118,7 +122,7 @@ func nodeQuotaHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 		}
 		// CPA nodes expose quota via the CPA management API, not the meridian
 		// /v1/usage/quota/all endpoint (cpa-1).
-		if strings.EqualFold(n.Kind, "cpa") {
+		if isCPAKind(n.Kind) {
 			cc := cpaclient.New(n.BaseUrl, cipher.DecryptOrPlaintext(n.MgmtKey))
 			result, err := cpaQuotaAll(r.Context(), cc)
 			if err != nil {

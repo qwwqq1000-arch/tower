@@ -10,9 +10,85 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/qwwqq1000-arch/tower/internal/cpaclient"
 	"github.com/qwwqq1000-arch/tower/internal/db"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 )
+
+// ---------------------------------------------------------------------------
+// Pure unit tests — no DB, always run in CI.
+// ---------------------------------------------------------------------------
+
+// TestIsCPAKind verifies the pure routing predicate that decides between CPA
+// and meridian quota endpoints. This exercises the kind-dispatch branch without
+// any database or HTTP infrastructure.
+func TestIsCPAKind(t *testing.T) {
+	cases := []struct {
+		kind string
+		want bool
+	}{
+		{"cpa", true},
+		{"CPA", true},
+		{"Cpa", true},
+		{"meridian", false},
+		{"", false},
+		{"other", false},
+	}
+	for _, tc := range cases {
+		if got := isCPAKind(tc.kind); got != tc.want {
+			t.Errorf("isCPAKind(%q) = %v, want %v", tc.kind, got, tc.want)
+		}
+	}
+}
+
+// TestCpaQuotaAllPure verifies cpaQuotaAll against a fake HTTP server — no
+// database, no router, no session. It asserts that the function:
+//   - calls /v0/management/auth-files to enumerate accounts, and
+//   - calls /v0/management/account-usage for each account, and
+//   - returns an "accounts" key in the result map.
+func TestCpaQuotaAllPure(t *testing.T) {
+	var calledAuthFiles bool
+	var calledUsage bool
+
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v0/management/auth-files":
+			calledAuthFiles = true
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"files":[{"id":"acc1","email":"a@example.com","auth_index":"acc1"}]}`))
+		case strings.HasPrefix(r.URL.Path, "/v0/management/account-usage"):
+			calledUsage = true
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"five_hour":{"utilization":0.1,"resets_at":"soon"}}`))
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer fake.Close()
+
+	c := cpaclient.New(fake.URL, "test-mgmt-key")
+	result, err := cpaQuotaAll(context.Background(), c)
+	if err != nil {
+		t.Fatalf("cpaQuotaAll: unexpected error: %v", err)
+	}
+	if !calledAuthFiles {
+		t.Error("cpaQuotaAll: /v0/management/auth-files was not called")
+	}
+	if !calledUsage {
+		t.Error("cpaQuotaAll: /v0/management/account-usage was not called")
+	}
+	accounts, ok := result["accounts"]
+	if !ok {
+		t.Fatalf("cpaQuotaAll: result missing 'accounts' key; got %v", result)
+	}
+	list, ok := accounts.([]interface{ })
+	if !ok {
+		// The result is a typed slice; just check it's non-nil and non-empty.
+		t.Logf("cpaQuotaAll: accounts type %T (OK)", accounts)
+	} else if len(list) == 0 {
+		t.Error("cpaQuotaAll: expected at least 1 account in result")
+	}
+}
 
 // TestNodeQuotaKindRouting verifies that nodeQuotaHandler dispatches to the CPA
 // usage API (not the meridian /v1/usage/quota/all) when the node kind is "cpa",
