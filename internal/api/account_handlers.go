@@ -45,9 +45,14 @@ func nodeClientFor(q *sqlc.Queries, cipher *crypto.Cipher, r *http.Request, id s
 
 func oauthStartHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cl, _, ok := nodeClientFor(q, cipher, r, r.PathValue("id"))
+		cl, n, ok := nodeClientFor(q, cipher, r, r.PathValue("id"))
 		if !ok {
 			writeJSON(w, 404, map[string]string{"error": "node not found"})
+			return
+		}
+		// OAuth login flow is meridian-specific; CPA nodes manage accounts via
+		// the CPA management API, not the meridian oauth endpoints (nodeclient-telemetry-5).
+		if cpaNotApplicable(w, n.Kind) {
 			return
 		}
 		lu, err := cl.LoginURL(r.Context())
@@ -64,6 +69,11 @@ func oauthExchangeHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFu
 		cl, n, ok := nodeClientFor(q, cipher, r, r.PathValue("id"))
 		if !ok {
 			writeJSON(w, 404, map[string]string{"error": "node not found"})
+			return
+		}
+		// OAuth exchange is meridian-specific; CPA nodes manage accounts via
+		// the CPA management API (nodeclient-telemetry-5).
+		if cpaNotApplicable(w, n.Kind) {
 			return
 		}
 		var body struct {

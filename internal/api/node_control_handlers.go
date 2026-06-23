@@ -14,9 +14,12 @@ import (
 
 func nodeFeaturesGetHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cl, _, ok := nodeClientFor(q, cipher, r, r.PathValue("id"))
+		cl, n, ok := nodeClientFor(q, cipher, r, r.PathValue("id"))
 		if !ok {
 			writeJSON(w, 404, map[string]string{"error": "node not found"})
+			return
+		}
+		if cpaNotApplicable(w, n.Kind) {
 			return
 		}
 		f, err := cl.GetFeatures(r.Context())
@@ -30,9 +33,12 @@ func nodeFeaturesGetHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.Handler
 
 func nodeFeaturesPatchHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cl, _, ok := nodeClientFor(q, cipher, r, r.PathValue("id"))
+		cl, n, ok := nodeClientFor(q, cipher, r, r.PathValue("id"))
 		if !ok {
 			writeJSON(w, 404, map[string]string{"error": "node not found"})
+			return
+		}
+		if cpaNotApplicable(w, n.Kind) {
 			return
 		}
 		var patch map[string]any
@@ -50,9 +56,12 @@ func nodeFeaturesPatchHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.Handl
 
 func nodeRefreshHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cl, _, ok := nodeClientFor(q, cipher, r, r.PathValue("id"))
+		cl, n, ok := nodeClientFor(q, cipher, r, r.PathValue("id"))
 		if !ok {
 			writeJSON(w, 404, map[string]string{"error": "node not found"})
+			return
+		}
+		if cpaNotApplicable(w, n.Kind) {
 			return
 		}
 		if err := cl.AuthRefresh(r.Context(), ""); err != nil {
@@ -85,6 +94,17 @@ func nodeEnableHandler(q *sqlc.Queries) http.HandlerFunc {
 // isCPAKind reports whether a node kind string identifies a CLIProxyAPI node.
 // Extracted as a pure helper so it can be unit-tested independently of the DB.
 func isCPAKind(kind string) bool { return strings.EqualFold(kind, "cpa") }
+
+// cpaNotApplicable writes a 409 Conflict response when the node is a CPA node
+// and the called endpoint is meridian-only. Returns true if the response was
+// written (caller must return immediately), false otherwise.
+func cpaNotApplicable(w http.ResponseWriter, kind string) bool {
+	if !isCPAKind(kind) {
+		return false
+	}
+	writeJSON(w, 409, map[string]string{"error": "not applicable for CPA nodes"})
+	return true
+}
 
 // cpaQuotaAll fetches usage for every account on a CPA node by listing accounts
 // and then calling the per-account usage endpoint. The result mirrors the shape of
@@ -143,9 +163,12 @@ func nodeQuotaHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 
 func nodeTelemetryHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cl, _, ok := nodeClientFor(q, cipher, r, r.PathValue("id"))
+		cl, n, ok := nodeClientFor(q, cipher, r, r.PathValue("id"))
 		if !ok {
 			writeJSON(w, 404, map[string]string{"error": "node not found"})
+			return
+		}
+		if cpaNotApplicable(w, n.Kind) {
 			return
 		}
 
