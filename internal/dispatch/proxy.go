@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
@@ -71,6 +72,48 @@ func (r *idleTimeoutReader) Close() error {
 }
 
 func newHTTP() *http.Client { return &http.Client{Timeout: 300 * time.Second} }
+
+// readDecoded reads the upstream response body, transparently gunzipping it when
+// the upstream compressed the response (Content-Encoding: gzip). The client's
+// Accept-Encoding is forwarded verbatim (native passthrough), so Go's transport
+// does NOT auto-decompress — Tower decodes here, like the direct cpa-key consumer
+// would, both so it can parse the body and so it relays clean JSON. Without this,
+// raw gzip is parsed as JSON → "invalid character '\x1f'" → 500.
+func readDecoded(resp *http.Response) []byte {
+	var r io.Reader = resp.Body
+	if strings.EqualFold(resp.Header.Get("Content-Encoding"), "gzip") {
+		if gz, err := gzip.NewReader(resp.Body); err == nil {
+			defer gz.Close()
+			r = gz
+		}
+	}
+	data, _ := io.ReadAll(r)
+	return data
+}
+
+// gzipBody decompresses a gzip stream and closes both the gzip reader and the
+// underlying body on Close.
+type gzipBody struct {
+	gz  *gzip.Reader
+	src io.ReadCloser
+}
+
+func (b *gzipBody) Read(p []byte) (int, error) { return b.gz.Read(p) }
+func (b *gzipBody) Close() error               { _ = b.gz.Close(); return b.src.Close() }
+
+// decodedStreamBody returns the response body, gunzipping it when the upstream
+// compressed the stream, and drops the now-consumed Content-Encoding/Length so the
+// decoded bytes are relayed to the client without a misleading gzip label.
+func decodedStreamBody(resp *http.Response) io.ReadCloser {
+	if strings.EqualFold(resp.Header.Get("Content-Encoding"), "gzip") {
+		if gz, err := gzip.NewReader(resp.Body); err == nil {
+			resp.Header.Del("Content-Encoding")
+			resp.Header.Del("Content-Length")
+			return &gzipBody{gz: gz, src: resp.Body}
+		}
+	}
+	return resp.Body
+}
 
 // msgURL builds the /v1/messages URL, tolerating a trailing slash on baseURL
 // (a trailing slash would otherwise produce "...//v1/messages" → node 404).
@@ -154,7 +197,7 @@ func (p *NodeProxy) Send(ctx context.Context, key string) (ProxyResult, error) {
 		return ProxyResult{}, err
 	}
 	defer resp.Body.Close()
-	data, _ := io.ReadAll(resp.Body)
+	data := readDecoded(resp)
 	body := string(data)
 	status := resp.StatusCode
 	// Claude can return a 200 header and then carry an error in the body (e.g.
@@ -213,7 +256,7 @@ func (p *ChannelProxy) Send(ctx context.Context, _ string) (ProxyResult, error) 
 		return ProxyResult{}, err
 	}
 	defer resp.Body.Close()
-	data, _ := io.ReadAll(resp.Body)
+	data := readDecoded(resp)
 	return ProxyResult{Status: resp.StatusCode, Body: string(data), Banned: false}, nil
 }
 
@@ -252,9 +295,10 @@ func (p *NodeProxy) OpenStream(ctx context.Context, key string) (*Stream, error)
 	if err != nil {
 		return nil, err
 	}
-	body := io.ReadCloser(resp.Body)
+	src := decodedStreamBody(resp)
+	body := src
 	if p.IdleTimeout > 0 {
-		body = newIdleTimeoutReader(resp.Body, p.IdleTimeout)
+		body = newIdleTimeoutReader(src, p.IdleTimeout)
 	}
 	return &Stream{
 		Status: resp.StatusCode,
@@ -279,9 +323,10 @@ func (p *ChannelProxy) OpenStream(ctx context.Context, _ string) (*Stream, error
 	if err != nil {
 		return nil, err
 	}
-	body := io.ReadCloser(resp.Body)
+	src := decodedStreamBody(resp)
+	body := src
 	if p.IdleTimeout > 0 {
-		body = newIdleTimeoutReader(resp.Body, p.IdleTimeout)
+		body = newIdleTimeoutReader(src, p.IdleTimeout)
 	}
 	return &Stream{Status: resp.StatusCode, Header: resp.Header, Body: body, Banned: false}, nil
 }

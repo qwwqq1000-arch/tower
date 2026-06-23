@@ -1,6 +1,8 @@
 package dispatch
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -187,6 +189,35 @@ func TestNodeProxy_Send_CPA_Passthrough(t *testing.T) {
 	}
 	if gotApp != "" {
 		t.Fatalf("x-app must not be added (pure passthrough), got %q", gotApp)
+	}
+}
+
+func TestNodeProxy_Send_GzipResponseDecoded(t *testing.T) {
+	// Regression: with Accept-Encoding forwarded (native passthrough), Go hands back
+	// raw gzip bytes; parsing them as JSON yields "invalid character '\x1f'" → 500.
+	// readDecoded must gunzip the upstream response so Send returns clean JSON.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var buf bytes.Buffer
+		gz := gzip.NewWriter(&buf)
+		_, _ = gz.Write([]byte(`{"ok":true,"usage":{"input_tokens":5}}`))
+		_ = gz.Close()
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(buf.Bytes())
+	}))
+	defer srv.Close()
+
+	p := &NodeProxy{Body: []byte(`{}`), Resolve: func(string) (NodeRef, bool) {
+		return NodeRef{BaseURL: srv.URL, APIKey: "k"}, true
+	}}
+	// Client forwards Accept-Encoding: gzip — Tower must decode the response itself.
+	ctx := WithClientHeaders(context.Background(), http.Header{"Accept-Encoding": {"gzip"}})
+	res, err := p.Send(ctx, "k")
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if !strings.Contains(res.Body, `"input_tokens":5`) {
+		t.Fatalf("gzip response not decoded, got: %q", res.Body)
 	}
 }
 
