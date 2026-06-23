@@ -19,11 +19,20 @@ func SPAHandler() http.Handler {
 	index, _ := fs.ReadFile(sub, "index.html")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// try static file; if missing, serve index.html (SPA route)
-		if f, err := sub.Open(trimLeadingSlash(r.URL.Path)); err == nil {
+		p := trimLeadingSlash(r.URL.Path)
+		if f, err := sub.Open(p); err == nil {
 			f.Close()
+			// index.html must never be cached or the browser keeps referencing stale,
+			// content-hashed bundle filenames after a deploy (old hash → 404 → blank
+			// page). The hashed assets themselves are immutable and may cache freely.
+			if p == "index.html" {
+				w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+			}
 			fileServer.ServeHTTP(w, r)
 			return
 		}
+		// SPA client-side route → index.html; never cache (same reason).
+		w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(index)
 	})
