@@ -28,8 +28,10 @@ func TestForgeClaudeCodeHeaders(t *testing.T) {
 	if h.Get("x-app") != "cli" {
 		t.Fatalf("x-app=%q", h.Get("x-app"))
 	}
-	if ua := h.Get("User-Agent"); ua == "" {
-		t.Fatal("User-Agent must be set")
+	// Must NOT forge a fake claude-cli User-Agent — it is passed through to
+	// Anthropic and tightens the account's rate limit; the node fills the real UA.
+	if ua := h.Get("User-Agent"); ua != "" {
+		t.Fatalf("User-Agent must not be forged, got %q", ua)
 	}
 }
 

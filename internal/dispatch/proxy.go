@@ -142,13 +142,7 @@ func (p *NodeProxy) Send(ctx context.Context, key string) (ProxyResult, error) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	setNodeAuthHeaders(req.Header, ref)
-	// CPA nodes proxy via CLIProxyAPI, which owns the upstream client identity;
-	// forging claude-cli here would only pass through and trip stricter claude-code
-	// rate limits (429). Forge only for meridian, where passthrough classification
-	// needs it. CPA requests then look like a plain cpa-key call.
-	if ref.Kind != "cpa" {
-		ForgeClaudeCodeHeaders(req.Header)
-	}
+	ForgeClaudeCodeHeaders(req.Header)
 	resp, err := p.client().Do(req)
 	if err != nil {
 		return ProxyResult{}, err
@@ -238,13 +232,7 @@ func (p *NodeProxy) OpenStream(ctx context.Context, key string) (*Stream, error)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	setNodeAuthHeaders(req.Header, ref)
-	// CPA nodes proxy via CLIProxyAPI, which owns the upstream client identity;
-	// forging claude-cli here would only pass through and trip stricter claude-code
-	// rate limits (429). Forge only for meridian, where passthrough classification
-	// needs it. CPA requests then look like a plain cpa-key call.
-	if ref.Kind != "cpa" {
-		ForgeClaudeCodeHeaders(req.Header)
-	}
+	ForgeClaudeCodeHeaders(req.Header)
 	resp, err := streamClient.Do(req)
 	if err != nil {
 		return nil, err

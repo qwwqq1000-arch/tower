@@ -26,10 +26,14 @@ func StripHopByHop(h http.Header) {
 	}
 }
 
-// ForgeClaudeCodeHeaders sets headers that make a meridian node classify the
-// request as claude-code (not passthrough).
+// ForgeClaudeCodeHeaders marks the request as a Claude Code client via x-app. It
+// deliberately does NOT set a User-Agent: a fake/outdated "claude-cli/1.0" UA is
+// passed through verbatim by CLIProxyAPI to Anthropic, which then flags the
+// account as a suspicious client and tightens its rate limit (real 429 + account
+// cooldown that then 429s every later request). Leaving the UA unset lets the
+// node fill in the correct per-profile fingerprint — dispatch passes client
+// identity through, it does not forge it.
 func ForgeClaudeCodeHeaders(h http.Header) {
-	h.Set("User-Agent", "claude-cli/1.0 (external, cli)")
 	h.Set("x-app", "cli")
 }
 

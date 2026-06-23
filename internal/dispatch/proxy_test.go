@@ -105,7 +105,7 @@ func TestNodeProxy_SendInBodyBanOn200(t *testing.T) {
 	}
 }
 
-func TestNodeProxy_Send_ForgesClaudeCodeHeaders(t *testing.T) {
+func TestNodeProxy_Send_SetsXAppNotFakeUA(t *testing.T) {
 	var gotUA, gotApp string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotUA = r.Header.Get("User-Agent")
@@ -123,19 +123,20 @@ func TestNodeProxy_Send_ForgesClaudeCodeHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("send error: %v", err)
 	}
-	if gotUA == "" {
-		t.Fatalf("User-Agent not set by Send (got empty)")
-	}
 	if gotApp != "cli" {
 		t.Fatalf("x-app=%q, want cli", gotApp)
 	}
+	// Never forge a claude-cli User-Agent — it tightens the upstream rate limit.
+	if strings.Contains(strings.ToLower(gotUA), "claude-cli") {
+		t.Fatalf("must not forge a claude-cli User-Agent, got %q", gotUA)
+	}
 }
 
-func TestNodeProxy_Send_CPADoesNotForge(t *testing.T) {
-	// CPA nodes proxy via CLIProxyAPI: authenticate with Bearer mgmtKey + the
-	// X-CLIProxy-Account pin, but DO NOT carry the claude-cli forge — it would pass
-	// through to the upstream and trip stricter claude-code rate limits (429). The
-	// request must look like a plain cpa-key call.
+func TestNodeProxy_Send_CPA_NoFakeUA(t *testing.T) {
+	// CPA nodes authenticate via Bearer + the X-CLIProxy-Account pin and carry
+	// x-app:cli, but MUST NOT carry a fake claude-cli User-Agent — that is passed
+	// through to Anthropic and trips stricter claude-code rate limits (429 +
+	// account cooldown). CPA fills the correct per-profile UA itself.
 	var gotUA, gotApp, gotAuth, gotAcct string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotUA = r.Header.Get("User-Agent")
@@ -159,11 +160,11 @@ func TestNodeProxy_Send_CPADoesNotForge(t *testing.T) {
 	if gotAcct != "acct.json" {
 		t.Fatalf("X-CLIProxy-Account=%q, want acct.json", gotAcct)
 	}
-	if gotApp != "" {
-		t.Fatalf("x-app=%q, want empty for cpa (no forge)", gotApp)
+	if gotApp != "cli" {
+		t.Fatalf("x-app=%q, want cli", gotApp)
 	}
 	if strings.Contains(strings.ToLower(gotUA), "claude-cli") {
-		t.Fatalf("User-Agent=%q must not be the claude-cli forge for cpa", gotUA)
+		t.Fatalf("User-Agent=%q must not be a forged claude-cli UA", gotUA)
 	}
 }
 
