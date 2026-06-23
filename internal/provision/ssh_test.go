@@ -120,9 +120,6 @@ func isHostKeyError(err error) bool {
 		return false
 	}
 	s := err.Error()
-	for _, needle := range []string{"host key", "knownhosts", "ssh: handshake"} {
-		_ = needle
-	}
 	// The go x/crypto library wraps knownhosts.KeyError inside the handshake;
 	// a mismatch contains "ssh: handshake failed" AND the wrapped key error.
 	// A simple auth failure does not contain "host key".

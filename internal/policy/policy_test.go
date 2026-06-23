@@ -184,6 +184,7 @@ func TestPickThreshold(t *testing.T) {
 		want float64
 	}{
 		{"valid 0.8", []byte(`{"QuotaRotateThreshold":0.8}`), 0.8},
+		{"valid 1.0", []byte(`{"QuotaRotateThreshold":1.0}`), 1.0},
 		{"field absent", []byte(`{}`), def},
 		{"out of range high", []byte(`{"QuotaRotateThreshold":1.5}`), def},
 		{"out of range zero", []byte(`{"QuotaRotateThreshold":0}`), def},
