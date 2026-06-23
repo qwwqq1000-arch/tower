@@ -56,6 +56,32 @@ func TestNodeProxy_BanByStatus(t *testing.T) {
 	}
 }
 
+func TestNodeProxy_Send_ForgesClaudeCodeHeaders(t *testing.T) {
+	var gotUA, gotApp string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUA = r.Header.Get("User-Agent")
+		gotApp = r.Header.Get("x-app")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	resolve := func(key string) (NodeRef, bool) {
+		return NodeRef{BaseURL: srv.URL, APIKey: "k1", ProfileID: "default", Kind: "meridian"}, true
+	}
+	p := &NodeProxy{Body: []byte(`{"model":"opus"}`), Resolve: resolve}
+
+	_, err := p.Send(context.Background(), "node1:default")
+	if err != nil {
+		t.Fatalf("send error: %v", err)
+	}
+	if gotUA == "" {
+		t.Fatalf("User-Agent not set by Send (got empty)")
+	}
+	if gotApp != "cli" {
+		t.Fatalf("x-app=%q, want cli", gotApp)
+	}
+}
+
 func TestChannelProxy_Send(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"relayed":true}`))

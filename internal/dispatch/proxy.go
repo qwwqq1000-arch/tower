@@ -77,6 +77,7 @@ func (p *NodeProxy) Send(ctx context.Context, key string) (ProxyResult, error) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	setNodeAuthHeaders(req.Header, ref)
+	ForgeClaudeCodeHeaders(req.Header)
 	resp, err := p.client().Do(req)
 	if err != nil {
 		return ProxyResult{}, err
