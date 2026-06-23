@@ -198,7 +198,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 	conv := session.ConvID(body)
 	nowMs := s.Now()
 	if cfg.AffinityTTLSec > 0 {
-		order = s.applyAffinity(conv, order, nowMs)
+		order = s.pinToAffinity(conv, order, nowMs)
 	}
 
 	est := billing.CostUsd(model, int64(len(body)/4), 2000, 0, 0)
@@ -285,32 +285,29 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 	return Outcome{Status: 503, Body: `{"error":"no nodes available"}`, Target: "none", Reason: ""}
 }
 
-// applyAffinity moves the conversation's sticky account (if any, and present in
-// order) to the front, so repeat requests reuse the same account for prompt
-// caching. Enforces policy.AffinityTTLSec.
-func (s *Service) applyAffinity(conv string, order []string, now int64) []string {
-	if conv == "" || len(order) < 2 {
+// pinToAffinity enforces STRICT session affinity (account-affinity-A): once a
+// conversation is pinned to an account it is served ONLY by that account — never a
+// second node account. The pinned account becomes the sole node candidate; if it is
+// set but absent from the candidate list (gone/filtered/rotated out), the node list
+// is emptied so the request falls through to fallback (daodun) instead of hopping to
+// another node account — which would break thinking-block signatures and spread one
+// conversation across multiple accounts (a ban pattern). A conversation with no pin
+// yet (first turn or expired TTL) keeps the full list for normal load-balanced
+// selection, then SetAffinity pins the winner. Enforces policy.AffinityTTLSec.
+func (s *Service) pinToAffinity(conv string, order []string, now int64) []string {
+	if conv == "" {
 		return order
 	}
 	key, ok := s.sess.Affinity(conv, now)
 	if !ok {
-		return order
+		return order // no pin yet → normal selection
 	}
-	idx := -1
-	for i, k := range order {
+	for _, k := range order {
 		if k == key {
-			idx = i
-			break
+			return []string{key} // pinned account present → sole candidate
 		}
 	}
-	if idx <= 0 {
-		return order // not found, or already first
-	}
-	reordered := make([]string, 0, len(order))
-	reordered = append(reordered, key)
-	reordered = append(reordered, order[:idx]...)
-	reordered = append(reordered, order[idx+1:]...)
-	return reordered
+	return nil // pinned account unavailable → force fallback, never hop to another node account
 }
 
 // resolveConfig resolves the effective 封控 policy for the given dispatch owner by
@@ -890,7 +887,7 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 	conv := session.ConvID(body)
 	nowMs := s.Now()
 	if cfg.AffinityTTLSec > 0 {
-		order = s.applyAffinity(conv, order, nowMs)
+		order = s.pinToAffinity(conv, order, nowMs)
 	}
 
 	// Probe/keyword/model fallback decision — same logic as non-streaming Dispatch.
