@@ -44,7 +44,7 @@ func TestViaChannel_RejectsWhenSlotsFull(t *testing.T) {
 	ch := sqlc.FallbackChannel{ID: "ch_full", Name: "full", BaseUrl: up.URL, ApiKey: "k", MaxConcurrent: 1}
 	fillChannelSlots(store, ch.ID, int(ch.MaxConcurrent))
 
-	out := svc.viaChannel(context.Background(), "owner1", "opus", []byte(`{"model":"opus"}`), ch, "exhausted", 0)
+	out := svc.viaChannel(context.Background(), "owner1", "opus", []byte(`{"model":"opus"}`), ch, "exhausted", 0, policy.Defaults())
 
 	if got := atomic.LoadInt64(&hits); got != 0 {
 		t.Fatalf("upstream was forwarded %d times despite full slot set; MaxConcurrent not enforced", got)
@@ -73,7 +73,7 @@ func TestStreamChannel_RejectsWhenSlotsFull(t *testing.T) {
 	fillChannelSlots(store, ch.ID, int(ch.MaxConcurrent))
 
 	w := httptest.NewRecorder()
-	_, committed := svc.streamChannel(context.Background(), w, ch, []byte(`{"model":"opus"}`), "owner1", "opus", "exhausted")
+	_, committed := svc.streamChannel(context.Background(), w, ch, []byte(`{"model":"opus"}`), "owner1", "opus", "exhausted", policy.Defaults())
 
 	if got := atomic.LoadInt64(&hits); got != 0 {
 		t.Fatalf("upstream stream forwarded %d times despite full slot set", got)

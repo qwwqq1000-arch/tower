@@ -179,6 +179,9 @@ type ChannelProxy struct {
 	Body []byte
 	Ch   ChannelRef
 	HTTP *http.Client
+	// IdleTimeout, when non-zero, sets the maximum time between successive reads
+	// from a streaming response body (mirrors NodeProxy.IdleTimeout).
+	IdleTimeout time.Duration
 }
 
 func (p *ChannelProxy) client() *http.Client {
@@ -258,5 +261,9 @@ func (p *ChannelProxy) OpenStream(ctx context.Context, _ string) (*Stream, error
 	if err != nil {
 		return nil, err
 	}
-	return &Stream{Status: resp.StatusCode, Header: resp.Header, Body: resp.Body, Banned: false}, nil
+	body := io.ReadCloser(resp.Body)
+	if p.IdleTimeout > 0 {
+		body = newIdleTimeoutReader(resp.Body, p.IdleTimeout)
+	}
+	return &Stream{Status: resp.StatusCode, Header: resp.Header, Body: body, Banned: false}, nil
 }

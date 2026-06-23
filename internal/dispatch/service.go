@@ -136,12 +136,12 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 
 	// Fallback-first when triggered (and channels exist).
 	if cfg.FallbackEnabled && trig != fallback.None && trig != fallback.Exhausted && len(channels) > 0 {
-		return s.viaChannel(ctx, ownerID, model, body, channels[0], string(trig), time.Since(start).Milliseconds())
+		return s.viaChannel(ctx, ownerID, model, body, channels[0], string(trig), time.Since(start).Milliseconds(), cfg)
 	}
 
 	// PRE-FLIGHT: session exile check — route exiled conversations to fallback.
 	if (cfg.SessionErrorThreshold > 0 || cfg.ResponseExileEnabled) && s.sess.Exiled(conv, nowMs) && cfg.FallbackEnabled && len(channels) > 0 {
-		return s.viaChannel(ctx, ownerID, model, body, channels[0], "session", time.Since(start).Milliseconds())
+		return s.viaChannel(ctx, ownerID, model, body, channels[0], "session", time.Since(start).Milliseconds(), cfg)
 	}
 
 	// Our nodes.
@@ -172,7 +172,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 					_ = events.Record(ctx, s.Q, nowMs, events.Event{Type: "session_exile", Target: "cyber", OwnerID: ownerID})
 				}
 				if len(channels) > 0 {
-					return s.viaChannel(ctx, ownerID, model, body, channels[0], "cyber", time.Since(start).Milliseconds())
+					return s.viaChannel(ctx, ownerID, model, body, channels[0], "cyber", time.Since(start).Milliseconds(), cfg)
 				}
 				// No fallback channel — log and return the original response.
 				s.logOK(ctx, ownerID, model, res, winKey, time.Since(start).Milliseconds(), "cyber")
@@ -191,7 +191,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 		}
 		// fallback backstop
 		if cfg.FallbackEnabled && len(channels) > 0 {
-			return s.viaChannel(ctx, ownerID, model, body, channels[0], "exhausted", time.Since(start).Milliseconds())
+			return s.viaChannel(ctx, ownerID, model, body, channels[0], "exhausted", time.Since(start).Milliseconds(), cfg)
 		}
 		s.logErr(ctx, ownerID, model, res.Status, 0, "")
 		return Outcome{Status: 503, Body: `{"error":"all accounts exhausted"}`, Target: "node", Reason: ""}
@@ -199,7 +199,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 
 	// No nodes at all → fallback if possible.
 	if cfg.FallbackEnabled && len(channels) > 0 {
-		return s.viaChannel(ctx, ownerID, model, body, channels[0], "no_nodes", time.Since(start).Milliseconds())
+		return s.viaChannel(ctx, ownerID, model, body, channels[0], "no_nodes", time.Since(start).Milliseconds(), cfg)
 	}
 	s.logErr(ctx, ownerID, model, 503, 0, "no_nodes")
 	return Outcome{Status: 503, Body: `{"error":"no nodes available"}`, Target: "none", Reason: ""}
@@ -539,7 +539,7 @@ func (s *Service) enabledChannels(ctx context.Context, ownerID string, model str
 // fbSlotKey returns the store key for a fallback channel's concurrency slot.
 func fbSlotKey(id string) string { return "fb:" + id }
 
-func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []byte, ch sqlc.FallbackChannel, reason string, latencyMs int64) Outcome {
+func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []byte, ch sqlc.FallbackChannel, reason string, latencyMs int64, cfg policy.Config) Outcome {
 	cap := int(ch.MaxConcurrent)
 	if cap <= 0 {
 		cap = 1000
@@ -561,7 +561,7 @@ func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []
 	_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: "fallback", Target: ch.ID, OwnerID: ownerID, Detail: map[string]any{"reason": reason, "channelId": ch.ID, "channelName": ch.Name}})
 
 	// Decrypt the channel api_key transparently before forwarding (vault-crypto-3).
-	cp := &ChannelProxy{Body: body, Ch: ChannelRef{BaseURL: ch.BaseUrl, APIKey: s.Cipher.DecryptOrPlaintext(ch.ApiKey)}}
+	cp := &ChannelProxy{Body: body, Ch: ChannelRef{BaseURL: ch.BaseUrl, APIKey: s.Cipher.DecryptOrPlaintext(ch.ApiKey)}, IdleTimeout: time.Duration(cfg.StreamIdleTimeoutSec) * time.Second}
 	res, err := cp.Send(ctx, ch.ID)
 	if err != nil {
 		s.logErr(ctx, ownerID, model, 502, latencyMs, reason)
@@ -779,14 +779,14 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 		ProbeEnabled: cfg.FallbackProbeEnabled,
 	})
 	if cfg.FallbackEnabled && trig != fallback.None && trig != fallback.Exhausted && len(channels) > 0 {
-		if out, committed := s.streamChannel(ctx, w, channels[0], body, ownerID, model, string(trig)); committed {
+		if out, committed := s.streamChannel(ctx, w, channels[0], body, ownerID, model, string(trig), cfg); committed {
 			return out
 		}
 	}
 
 	// PRE-FLIGHT: session exile check — route exiled conversations to fallback.
 	if (cfg.SessionErrorThreshold > 0 || cfg.ResponseExileEnabled) && s.sess.Exiled(conv, nowMs) && cfg.FallbackEnabled && len(channels) > 0 {
-		if out, committed := s.streamChannel(ctx, w, channels[0], body, ownerID, model, "session"); committed {
+		if out, committed := s.streamChannel(ctx, w, channels[0], body, ownerID, model, "session", cfg); committed {
 			return out
 		}
 	}
@@ -843,7 +843,7 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 		if len(order) == 0 {
 			exReason = "no_nodes"
 		}
-		if out, committed := s.streamChannel(ctx, w, channels[0], body, ownerID, model, exReason); committed {
+		if out, committed := s.streamChannel(ctx, w, channels[0], body, ownerID, model, exReason, cfg); committed {
 			return out
 		}
 	}
@@ -861,14 +861,7 @@ func (s *Service) streamOneWithBody(ctx context.Context, w http.ResponseWriter, 
 	return out, committed, sseBody
 }
 
-// streamOne attempts one account. committed=true means we wrote to the client
-// (success) and the caller must not fail over.
-func (s *Service) streamOne(ctx context.Context, w http.ResponseWriter, key string, trial bool, resolver Resolver, breaker state.BreakerCfg, body []byte, cfg policy.Config, ownerID, model string, keyOwner map[string]string) (Outcome, bool) {
-	out, committed, _ := s.streamOneInternal(ctx, w, key, trial, resolver, breaker, body, cfg, ownerID, model, keyOwner)
-	return out, committed
-}
-
-// streamOneInternal is the actual implementation; streamOne and streamOneWithBody are thin wrappers.
+// streamOneInternal is the actual implementation; streamOneWithBody is a thin wrapper.
 func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, key string, trial bool, resolver Resolver, breaker state.BreakerCfg, body []byte, cfg policy.Config, ownerID, model string, keyOwner map[string]string) (Outcome, bool, string) {
 	settled := false
 	sendReturned := false
@@ -973,6 +966,9 @@ func (s *Service) recordBan(ctx context.Context, ownerID, key string, status int
 	if !found {
 		return
 	}
+	// Capture now once so the dispatch event and ban episode share the same
+	// timestamp (two s.Now() calls could skew the values on a slow path).
+	nowMs := s.Now()
 	// Read permanent + streak atomically under a single store lock to avoid
 	// the race where IsPermanent and BanStreak each acquire the lock separately
 	// and can observe different breaker generations (ban-classify-6).
@@ -982,11 +978,11 @@ func (s *Service) recordBan(ctx context.Context, ownerID, key string, status int
 		typ = "ban_permanent"
 	}
 	detail := map[string]any{"account": key, "status": status, "streak": streak, "permanent": permanent}
-	if err := events.Record(ctx, s.Q, s.Now(), events.Event{Type: typ, Target: key, OwnerID: ownerID, Detail: detail}); err != nil {
+	if err := events.Record(ctx, s.Q, nowMs, events.Event{Type: typ, Target: key, OwnerID: ownerID, Detail: detail}); err != nil {
 		log.Printf("recordBan: insert event key=%s: %v", key, err)
 	}
 	db, _ := json.Marshal(detail)
-	if err := s.Q.InsertBanEpisode(ctx, sqlc.InsertBanEpisodeParams{NodeID: node, ProfileID: profile, BannedAt: s.Now(), Detail: db}); err != nil {
+	if err := s.Q.InsertBanEpisode(ctx, sqlc.InsertBanEpisodeParams{NodeID: node, ProfileID: profile, BannedAt: nowMs, Detail: db}); err != nil {
 		log.Printf("recordBan: insert episode key=%s: %v", key, err)
 	}
 }
@@ -1116,7 +1112,7 @@ func lastUserText(body []byte) string {
 }
 
 // streamChannel attempts a fallback channel stream. committed=true means we wrote to the client.
-func (s *Service) streamChannel(ctx context.Context, w http.ResponseWriter, ch sqlc.FallbackChannel, body []byte, ownerID, model, reason string) (Outcome, bool) {
+func (s *Service) streamChannel(ctx context.Context, w http.ResponseWriter, ch sqlc.FallbackChannel, body []byte, ownerID, model, reason string, cfg policy.Config) (Outcome, bool) {
 	cap := int(ch.MaxConcurrent)
 	if cap <= 0 {
 		cap = 1000
@@ -1134,7 +1130,7 @@ func (s *Service) streamChannel(ctx context.Context, w http.ResponseWriter, ch s
 	_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: "fallback", Target: ch.ID, OwnerID: ownerID, Detail: map[string]any{"reason": reason, "channelId": ch.ID, "channelName": ch.Name}})
 
 	// Decrypt the channel api_key transparently before forwarding (vault-crypto-3).
-	cp := &ChannelProxy{Body: body, Ch: ChannelRef{BaseURL: ch.BaseUrl, APIKey: s.Cipher.DecryptOrPlaintext(ch.ApiKey)}}
+	cp := &ChannelProxy{Body: body, Ch: ChannelRef{BaseURL: ch.BaseUrl, APIKey: s.Cipher.DecryptOrPlaintext(ch.ApiKey)}, IdleTimeout: time.Duration(cfg.StreamIdleTimeoutSec) * time.Second}
 	st, err := cp.OpenStream(ctx, ch.ID)
 	if err != nil {
 		return Outcome{}, false
