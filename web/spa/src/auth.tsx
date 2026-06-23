@@ -1,5 +1,5 @@
 // ============================================================
-// Tower SPA — AuthProvider + useAuth + LoginGate
+// Tower SPA — AuthProvider + useAuth + LoginGate + RequireRole
 // ============================================================
 import {
   createContext,
@@ -9,6 +9,7 @@ import {
   useCallback,
   type ReactNode,
 } from 'react';
+import { Navigate } from 'react-router-dom';
 import { me, login as apiLogin, logout as apiLogout, changePassword } from './api';
 import type { User } from './types';
 
@@ -286,4 +287,33 @@ export function LoginGate({ children }: { children: ReactNode }) {
       </div>
     </div>
   );
+}
+
+// ------------------------------------------------------------------
+// RequireRole — redirects to "/" when the user's role is not in
+// the allowed list. Tenants and viewers are bounced away from
+// admin/superadmin-only pages before they can even render.
+// The backend enforces authz independently; this is a UX guard.
+// ------------------------------------------------------------------
+interface RequireRoleProps {
+  /** Roles that are allowed to see this page. */
+  allow: string[];
+  children: ReactNode;
+  /** Where to redirect on access denied. Defaults to "/". */
+  redirectTo?: string;
+}
+
+export function RequireRole({ allow, children, redirectTo = '/' }: RequireRoleProps) {
+  const { role, loading } = useAuth();
+
+  // While the auth state is still loading, render nothing (LoginGate will
+  // show the loading spinner; once resolved we re-render).
+  if (loading) return null;
+
+  // If the user's role is not in the allow list, redirect.
+  if (!role || !allow.includes(role)) {
+    return <Navigate to={redirectTo} replace />;
+  }
+
+  return <>{children}</>;
 }
