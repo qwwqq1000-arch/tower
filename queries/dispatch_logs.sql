@@ -10,7 +10,12 @@ VALUES ($1,$2,$3,$4,$5)
 ON CONFLICT (request_id) DO NOTHING;
 
 -- name: GetDispatchLogDetail :one
-SELECT request_id, owner_id, ts, req_body, req_headers FROM dispatch_log_details WHERE request_id = $1;
+SELECT request_id, owner_id, ts, req_body, req_headers, resp_status, resp_body FROM dispatch_log_details WHERE request_id = $1;
+
+-- name: UpdateDispatchLogDetailResponse :exec
+-- Records the final response status + body for a request (logs-detail-2). No-op if
+-- the detail row was already pruned.
+UPDATE dispatch_log_details SET resp_status = $2, resp_body = $3 WHERE request_id = $1;
 
 -- name: DeleteDispatchLogDetailBefore :exec
 DELETE FROM dispatch_log_details WHERE ts < $1;

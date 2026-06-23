@@ -139,6 +139,8 @@ type DispatchLogDetail struct {
 	Ts         int64  `json:"ts"`
 	ReqBody    string `json:"req_body"`
 	ReqHeaders string `json:"req_headers"`
+	RespStatus int32  `json:"resp_status"`
+	RespBody   string `json:"resp_body"`
 }
 
 type FallbackChannel struct {

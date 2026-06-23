@@ -98,6 +98,17 @@ function LogDetailModal({ requestId, isTenant, onClose }: { requestId: string; i
           {!error && !detail && <div className="text-muted text-sm animate-pulse">加载中…</div>}
           {detail && (
             <>
+              {(detail.respBody || detail.respStatus) ? (() => {
+                const isErr = (detail.respStatus ?? 0) >= 400;
+                return (
+                  <div>
+                    <p className="text-xs uppercase tracking-wide mb-1.5">
+                      <span className={isErr ? 'text-err' : 'text-muted'}>响应{detail.respStatus ? ` · HTTP ${detail.respStatus}` : ''}{isErr ? '(错误)' : ''}</span>
+                    </p>
+                    <pre className={`text-xs rounded-lg px-3 py-2 overflow-x-auto whitespace-pre-wrap break-all max-h-[40vh] border ${isErr ? 'text-err bg-err/10 border-err/30' : 'text-ink bg-bg border-line'}`}>{prettyJSON(detail.respBody ?? '') || <span className="text-muted/40 italic">空</span>}</pre>
+                  </div>
+                );
+              })() : null}
               <div>
                 <p className="text-xs text-muted uppercase tracking-wide mb-1.5">请求头(密钥已脱敏)</p>
                 <pre className="text-xs text-muted bg-bg border border-line rounded-lg px-3 py-2 overflow-x-auto whitespace-pre-wrap break-all">{prettyJSON(detail.reqHeaders)}</pre>

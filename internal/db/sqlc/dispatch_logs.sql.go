@@ -79,7 +79,7 @@ func (q *Queries) DeleteDispatchLogDetailBefore(ctx context.Context, ts int64) e
 }
 
 const getDispatchLogDetail = `-- name: GetDispatchLogDetail :one
-SELECT request_id, owner_id, ts, req_body, req_headers FROM dispatch_log_details WHERE request_id = $1
+SELECT request_id, owner_id, ts, req_body, req_headers, resp_status, resp_body FROM dispatch_log_details WHERE request_id = $1
 `
 
 func (q *Queries) GetDispatchLogDetail(ctx context.Context, requestID string) (DispatchLogDetail, error) {
@@ -91,6 +91,8 @@ func (q *Queries) GetDispatchLogDetail(ctx context.Context, requestID string) (D
 		&i.Ts,
 		&i.ReqBody,
 		&i.ReqHeaders,
+		&i.RespStatus,
+		&i.RespBody,
 	)
 	return i, err
 }
@@ -248,6 +250,23 @@ func (q *Queries) TodayDispatchForOwner(ctx context.Context, arg TodayDispatchFo
 	var i TodayDispatchForOwnerRow
 	err := row.Scan(&i.Requests, &i.Cost)
 	return i, err
+}
+
+const updateDispatchLogDetailResponse = `-- name: UpdateDispatchLogDetailResponse :exec
+UPDATE dispatch_log_details SET resp_status = $2, resp_body = $3 WHERE request_id = $1
+`
+
+type UpdateDispatchLogDetailResponseParams struct {
+	RequestID  string `json:"request_id"`
+	RespStatus int32  `json:"resp_status"`
+	RespBody   string `json:"resp_body"`
+}
+
+// Records the final response status + body for a request (logs-detail-2). No-op if
+// the detail row was already pruned.
+func (q *Queries) UpdateDispatchLogDetailResponse(ctx context.Context, arg UpdateDispatchLogDetailResponseParams) error {
+	_, err := q.db.Exec(ctx, updateDispatchLogDetailResponse, arg.RequestID, arg.RespStatus, arg.RespBody)
+	return err
 }
 
 const upsertDispatchLogDetail = `-- name: UpsertDispatchLogDetail :exec

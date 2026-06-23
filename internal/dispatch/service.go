@@ -163,6 +163,23 @@ func (s *Service) writeRequestDetail(ctx context.Context, ownerID string, body [
 	})
 }
 
+// UpdateRequestDetailResponse records the final response status + body (capped) for
+// the ctx request, so the log-detail modal can show WHY a request failed — the actual
+// error message, not just the request (logs-detail-2). Called by the HTTP handler
+// after Dispatch/DispatchStream returns. No-op if no request id or the detail expired.
+func (s *Service) UpdateRequestDetailResponse(ctx context.Context, status int, body string) {
+	rid := requestIDFrom(ctx)
+	if rid == "" {
+		return
+	}
+	if len(body) > maxDetailBodyBytes {
+		body = body[:maxDetailBodyBytes] + "\n…[truncated]"
+	}
+	_ = s.Q.UpdateDispatchLogDetailResponse(ctx, sqlc.UpdateDispatchLogDetailResponseParams{
+		RequestID: rid, RespStatus: int32(status), RespBody: body,
+	})
+}
+
 // insertLog stamps the ctx request id onto the row so every log row of a request
 // links to its stored detail, then inserts it.
 func (s *Service) insertLog(ctx context.Context, p sqlc.InsertDispatchLogParams) {
@@ -174,7 +191,6 @@ func (s *Service) insertLog(ctx context.Context, p sqlc.InsertDispatchLogParams)
 // fallback backstop, logging and cost-rolling the outcome.
 func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string, body []byte) Outcome {
 	start := time.Now()
-	ctx = WithRequestID(ctx, newRequestID())
 	s.writeRequestDetail(ctx, ownerID, body)
 
 	cfg := s.resolveConfig(ctx, ownerID)
@@ -862,7 +878,6 @@ func flushCopy(dst http.ResponseWriter, src io.Reader) {
 // DispatchStream routes a streaming request: it may fail over to another account
 // before the first byte; once streaming to the client starts, it commits.
 func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, ownerID, model string, body []byte) Outcome {
-	ctx = WithRequestID(ctx, newRequestID())
 	s.writeRequestDetail(ctx, ownerID, body)
 	cfg := s.resolveConfig(ctx, ownerID)
 	// Per-model max_tokens ceiling (limits-1): reject 400 before any attempt. The

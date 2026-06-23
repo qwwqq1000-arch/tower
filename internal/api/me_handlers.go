@@ -237,7 +237,7 @@ func meLogDetailHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 404, map[string]string{"error": "detail not found"})
 			return
 		}
-		writeJSON(w, 200, map[string]any{"requestId": d.RequestID, "ts": d.Ts, "reqBody": d.ReqBody, "reqHeaders": d.ReqHeaders})
+		writeJSON(w, 200, map[string]any{"requestId": d.RequestID, "ts": d.Ts, "reqBody": d.ReqBody, "reqHeaders": d.ReqHeaders, "respStatus": d.RespStatus, "respBody": d.RespBody})
 	}
 }
 
