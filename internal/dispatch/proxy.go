@@ -85,8 +85,18 @@ func (p *NodeProxy) Send(ctx context.Context, key string) (ProxyResult, error) {
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(resp.Body)
 	body := string(data)
+	status := resp.StatusCode
+	// Claude can return a 200 header and then carry an error in the body (e.g.
+	// {"type":"error","error":{"type":"overloaded_error"}}) — the same in-body
+	// error the stream path catches via sseHasError. Demote a 2xx with an in-body
+	// error to 500 so the orchestrator accounts it as an error and fails over
+	// instead of reporting it as a clean success (ban classification on the body
+	// is unchanged, so an in-body auth error still opens the breaker).
+	if status >= 200 && status < 300 && sseHasError(body) {
+		status = 500
+	}
 	return ProxyResult{
-		Status: resp.StatusCode,
+		Status: status,
 		Body:   body,
 		Banned: ClassifyBanned(resp.StatusCode, body, p.BanSignals, p.BanKeywords),
 	}, nil
