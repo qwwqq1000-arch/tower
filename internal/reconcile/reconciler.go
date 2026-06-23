@@ -72,6 +72,15 @@ func (r *Reconciler) RunOnce(ctx context.Context) error {
 }
 
 // Run reconciles on an interval until ctx is cancelled.
+//
+// Activation note (provision-1): in the current deployment the reconciler is
+// constructed but its Run loop is not started by default. To enable active
+// feature reconciliation, call r.Run(ctx, interval) from cmd/tower/main.go
+// after building the Reconciler. A 5-minute interval is recommended for most
+// fleets. Leave the loop disabled if your nodes are managed solely through
+// the dashboard (desired-state pushes are applied immediately on save via
+// the PUT /api/admin/desired-features route); the reconciler is only needed
+// for eventual-consistency healing after network interruptions or node restarts.
 func (r *Reconciler) Run(ctx context.Context, interval time.Duration) {
 	t := time.NewTicker(interval)
 	defer t.Stop()

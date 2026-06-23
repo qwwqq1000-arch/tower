@@ -58,6 +58,7 @@ func Provision(ctx context.Context, q *sqlc.Queries, ex Executor, jobID, name, h
 		ShortID:         "",
 		Version:         "",
 		FingerprintSeed: seed,
+		Kind:            "meridian", // provision-2: provisioned nodes are always meridian
 	})
 	if err != nil {
 		sink.Log("✗ 纳管失败: " + err.Error())
