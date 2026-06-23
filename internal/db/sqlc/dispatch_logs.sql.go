@@ -69,9 +69,35 @@ func (q *Queries) CountDispatchLogsSince(ctx context.Context, ts int64) (int64, 
 	return count, err
 }
 
+const deleteDispatchLogDetailBefore = `-- name: DeleteDispatchLogDetailBefore :exec
+DELETE FROM dispatch_log_details WHERE ts < $1
+`
+
+func (q *Queries) DeleteDispatchLogDetailBefore(ctx context.Context, ts int64) error {
+	_, err := q.db.Exec(ctx, deleteDispatchLogDetailBefore, ts)
+	return err
+}
+
+const getDispatchLogDetail = `-- name: GetDispatchLogDetail :one
+SELECT request_id, owner_id, ts, req_body, req_headers FROM dispatch_log_details WHERE request_id = $1
+`
+
+func (q *Queries) GetDispatchLogDetail(ctx context.Context, requestID string) (DispatchLogDetail, error) {
+	row := q.db.QueryRow(ctx, getDispatchLogDetail, requestID)
+	var i DispatchLogDetail
+	err := row.Scan(
+		&i.RequestID,
+		&i.OwnerID,
+		&i.Ts,
+		&i.ReqBody,
+		&i.ReqHeaders,
+	)
+	return i, err
+}
+
 const insertDispatchLog = `-- name: InsertDispatchLog :exec
-INSERT INTO dispatch_logs (ts, owner_id, model, target, profile_id, status, http_status, latency_ms, tokens_in, tokens_out, fallback_reason, ttfb_ms, stream, cost_usd)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+INSERT INTO dispatch_logs (ts, owner_id, model, target, profile_id, status, http_status, latency_ms, tokens_in, tokens_out, fallback_reason, ttfb_ms, stream, cost_usd, request_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 `
 
 type InsertDispatchLogParams struct {
@@ -89,6 +115,7 @@ type InsertDispatchLogParams struct {
 	TtfbMs         int64   `json:"ttfb_ms"`
 	Stream         bool    `json:"stream"`
 	CostUsd        float64 `json:"cost_usd"`
+	RequestID      string  `json:"request_id"`
 }
 
 func (q *Queries) InsertDispatchLog(ctx context.Context, arg InsertDispatchLogParams) error {
@@ -107,12 +134,13 @@ func (q *Queries) InsertDispatchLog(ctx context.Context, arg InsertDispatchLogPa
 		arg.TtfbMs,
 		arg.Stream,
 		arg.CostUsd,
+		arg.RequestID,
 	)
 	return err
 }
 
 const listLogsByOwner = `-- name: ListLogsByOwner :many
-SELECT id, ts, owner_id, model, target, profile_id, status, http_status, latency_ms, tokens_in, tokens_out, fallback_reason, created_at, ttfb_ms, stream, cost_usd FROM dispatch_logs WHERE owner_id = $1 ORDER BY ts DESC LIMIT $2
+SELECT id, ts, owner_id, model, target, profile_id, status, http_status, latency_ms, tokens_in, tokens_out, fallback_reason, created_at, ttfb_ms, stream, cost_usd, request_id FROM dispatch_logs WHERE owner_id = $1 ORDER BY ts DESC LIMIT $2
 `
 
 type ListLogsByOwnerParams struct {
@@ -146,6 +174,7 @@ func (q *Queries) ListLogsByOwner(ctx context.Context, arg ListLogsByOwnerParams
 			&i.TtfbMs,
 			&i.Stream,
 			&i.CostUsd,
+			&i.RequestID,
 		); err != nil {
 			return nil, err
 		}
@@ -158,7 +187,7 @@ func (q *Queries) ListLogsByOwner(ctx context.Context, arg ListLogsByOwnerParams
 }
 
 const listRecentDispatchLogs = `-- name: ListRecentDispatchLogs :many
-SELECT id, ts, owner_id, model, target, profile_id, status, http_status, latency_ms, tokens_in, tokens_out, fallback_reason, created_at, ttfb_ms, stream, cost_usd FROM dispatch_logs ORDER BY ts DESC LIMIT $1
+SELECT id, ts, owner_id, model, target, profile_id, status, http_status, latency_ms, tokens_in, tokens_out, fallback_reason, created_at, ttfb_ms, stream, cost_usd, request_id FROM dispatch_logs ORDER BY ts DESC LIMIT $1
 `
 
 func (q *Queries) ListRecentDispatchLogs(ctx context.Context, limit int32) ([]DispatchLog, error) {
@@ -187,6 +216,7 @@ func (q *Queries) ListRecentDispatchLogs(ctx context.Context, limit int32) ([]Di
 			&i.TtfbMs,
 			&i.Stream,
 			&i.CostUsd,
+			&i.RequestID,
 		); err != nil {
 			return nil, err
 		}
@@ -218,4 +248,31 @@ func (q *Queries) TodayDispatchForOwner(ctx context.Context, arg TodayDispatchFo
 	var i TodayDispatchForOwnerRow
 	err := row.Scan(&i.Requests, &i.Cost)
 	return i, err
+}
+
+const upsertDispatchLogDetail = `-- name: UpsertDispatchLogDetail :exec
+INSERT INTO dispatch_log_details (request_id, owner_id, ts, req_body, req_headers)
+VALUES ($1,$2,$3,$4,$5)
+ON CONFLICT (request_id) DO NOTHING
+`
+
+type UpsertDispatchLogDetailParams struct {
+	RequestID  string `json:"request_id"`
+	OwnerID    string `json:"owner_id"`
+	Ts         int64  `json:"ts"`
+	ReqBody    string `json:"req_body"`
+	ReqHeaders string `json:"req_headers"`
+}
+
+// Writes the per-request body+headers once; later log rows of the same request
+// (same request_id) are no-ops so we keep exactly one detail per request.
+func (q *Queries) UpsertDispatchLogDetail(ctx context.Context, arg UpsertDispatchLogDetailParams) error {
+	_, err := q.db.Exec(ctx, upsertDispatchLogDetail,
+		arg.RequestID,
+		arg.OwnerID,
+		arg.Ts,
+		arg.ReqBody,
+		arg.ReqHeaders,
+	)
+	return err
 }

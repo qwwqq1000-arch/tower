@@ -6,6 +6,7 @@ import { useEffect, useState, useCallback } from 'react';
 import {
   getLogs, getAudit, getEvents, listFallbackChannels, listAccounts,
   getMeLogs, getMeEvents, listMeFallback, getMeAccounts,
+  getLogDetail, getMeLogDetail, type LogDetail,
 } from '../api';
 import type { LogEntry, AuditRecord, EventRecord } from '../types';
 import { useAuth } from '../auth';
@@ -69,10 +70,54 @@ function renderTarget(target: string, channelMap: Map<string, string>, accountMa
   return email ?? '节点';
 }
 
-function LogRow({ row, channelMap, accountMap }: { row: LogEntry; channelMap: Map<string, string>; accountMap: Map<string, string> }) {
+// prettifies a JSON body for the detail view; falls back to the raw string.
+function prettyJSON(s: string): string {
+  if (!s) return '';
+  try { return JSON.stringify(JSON.parse(s), null, 2); } catch { return s; }
+}
+
+// LogDetailModal fetches and shows the stored request body + redacted headers for
+// a clicked log row (logs-detail-1).
+function LogDetailModal({ requestId, isTenant, onClose }: { requestId: string; isTenant: boolean; onClose: () => void }) {
+  const [detail, setDetail] = useState<LogDetail | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    (isTenant ? getMeLogDetail(requestId) : getLogDetail(requestId))
+      .then(setDetail)
+      .catch((e) => setError(e instanceof Error ? e.message : '加载失败'));
+  }, [requestId, isTenant]);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div className="bg-surface border border-line rounded-xl w-full max-w-3xl max-h-[85vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-3 border-b border-line">
+          <h3 className="text-sm font-semibold text-ink">请求详情</h3>
+          <button onClick={onClose} className="text-muted hover:text-ink text-lg leading-none">×</button>
+        </div>
+        <div className="overflow-y-auto p-5 space-y-4">
+          {error && <div className="text-err text-sm bg-err/10 border border-err/30 rounded-lg px-3 py-2">{error}</div>}
+          {!error && !detail && <div className="text-muted text-sm animate-pulse">加载中…</div>}
+          {detail && (
+            <>
+              <div>
+                <p className="text-xs text-muted uppercase tracking-wide mb-1.5">请求头(密钥已脱敏)</p>
+                <pre className="text-xs text-muted bg-bg border border-line rounded-lg px-3 py-2 overflow-x-auto whitespace-pre-wrap break-all">{prettyJSON(detail.reqHeaders)}</pre>
+              </div>
+              <div>
+                <p className="text-xs text-muted uppercase tracking-wide mb-1.5">请求体</p>
+                <pre className="text-xs text-ink bg-bg border border-line rounded-lg px-3 py-2 overflow-x-auto whitespace-pre-wrap break-all max-h-[45vh]">{prettyJSON(detail.reqBody) || <span className="text-muted/40 italic">空</span>}</pre>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LogRow({ row, channelMap, accountMap, onOpen }: { row: LogEntry; channelMap: Map<string, string>; accountMap: Map<string, string>; onOpen?: () => void }) {
   const targetLabel = renderTarget(row.target, channelMap, accountMap);
   return (
-    <tr className="border-t border-line hover:bg-line/20 transition text-sm">
+    <tr className={`border-t border-line hover:bg-line/20 transition text-sm ${onOpen ? 'cursor-pointer' : ''}`} onClick={onOpen}>
       <td className="px-3 py-2 text-xs text-muted whitespace-nowrap font-mono">{fmtTime(row.ts)}</td>
       <td className="px-3 py-2 text-ink truncate max-w-[140px]" title={row.model}>{row.model || '—'}</td>
       <td className="px-3 py-2 text-ink truncate max-w-[120px] font-mono text-xs">
@@ -94,10 +139,10 @@ function LogRow({ row, channelMap, accountMap }: { row: LogEntry; channelMap: Ma
   );
 }
 
-function LogCard({ row, channelMap, accountMap }: { row: LogEntry; channelMap: Map<string, string>; accountMap: Map<string, string> }) {
+function LogCard({ row, channelMap, accountMap, onOpen }: { row: LogEntry; channelMap: Map<string, string>; accountMap: Map<string, string>; onOpen?: () => void }) {
   const targetLabel = renderTarget(row.target, channelMap, accountMap);
   return (
-    <div className="bg-surface border border-line rounded-xl p-4 space-y-2 text-sm">
+    <div className={`bg-surface border border-line rounded-xl p-4 space-y-2 text-sm ${onOpen ? 'cursor-pointer active:bg-line/20' : ''}`} onClick={onOpen}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="font-medium text-ink truncate">{row.model || '—'}</p>
@@ -130,6 +175,7 @@ function DispatchLogsTab({ isTenant }: { isTenant: boolean }) {
   const [query, setQuery] = useState('');
   const [channelMap, setChannelMap] = useState<Map<string, string>>(new Map());
   const [accountMap, setAccountMap] = useState<Map<string, string>>(new Map());
+  const [detailId, setDetailId] = useState<string | null>(null); // requestId of the row being inspected
 
   useEffect(() => {
     (isTenant ? listMeFallback() : listFallbackChannels())
@@ -193,8 +239,9 @@ function DispatchLogsTab({ isTenant }: { isTenant: boolean }) {
 
   return (
     <div className="space-y-4">
+      {detailId && <LogDetailModal requestId={detailId} isTenant={isTenant} onClose={() => setDetailId(null)} />}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <p className="text-xs text-muted">最近 200 条请求记录</p>
+        <p className="text-xs text-muted">最近 200 条请求记录 · 点击行查看完整请求</p>
         <button
           onClick={() => { void fetchLogs(); }}
           disabled={loading}
@@ -251,13 +298,15 @@ function DispatchLogsTab({ isTenant }: { isTenant: boolean }) {
               </thead>
               <tbody>
                 {filtered.map((row, i) => (
-                  <LogRow key={i} row={row} channelMap={channelMap} accountMap={accountMap} />
+                  <LogRow key={i} row={row} channelMap={channelMap} accountMap={accountMap}
+                    onOpen={row.requestId ? () => setDetailId(row.requestId!) : undefined} />
                 ))}
               </tbody>
             </table>
           </div>
           <div className="md:hidden space-y-3">
-            {filtered.map((row, i) => <LogCard key={i} row={row} channelMap={channelMap} accountMap={accountMap} />)}
+            {filtered.map((row, i) => <LogCard key={i} row={row} channelMap={channelMap} accountMap={accountMap}
+              onOpen={row.requestId ? () => setDetailId(row.requestId!) : undefined} />)}
           </div>
           <p className="text-xs text-muted text-right">
             显示 {filtered.length} / {rows.length} 条

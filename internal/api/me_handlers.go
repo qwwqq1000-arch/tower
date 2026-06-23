@@ -211,9 +211,33 @@ func meLogsHandler(q *sqlc.Queries) http.HandlerFunc {
 				"latencyMs": l.LatencyMs, "tokensIn": l.TokensIn,
 				"tokensOut": l.TokensOut, "fallbackReason": l.FallbackReason,
 				"ttfbMs": l.TtfbMs, "stream": l.Stream, "costUsd": l.CostUsd,
+				"requestId": l.RequestID,
 			})
 		}
 		writeJSON(w, 200, out)
+	}
+}
+
+// meLogDetailHandler returns the stored request body + redacted headers for a log
+// row owned by the caller (logs-detail-1).
+func meLogDetailHandler(q *sqlc.Queries) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		owner, ok := ownerFrom(r)
+		if !ok {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return
+		}
+		rid := r.URL.Query().Get("requestId")
+		if rid == "" {
+			writeJSON(w, 400, map[string]string{"error": "requestId required"})
+			return
+		}
+		d, err := q.GetDispatchLogDetail(r.Context(), rid)
+		if err != nil || d.OwnerID != owner { // tenant isolation
+			writeJSON(w, 404, map[string]string{"error": "detail not found"})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"requestId": d.RequestID, "ts": d.Ts, "reqBody": d.ReqBody, "reqHeaders": d.ReqHeaders})
 	}
 }
 

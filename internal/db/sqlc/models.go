@@ -130,6 +130,15 @@ type DispatchLog struct {
 	TtfbMs         int64              `json:"ttfb_ms"`
 	Stream         bool               `json:"stream"`
 	CostUsd        float64            `json:"cost_usd"`
+	RequestID      string             `json:"request_id"`
+}
+
+type DispatchLogDetail struct {
+	RequestID  string `json:"request_id"`
+	OwnerID    string `json:"owner_id"`
+	Ts         int64  `json:"ts"`
+	ReqBody    string `json:"req_body"`
+	ReqHeaders string `json:"req_headers"`
 }
 
 type FallbackChannel struct {

@@ -214,6 +214,7 @@ export interface LogEntry {
   fallbackReason: string;
   stream?: boolean;
   costUsd?: number;
+  requestId?: string; // links to stored request detail (body+headers) for the 点开 view
 }
 
 // --- Events ---

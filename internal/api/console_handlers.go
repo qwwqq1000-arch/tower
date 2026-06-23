@@ -228,9 +228,34 @@ func listLogsHandler(q *sqlc.Queries) http.HandlerFunc {
 				"latencyMs": l.LatencyMs, "tokensIn": l.TokensIn,
 				"tokensOut": l.TokensOut, "fallbackReason": l.FallbackReason,
 				"ttfbMs": l.TtfbMs, "stream": l.Stream, "costUsd": l.CostUsd,
+				"requestId": l.RequestID,
 			})
 		}
 		writeJSON(w, 200, out)
+	}
+}
+
+// logDetailHandler returns the stored request body + redacted headers for a log
+// row's request_id (logs-detail-1). Tenant-scoped: a non-superadmin may only read
+// detail for a request its own owner_id produced.
+func logDetailHandler(q *sqlc.Queries) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		owner, all := scope(r)
+		rid := r.URL.Query().Get("requestId")
+		if rid == "" {
+			writeJSON(w, 400, map[string]string{"error": "requestId required"})
+			return
+		}
+		d, err := q.GetDispatchLogDetail(r.Context(), rid)
+		if err != nil {
+			writeJSON(w, 404, map[string]string{"error": "detail not found (expired or never captured)"})
+			return
+		}
+		if !all && d.OwnerID != owner { // tenant isolation
+			writeJSON(w, 404, map[string]string{"error": "detail not found"})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"requestId": d.RequestID, "ts": d.Ts, "reqBody": d.ReqBody, "reqHeaders": d.ReqHeaders})
 	}
 }
 

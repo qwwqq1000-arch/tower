@@ -148,6 +148,12 @@ export const getLogs = (params?: Record<string, string>) => {
   return api<LogEntry[]>('GET', `/api/admin/logs${qs}`);
 };
 
+export interface LogDetail { requestId: string; ts: number; reqBody: string; reqHeaders: string }
+export const getLogDetail = (requestId: string) =>
+  api<LogDetail>('GET', `/api/admin/logs/detail?requestId=${encodeURIComponent(requestId)}`);
+export const getMeLogDetail = (requestId: string) =>
+  api<LogDetail>('GET', `/api/me/logs/detail?requestId=${encodeURIComponent(requestId)}`);
+
 // ------------------------------------------------------------------
 // Events
 // ------------------------------------------------------------------

@@ -101,8 +101,6 @@ func parseUsage(body string) (in, out, cacheRead, cache5m, cache1h int64) {
 	return in, out, cacheRead, cache5m, cache1h
 }
 
-// Dispatch routes one request: fallback decision → our nodes (failover) →
-// fallback backstop, logging and cost-rolling the outcome.
 // reqMaxTokens extracts the requested output cap (max_tokens) from a Messages
 // request body, or 0 when absent/unparseable.
 func reqMaxTokens(body []byte) int {
@@ -118,8 +116,66 @@ func maxTokensError(req, limit int, model string) string {
 	return fmt.Sprintf(`{"error":{"type":"invalid_request_error","message":"max_tokens %d exceeds the %d output-token limit for %s"}}`, req, limit, model)
 }
 
+const maxDetailBodyBytes = 64 * 1024
+
+// redactedHeaderKeys carry the dispatch key / cookies and are masked before the
+// request detail is stored — secrets must never reach the log-detail view.
+var redactedHeaderKeys = map[string]bool{
+	"Authorization": true, "X-Api-Key": true, "Cookie": true, "Proxy-Authorization": true,
+}
+
+func maskSecret(v string) string {
+	if len(v) <= 8 {
+		return "****"
+	}
+	return v[:6] + "…****"
+}
+
+// redactHeadersJSON serializes the client headers for the log-detail view with
+// secret-bearing values masked (logs-detail-1).
+func redactHeadersJSON(h http.Header) string {
+	out := map[string]string{}
+	for k, vs := range h {
+		v := strings.Join(vs, ", ")
+		if redactedHeaderKeys[http.CanonicalHeaderKey(k)] {
+			v = maskSecret(v)
+		}
+		out[k] = v
+	}
+	b, _ := json.Marshal(out)
+	return string(b)
+}
+
+// writeRequestDetail stores the request's body (capped) + redacted headers once,
+// keyed by the ctx request id, for the log "view request" feature (logs-detail-1).
+func (s *Service) writeRequestDetail(ctx context.Context, ownerID string, body []byte) {
+	rid := requestIDFrom(ctx)
+	if rid == "" {
+		return
+	}
+	bodyStr := string(body)
+	if len(bodyStr) > maxDetailBodyBytes {
+		bodyStr = bodyStr[:maxDetailBodyBytes] + "\n…[truncated]"
+	}
+	_ = s.Q.UpsertDispatchLogDetail(ctx, sqlc.UpsertDispatchLogDetailParams{
+		RequestID: rid, OwnerID: ownerID, Ts: s.Now(),
+		ReqBody: bodyStr, ReqHeaders: redactHeadersJSON(clientHeadersFrom(ctx)),
+	})
+}
+
+// insertLog stamps the ctx request id onto the row so every log row of a request
+// links to its stored detail, then inserts it.
+func (s *Service) insertLog(ctx context.Context, p sqlc.InsertDispatchLogParams) {
+	p.RequestID = requestIDFrom(ctx)
+	_ = s.Q.InsertDispatchLog(ctx, p)
+}
+
+// Dispatch routes one request: fallback decision → our nodes (failover) →
+// fallback backstop, logging and cost-rolling the outcome.
 func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string, body []byte) Outcome {
 	start := time.Now()
+	ctx = WithRequestID(ctx, newRequestID())
+	s.writeRequestDetail(ctx, ownerID, body)
 
 	cfg := s.resolveConfig(ctx, ownerID)
 	// Per-model max_tokens ceiling: reject an over-limit request 400 BEFORE any
@@ -607,7 +663,7 @@ func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []
 		// the balance at dispatch time (fallback-5: write observed balance).
 		_ = s.Q.UpsertFallbackSpend(ctx, sqlc.UpsertFallbackSpendParams{ChannelID: ch.ID, Day: todayDayStr(), Requests: 1, EstCostUsd: cost, BalanceObserved: ch.BalanceUsd})
 	}
-	_ = s.Q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{
+	s.insertLog(ctx, sqlc.InsertDispatchLogParams{
 		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: "fallback:" + ch.ID,
 		ProfileID: "", Status: status, HttpStatus: int32(res.Status), LatencyMs: latencyMs, FallbackReason: reason,
 		TokensIn: in, TokensOut: out, Stream: false, CostUsd: cost,
@@ -653,7 +709,7 @@ func (s *Service) logOK(ctx context.Context, ownerID, model string, res ProxyRes
 	if reason == "" && !billing.KnownModel(model) {
 		reason = "unknown-model-pricing"
 	}
-	_ = s.Q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{
+	s.insertLog(ctx, sqlc.InsertDispatchLogParams{
 		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: key, ProfileID: "",
 		Status: "ok", HttpStatus: int32(res.Status), LatencyMs: latencyMs, TokensIn: in, TokensOut: out,
 		FallbackReason: reason, TtfbMs: latencyMs, Stream: false, CostUsd: cost,
@@ -667,7 +723,7 @@ func (s *Service) logOK(ctx context.Context, ownerID, model string, res ProxyRes
 }
 
 func (s *Service) logErr(ctx context.Context, ownerID, model string, status int, latencyMs int64, reason string) {
-	_ = s.Q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{
+	s.insertLog(ctx, sqlc.InsertDispatchLogParams{
 		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: "node", ProfileID: "",
 		Status: "error", HttpStatus: int32(status), LatencyMs: latencyMs, FallbackReason: reason,
 		Stream: false, CostUsd: 0,
@@ -678,7 +734,7 @@ func (s *Service) logErr(ctx context.Context, ownerID, model string, status int,
 // overwriting the final-outcome row written by logOK / logErr. Latency is 0
 // because we have no settled TTFB for a failed attempt.
 func (s *Service) logAttemptErr(ctx context.Context, ownerID, model, key string, status int) {
-	_ = s.Q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{
+	s.insertLog(ctx, sqlc.InsertDispatchLogParams{
 		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: key, ProfileID: "",
 		Status: "error", HttpStatus: int32(status), LatencyMs: 0, FallbackReason: "",
 		Stream: false, CostUsd: 0,
@@ -772,7 +828,7 @@ func (s *Service) logStream(ctx context.Context, ownerID, model, key string, sta
 	if !billing.KnownModel(model) {
 		streamReason = "unknown-model-pricing"
 	}
-	_ = s.Q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{
+	s.insertLog(ctx, sqlc.InsertDispatchLogParams{
 		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: key, ProfileID: "",
 		Status: httpStatus, HttpStatus: int32(status), LatencyMs: latencyMs,
 		TokensIn: in, TokensOut: out, TtfbMs: ttfbMs, Stream: true, CostUsd: cost,
@@ -809,6 +865,8 @@ func flushCopy(dst http.ResponseWriter, src io.Reader) {
 // DispatchStream routes a streaming request: it may fail over to another account
 // before the first byte; once streaming to the client starts, it commits.
 func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, ownerID, model string, body []byte) Outcome {
+	ctx = WithRequestID(ctx, newRequestID())
+	s.writeRequestDetail(ctx, ownerID, body)
 	cfg := s.resolveConfig(ctx, ownerID)
 	// Per-model max_tokens ceiling (limits-1): reject 400 before any attempt. The
 	// stream handler does not write our return value, so emit the 400 to w here.
@@ -1219,7 +1277,7 @@ func (s *Service) streamChannel(ctx context.Context, w http.ResponseWriter, ch s
 	// Record the channel's last-observed balance so the spend row reflects
 	// the balance at dispatch time (fallback-5: write observed balance).
 	_ = s.Q.UpsertFallbackSpend(ctx, sqlc.UpsertFallbackSpendParams{ChannelID: ch.ID, Day: todayDayStr(), Requests: 1, EstCostUsd: cost, BalanceObserved: ch.BalanceUsd})
-	_ = s.Q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{
+	s.insertLog(ctx, sqlc.InsertDispatchLogParams{
 		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: "fallback:" + ch.ID,
 		Status: "ok", HttpStatus: int32(st.Status), FallbackReason: reason,
 		LatencyMs: time.Since(start).Milliseconds(), TtfbMs: ttfb,

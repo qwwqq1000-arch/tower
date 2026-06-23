@@ -167,6 +167,25 @@ func main() {
 		}
 	}()
 
+	// Every 30m: prune stored request detail (body+headers) older than 48h so the
+	// log "view request" feature never bloats the database (logs-detail-1,
+	// nexaxis-disk-wal-bloat). Log rows themselves are retained; only the heavy
+	// per-request bodies expire.
+	go func() {
+		const retainMs = int64(48 * 60 * 60 * 1000)
+		prune := func() {
+			if err := q.DeleteDispatchLogDetailBefore(context.Background(), nowMs()-retainMs); err != nil {
+				log.Printf("log-detail prune: %v", err)
+			}
+		}
+		prune()
+		ticker := time.NewTicker(30 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			prune()
+		}
+	}()
+
 	log.Printf("tower listening on %s", cfg.HTTPAddr)
 	if err := http.ListenAndServe(cfg.HTTPAddr, api.NewRouter(pool, cfg.SessionSecret, svc, q, cfg.SecureCookies, cipher)); err != nil {
 		log.Fatal(err)

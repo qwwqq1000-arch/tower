@@ -2,6 +2,8 @@ package dispatch
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"net/http"
 	"strings"
 )
@@ -43,6 +45,31 @@ func WithClientHeaders(ctx context.Context, h http.Header) context.Context {
 func clientHeadersFrom(ctx context.Context) http.Header {
 	h, _ := ctx.Value(clientHeadersKeyT{}).(http.Header)
 	return h
+}
+
+// requestIDKeyT is the context key for the per-request correlation id stamped on
+// every dispatch_logs row and linking to its stored request detail (logs-detail-1).
+type requestIDKeyT struct{}
+
+// WithRequestID stashes the per-request correlation id on ctx so every log row of
+// the request carries it (and links to the one stored body+headers detail row).
+func WithRequestID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, requestIDKeyT{}, id)
+}
+
+func requestIDFrom(ctx context.Context) string {
+	id, _ := ctx.Value(requestIDKeyT{}).(string)
+	return id
+}
+
+// newRequestID returns a random 128-bit hex id correlating a request's log rows
+// with its stored detail.
+func newRequestID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(b[:])
 }
 
 var noCopy = map[string]bool{
