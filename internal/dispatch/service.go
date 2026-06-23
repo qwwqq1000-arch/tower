@@ -119,17 +119,24 @@ func maxTokensError(req, limit int, model string) string {
 
 var limitResetRe = regexp.MustCompile(`(?i)resets?\s+(\d{1,2}):(\d{2})\s*(am|pm)\s*\(?\s*utc\s*\)?`)
 
-// parseLimitReset detects a subscription usage-limit response and returns the reset
-// deadline (account-limit-reactive). The new-meridian node wraps the claude.ai limit
-// as a 500 api_error whose message is "...You've hit your limit · resets H:MMam/pm
-// (UTC)" — the reset lives ONLY in that text (no Retry-After / structured field), so
-// we parse the wall-clock UTC time and resolve it to the next occurrence after now.
-// Returns (false, 0) when body is not a usage-limit response.
-func parseLimitReset(body string, now int64) (bool, int64) {
+// parseLimitReset detects a usage-EXHAUSTION response and returns the reset deadline
+// (account-limit-reactive). Detection is error + KEYWORD: the body must contain one of
+// the configured QuotaLimitKeywords (precise phrases like "hit your limit"). A bare
+// error or a transient `rate_limit_error` must NOT limit the account — that previously
+// false-limited accounts. The new-meridian node wraps the claude.ai limit as a 500
+// api_error "...You've hit your limit · resets H:MMam/pm (UTC)"; the reset lives only in
+// that text, so we parse the wall-clock UTC time to the next occurrence (else 1h).
+// Returns (false, 0) when no keyword matches.
+func parseLimitReset(body string, now int64, keywords []string) (bool, int64) {
 	lb := strings.ToLower(body)
-	// Detect a usage/rate limit. Subscription nodes (new-meridian) say "hit your
-	// limit"; CPA/Anthropic-API nodes return a `rate_limit_error` (no reset time).
-	if !strings.Contains(lb, "hit your limit") && !strings.Contains(lb, "usage limit") && !strings.Contains(lb, "rate_limit_error") {
+	matched := false
+	for _, kw := range keywords {
+		if kw != "" && strings.Contains(lb, strings.ToLower(kw)) {
+			matched = true
+			break
+		}
+	}
+	if !matched {
 		return false, 0
 	}
 	// Explicit wall-clock reset (subscription format) → resolve to next occurrence.
@@ -148,9 +155,9 @@ func parseLimitReset(body string, now int64) (bool, int64) {
 		}
 		return true, reset.UnixMilli()
 	}
-	// Limited but no explicit reset (API rate_limit_error) → default 1h. The account
-	// re-limits on the next attempt if still limited, so it self-corrects without
-	// polling and recovers automatically once it stops returning the limit.
+	// Keyword matched but no explicit reset time → default 1h. The account re-limits
+	// on the next attempt if still limited (self-correcting, no polling) and recovers
+	// automatically once it stops returning the limit keyword.
 	return true, now + 60*60*1000
 }
 
@@ -306,7 +313,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 					s.maybeCooldown(ctx, acctOwnerOf(keyOwner, key, ownerID), key, res.Status, cfg)
 					// Reactive quota rotation: if the response is a usage-limit error,
 					// rotate the account out until the reset time parsed from it.
-					if limited, resetMs := parseLimitReset(res.Body, s.Now()); limited {
+					if limited, resetMs := parseLimitReset(res.Body, s.Now(), cfg.QuotaLimitKeywords); limited {
 						s.applyReactiveLimit(ctx, acctOwnerOf(keyOwner, key, ownerID), key, resetMs)
 					}
 				}
@@ -1028,7 +1035,7 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 		s.recordRetry(ctx, acctOwnerOf(keyOwner, key, ownerID), model, key, out.Status, ClassifyBanned(out.Status, "", cfg.BanSignals, nil))
 		s.maybeCooldown(ctx, acctOwnerOf(keyOwner, key, ownerID), key, out.Status, cfg)
 		// Reactive quota rotation on the stream path too (account-limit-reactive).
-		if limited, resetMs := parseLimitReset(out.Body, nowMs); limited {
+		if limited, resetMs := parseLimitReset(out.Body, nowMs, cfg.QuotaLimitKeywords); limited {
 			s.applyReactiveLimit(ctx, acctOwnerOf(keyOwner, key, ownerID), key, resetMs)
 		}
 		if justExiled := s.sess.RecordError(conv, int64(cfg.SessionErrorThreshold), int64(cfg.SessionCooldownSec)*1000, nowMs); justExiled {

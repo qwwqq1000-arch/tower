@@ -102,6 +102,13 @@ type Config struct {
 	// Default 120.
 	StreamIdleTimeoutSec int
 
+	// QuotaLimitKeywords are case-insensitive substrings that, when found in an ERROR
+	// response from an account, mark it quota-limited (rotated out until the parsed
+	// reset, or a 1h default). This is error + keyword — a bare error or a transient
+	// rate_limit_error must NOT limit the account; only a real usage-exhaustion message
+	// (e.g. "hit your limit · resets …") does (account-limit-reactive). Empty = off.
+	QuotaLimitKeywords []string
+
 	// ModelMaxTokens caps the requested output tokens (the body's max_tokens) per
 	// model. A request whose max_tokens exceeds the matched ceiling is rejected with
 	// a 400 BEFORE any node/fallback attempt (no retry) — an over-limit request fails
@@ -147,6 +154,8 @@ func Defaults() Config {
 		ResponseExileEnabled:      false,
 		ResponseExileKeywords:     []string{"usage policy", "i can't help with that request"},
 		StreamIdleTimeoutSec:      120,
+		// Precise usage-exhaustion phrases only — NOT "rate_limit_error" (transient).
+		QuotaLimitKeywords: []string{"hit your limit", "usage limit"},
 		// Official Anthropic per-model output ceilings (max_tokens). Editable per
 		// tenant via the policy patch; an over-limit request is rejected 400 without
 		// retry (limits-1).
@@ -194,6 +203,7 @@ type Patch struct {
 	ResponseExileEnabled      *bool
 	ResponseExileKeywords     *[]string
 	StreamIdleTimeoutSec      *int
+	QuotaLimitKeywords        *[]string
 	ModelMaxTokens            *map[string]int
 }
 
@@ -300,6 +310,9 @@ func apply(c *Config, p Patch) {
 	}
 	if p.StreamIdleTimeoutSec != nil {
 		c.StreamIdleTimeoutSec = *p.StreamIdleTimeoutSec
+	}
+	if p.QuotaLimitKeywords != nil {
+		c.QuotaLimitKeywords = *p.QuotaLimitKeywords
 	}
 	if p.ModelMaxTokens != nil {
 		c.ModelMaxTokens = *p.ModelMaxTokens
