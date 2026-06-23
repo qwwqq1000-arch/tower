@@ -121,7 +121,7 @@ func main() {
 				if ch.BalanceToken == "" || ch.BalanceUserID == "" {
 					continue
 				}
-				usd, fetchErr := dispatch.FetchChannelBalance(context.Background(), ch.BaseUrl, ch.BalanceToken, ch.BalanceUserID)
+				usd, fetchErr := dispatch.FetchChannelBalance(context.Background(), ch.BaseUrl, cipher.DecryptOrPlaintext(ch.BalanceToken), ch.BalanceUserID)
 				errStr := ""
 				if fetchErr != nil {
 					errStr = fetchErr.Error()
