@@ -8,6 +8,12 @@ import (
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 )
 
+// nodeCreator is the single DB method Provision needs when registering a node.
+// It is satisfied by *sqlc.Queries and can be stubbed in unit tests.
+type nodeCreator interface {
+	CreateNode(ctx context.Context, arg sqlc.CreateNodeParams) (sqlc.Node, error)
+}
+
 // DBSink writes provisioning progress into a provision_jobs row.
 type DBSink struct {
 	Q   *sqlc.Queries
@@ -34,6 +40,16 @@ func newRand() (apiKey, seed string) {
 
 // Provision runs the full provisioning flow and registers the node on success.
 func Provision(ctx context.Context, q *sqlc.Queries, ex Executor, jobID, name, host, ownerID string, now func() int64) {
+	sink := &DBSink{Q: q, ID: jobID, Now: now}
+	statusFn := func(status, step string) {
+		_ = q.SetProvisionStatus(ctx, sqlc.SetProvisionStatusParams{ID: jobID, Status: status, Step: step, UpdatedAt: now()})
+	}
+	provisionCore(ctx, q, sink, statusFn, ex, jobID, name, host, ownerID)
+}
+
+// provisionCore is the internal implementation that accepts a Sink and nodeCreator
+// so that unit tests can stub both without a real DB.
+func provisionCore(ctx context.Context, nc nodeCreator, sink Sink, statusFn func(status, step string), ex Executor, jobID, name, host, ownerID string) {
 	apiKey, seed := newRand()
 	steps := Steps(Input{
 		APIKey:          apiKey,
@@ -41,12 +57,11 @@ func Provision(ctx context.Context, q *sqlc.Queries, ex Executor, jobID, name, h
 		SourceRepo:      "https://github.com/qwwqq1000-arch/new-meridian",
 		InstallDir:      "/opt/meridian",
 	})
-	sink := &DBSink{Q: q, ID: jobID, Now: now}
 	if err := Run(ctx, ex, steps, sink); err != nil {
-		_ = q.SetProvisionStatus(ctx, sqlc.SetProvisionStatusParams{ID: jobID, Status: "failed", Step: "", UpdatedAt: now()})
+		statusFn("failed", "")
 		return
 	}
-	_, err := q.CreateNode(ctx, sqlc.CreateNodeParams{
+	_, err := nc.CreateNode(ctx, sqlc.CreateNodeParams{
 		ID:              "n_" + jobID,
 		Name:            name,
 		BaseUrl:         "http://" + host + ":3456",
@@ -62,9 +77,9 @@ func Provision(ctx context.Context, q *sqlc.Queries, ex Executor, jobID, name, h
 	})
 	if err != nil {
 		sink.Log("✗ 纳管失败: " + err.Error())
-		_ = q.SetProvisionStatus(ctx, sqlc.SetProvisionStatusParams{ID: jobID, Status: "failed", Step: "register", UpdatedAt: now()})
+		statusFn("failed", "register")
 		return
 	}
 	sink.Log("✓ 已纳管节点")
-	_ = q.SetProvisionStatus(ctx, sqlc.SetProvisionStatusParams{ID: jobID, Status: "success", Step: "done", UpdatedAt: now()})
+	statusFn("success", "done")
 }

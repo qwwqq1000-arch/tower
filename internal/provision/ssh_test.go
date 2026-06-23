@@ -1,6 +1,7 @@
 package provision
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -8,6 +9,7 @@ import (
 	"net"
 	"testing"
 
+	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -140,17 +142,36 @@ func containsAny(s string, subs ...string) bool {
 	return false
 }
 
-// TestProvision_KindMeridian verifies that Provision registers the node with
-// kind="meridian" (provision-2).
+// nodeRecorder satisfies the nodeCreator interface and captures the params
+// passed to CreateNode so tests can assert on them without a real DB.
+type nodeRecorder struct {
+	params []sqlc.CreateNodeParams
+	err    error // optional error to return
+}
+
+func (r *nodeRecorder) CreateNode(_ context.Context, arg sqlc.CreateNodeParams) (sqlc.Node, error) {
+	r.params = append(r.params, arg)
+	return sqlc.Node{}, r.err
+}
+
+// TestProvision_KindMeridian verifies that provisionCore registers the node
+// with Kind="meridian" (provision-2). It uses a stub nodeCreator (nodeRecorder)
+// and a capSink — no database connection required.
 func TestProvision_KindMeridian(t *testing.T) {
-	// This is a pure-logic test: we stub CreateNode via a recorder and verify
-	// the Kind field. Because we cannot call the real DB here without
-	// TEST_DATABASE_URL, we test the Kind constant directly.
-	const wantKind = "meridian"
-	if wantKind == "" {
-		t.Fatal("kind must not be empty")
+	recorder := &nodeRecorder{}
+	sink := &capSink{} // reuse capSink from runner_test.go (same package)
+	nopStatus := func(_, _ string) {}
+
+	ctx := context.Background()
+	// fakeExec (from runner_test.go) succeeds for every step.
+	ex := &fakeExec{}
+
+	provisionCore(ctx, recorder, sink, nopStatus, ex, "job1", "n1", "10.0.0.1", "o1")
+
+	if len(recorder.params) != 1 {
+		t.Fatalf("expected CreateNode called once, got %d calls", len(recorder.params))
 	}
-	// The actual DB-level check is covered by TestProvision_SuccessRegistersNode
-	// (job_test.go) which runs only when TEST_DATABASE_URL is set and verifies
-	// the full Provision flow including the kind column.
+	if recorder.params[0].Kind != "meridian" {
+		t.Fatalf("CreateNode Kind=%q, want %q", recorder.params[0].Kind, "meridian")
+	}
 }
