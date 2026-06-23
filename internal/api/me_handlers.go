@@ -164,22 +164,23 @@ func meDashboardHandler(q *sqlc.Queries) http.HandlerFunc {
 		}
 		consumption, _ := q.SumCostForOwner(ctx, owner)
 		rate, _ := q.GetHostingRate(ctx, owner)
-		settled, _ := q.SumSettledForOwner(ctx, owner)
-		unsettled, accumulated := billing.ComputeHostingFee(consumption, settled, rate)
-		// separate channel hosting billing at the tenant's channel_rate.
+		settled, _ := q.SumSettledForOwner(ctx, owner) // sum of settled FEE (billing-fee-1)
 		channelConsumption, _ := q.SumFallbackSpendByOwner(ctx, owner)
 		var channelRate float64
 		if t, err := q.GetTenantByID(ctx, owner); err == nil {
 			channelRate = t.ChannelRate
 		}
-		channelHostingFee := channelConsumption * channelRate
+		nodeFee := consumption * rate                  // 累计托管费
+		channelHostingFee := channelConsumption * channelRate // 渠道托管费
+		// Unsettled is the COMBINED outstanding fee (node + channel) minus settled fee.
+		unsettled, _ := billing.ComputeHostingFee(nodeFee+channelHostingFee, settled)
 		writeJSON(w, 200, map[string]any{
 			"accounts": map[string]any{"total": accTotal, "active": accActive},
 			"today":    map[string]any{"requests": todayReq, "costUsd": todayCost},
 			"consumptionUsd":        billing.RoundUSD(consumption),
 			"hostingRate":           rate,
 			"unsettledUsd":          billing.RoundUSD(unsettled),
-			"accumulatedUsd":        billing.RoundUSD(accumulated),
+			"accumulatedUsd":        billing.RoundUSD(nodeFee),
 			"channelConsumptionUsd": billing.RoundUSD(channelConsumption),
 			"channelRate":           channelRate,
 			"channelHostingFeeUsd":  billing.RoundUSD(channelHostingFee),

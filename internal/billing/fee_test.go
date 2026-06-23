@@ -25,16 +25,26 @@ func TestApplyLedgerDelta_NodeReset(t *testing.T) {
 }
 
 func TestComputeHostingFee(t *testing.T) {
-	uns, acc := ComputeHostingFee(100, 40, 1.5)
-	if uns != 90 { // (100-40)*1.5
-		t.Fatalf("unsettled=%v, want 90", uns)
+	// Fee-based: totalFee=150, settledFee=40 → unsettled=110, accumulated=150.
+	uns, acc := ComputeHostingFee(150, 40)
+	if uns != 110 {
+		t.Fatalf("unsettled=%v, want 110", uns)
 	}
-	if acc != 150 { // 100*1.5
+	if acc != 150 {
 		t.Fatalf("accumulated=%v, want 150", acc)
 	}
-	// settled exceeds consumption → unsettled clamps to 0
-	uns2, _ := ComputeHostingFee(50, 80, 2)
-	if uns2 != 0 {
+	// settled exceeds total → unsettled clamps to 0
+	if uns2, _ := ComputeHostingFee(50, 80); uns2 != 0 {
 		t.Fatalf("unsettled=%v, want 0 (clamped)", uns2)
+	}
+}
+
+func TestTotalHostingFee(t *testing.T) {
+	// node 873.53 @ 30% + channel 6319.05 @ 0% = 262.059
+	if got := TotalHostingFee(873.53, 0.30, 6319.05, 0.0); RoundUSD(got) != 262.06 {
+		t.Fatalf("total fee=%v, want 262.06", RoundUSD(got))
+	}
+	if got := TotalHostingFee(100, 0.30, 200, 0.10); got != 50 { // 30 + 20
+		t.Fatalf("total fee=%v, want 50", got)
 	}
 }

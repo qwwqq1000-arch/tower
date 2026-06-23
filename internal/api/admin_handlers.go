@@ -380,11 +380,13 @@ func dashboardHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
 				}
 				consumption, _ := q.SumCostForOwner(ctx, t.ID)
 				rate, _ := q.GetHostingRate(ctx, t.ID)
-				settled, _ := q.SumSettledForOwner(ctx, t.ID)
-				unsettled, accumulated := billing.ComputeHostingFee(consumption, settled, rate)
+				settled, _ := q.SumSettledForOwner(ctx, t.ID) // settled FEE (billing-fee-1)
 				channelConsumption, _ := q.SumFallbackSpendByOwner(ctx, t.ID)
+				nodeFee := consumption * rate
 				channelFee := channelConsumption * t.ChannelRate
-				hosting = append(hosting, map[string]any{"tenantId": t.ID, "username": t.Username, "role": t.Role, "consumptionUsd": billing.RoundUSD(consumption), "rate": rate, "feeUsd": billing.RoundUSD(accumulated), "unsettledUsd": billing.RoundUSD(unsettled), "channelRate": t.ChannelRate, "channelConsumptionUsd": billing.RoundUSD(channelConsumption), "channelFeeUsd": billing.RoundUSD(channelFee)})
+				// Unsettled = combined outstanding fee (node + channel) minus settled fee.
+				unsettled, _ := billing.ComputeHostingFee(nodeFee+channelFee, settled)
+				hosting = append(hosting, map[string]any{"tenantId": t.ID, "username": t.Username, "role": t.Role, "consumptionUsd": billing.RoundUSD(consumption), "rate": rate, "feeUsd": billing.RoundUSD(nodeFee), "unsettledUsd": billing.RoundUSD(unsettled), "channelRate": t.ChannelRate, "channelConsumptionUsd": billing.RoundUSD(channelConsumption), "channelFeeUsd": billing.RoundUSD(channelFee)})
 			}
 		}
 

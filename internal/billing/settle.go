@@ -27,10 +27,27 @@ func Settle(ctx context.Context, pool *pgxpool.Pool, tenantID string, periodStar
 	// settlements. We settle only the outstanding delta so re-settling does not
 	// re-charge the full lifetime total (the previous behaviour) and the tenant's
 	// unsettled balance actually drops after a settle.
-	gross, err := q.SumCostForOwner(ctx, tenantID)
+	// We settle the FEE (托管费 + 渠道托管费), not raw consumption (billing-fee-1):
+	//   gross = node consumption × hostingRate + channel relay consumption × channelRate
+	// SettledUsd / the ledger record the fee owed, and alreadySettled is the sum of
+	// prior settled FEE — so the unsettled balance is the outstanding fee.
+	consumption, err := q.SumCostForOwner(ctx, tenantID)
 	if err != nil {
 		return sqlc.Settlement{}, err
 	}
+	rate, err := q.GetHostingRate(ctx, tenantID)
+	if err != nil {
+		return sqlc.Settlement{}, err
+	}
+	channelConsumption, err := q.SumFallbackSpendByOwner(ctx, tenantID)
+	if err != nil {
+		return sqlc.Settlement{}, err
+	}
+	channelRate := 0.0
+	if t, terr := q.GetTenantByID(ctx, tenantID); terr == nil {
+		channelRate = t.ChannelRate
+	}
+	gross := TotalHostingFee(consumption, rate, channelConsumption, channelRate)
 	alreadySettled, err := q.SumSettledForOwner(ctx, tenantID)
 	if err != nil {
 		return sqlc.Settlement{}, err
