@@ -141,7 +141,7 @@ func setUserFallbackLimitHandler(q *sqlc.Queries) http.HandlerFunc {
 	}
 }
 
-func changePasswordHandler(secret string, q *sqlc.Queries) http.HandlerFunc {
+func changePasswordHandler(secret string, q *sqlc.Queries, secureCookies bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p, ok := sessionFrom(r)
 		if !ok {
@@ -177,11 +177,16 @@ func changePasswordHandler(secret string, q *sqlc.Queries) http.HandlerFunc {
 		// caller's cookie at the new epoch so the device that just changed the
 		// password stays logged in.
 		_ = q.BumpSessionEpoch(r.Context(), p.Sub)
-		newEpoch := u.SessionEpoch + 1
+		newEpoch, err := q.GetSessionEpoch(r.Context(), p.Sub)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": "session epoch fetch failed"})
+			return
+		}
 		tok := auth.IssueSession(secret, p.Sub, p.Role, newEpoch, nowUnix(), sessionTTLSec)
 		http.SetCookie(w, &http.Cookie{
 			Name: "tower_session", Value: tok, Path: "/",
 			HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: sessionTTLSec,
+			Secure: secureCookies,
 		})
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
