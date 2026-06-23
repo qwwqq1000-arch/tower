@@ -43,8 +43,11 @@ func (r *idleTimeoutReader) pump() {
 	defer t.Stop()
 	for {
 		n, err := r.src.Read(buf)
-		// Reset the idle timer after every successful read
+		// Reset the idle timer after every successful read. Stop first to avoid
+		// a race between a concurrent AfterFunc fire and the Reset call (Go timer
+		// best practice for AfterFunc timers: Stop before Reset).
 		if n > 0 {
+			t.Stop()
 			t.Reset(r.timeout)
 		}
 		if n > 0 {

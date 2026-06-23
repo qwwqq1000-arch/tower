@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"time"
 
@@ -87,7 +88,9 @@ func setUserRoleHandler(q *sqlc.Queries) http.HandlerFunc {
 		}
 		// Revoke any outstanding sessions: the new role must not be carried by a
 		// token issued under the old role.
-		_ = q.BumpSessionEpoch(r.Context(), r.PathValue("id"))
+		if err := q.BumpSessionEpoch(r.Context(), r.PathValue("id")); err != nil {
+			log.Printf("BumpSessionEpoch user %s: %v", r.PathValue("id"), err)
+		}
 		recordAudit(r, q, "user.role", "tenant:"+r.PathValue("id"), nil, map[string]any{"role": b.Role})
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
@@ -176,7 +179,9 @@ func changePasswordHandler(secret string, q *sqlc.Queries, secureCookies bool) h
 		// devices, or one stolen with the old password) is revoked. Re-issue this
 		// caller's cookie at the new epoch so the device that just changed the
 		// password stays logged in.
-		_ = q.BumpSessionEpoch(r.Context(), p.Sub)
+		if err := q.BumpSessionEpoch(r.Context(), p.Sub); err != nil {
+			log.Printf("BumpSessionEpoch user %s: %v", p.Sub, err)
+		}
 		newEpoch, err := q.GetSessionEpoch(r.Context(), p.Sub)
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": "session epoch fetch failed"})

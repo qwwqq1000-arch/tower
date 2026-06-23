@@ -32,7 +32,7 @@ func settleHandler(pool *pgxpool.Pool, q *sqlc.Queries) http.HandlerFunc {
 			return
 		}
 		recordAudit(r, q, "billing.settle", "tenant:"+body.TenantId, nil, map[string]any{"id": st.ID, "gross": st.GrossUsd, "status": st.Status, "periodStart": body.PeriodStart, "periodEnd": body.PeriodEnd})
-		writeJSON(w, http.StatusOK, map[string]any{"id": st.ID, "tenantId": st.TenantID, "gross": st.GrossUsd, "settled": st.SettledUsd, "status": st.Status})
+		writeJSON(w, http.StatusOK, map[string]any{"id": st.ID, "tenantId": st.TenantID, "gross": billing.RoundUSD(st.GrossUsd), "settled": billing.RoundUSD(st.SettledUsd), "status": st.Status})
 	}
 }
 

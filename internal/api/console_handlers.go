@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -99,7 +100,9 @@ func putTenantPolicyHandler(q *sqlc.Queries) http.HandlerFunc {
 		// Merge the incoming patch over the existing tenant policy params so a
 		// partial save only updates the provided keys (never wipes other settings).
 		merged := map[string]json.RawMessage{}
-		if rows, err := q.ListPolicies(r.Context()); err == nil {
+		if rows, err := q.ListPolicies(r.Context()); err != nil {
+			log.Printf("putTenantPolicyHandler: ListPolicies: %v", err)
+		} else {
 			for _, p := range rows {
 				if p.ScopeType == "owner" && p.ScopeID == tenant {
 					_ = json.Unmarshal(p.Params, &merged)

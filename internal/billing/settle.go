@@ -16,6 +16,13 @@ func Settle(ctx context.Context, pool *pgxpool.Pool, tenantID string, periodStar
 	}
 	defer tx.Rollback(ctx)
 	q := sqlc.New(tx)
+	// Serialize concurrent settle calls for the same tenant via a Postgres
+	// advisory lock scoped to this transaction. hashtext() maps the tenantID
+	// string to an int4 key; pg_advisory_xact_lock blocks until it can acquire
+	// and releases automatically when the transaction ends.
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtext($1))", tenantID); err != nil {
+		return sqlc.Settlement{}, err
+	}
 	// gross = all-time accrued consumption; alreadySettled = sum of prior paid
 	// settlements. We settle only the outstanding delta so re-settling does not
 	// re-charge the full lifetime total (the previous behaviour) and the tenant's
