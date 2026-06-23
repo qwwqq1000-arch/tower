@@ -162,7 +162,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 			},
 			IsCooldownSignal: func(status int) bool { return isCooldownSignal(status, cfg) },
 		}
-		np := &NodeProxy{Body: body, Resolve: resolver, BanSignals: cfg.BanSignals, BanKeywords: cfg.BanKeywords}
+		np := &NodeProxy{Body: body, Resolve: resolver, BanSignals: cfg.BanSignals, BanKeywords: cfg.BanKeywords, IdleTimeout: time.Duration(cfg.StreamIdleTimeoutSec) * time.Second}
 		res, winKey, ok := orch.Dispatch(ctx, model, order, np)
 		if ok {
 			// Response exile: if the response body contains a safety-refusal keyword,
@@ -929,7 +929,7 @@ func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, 
 	}
 	defer func() { settle(false) }()
 
-	np := &NodeProxy{Body: body, Resolve: resolver, BanSignals: cfg.BanSignals, BanKeywords: cfg.BanKeywords}
+	np := &NodeProxy{Body: body, Resolve: resolver, BanSignals: cfg.BanSignals, BanKeywords: cfg.BanKeywords, IdleTimeout: time.Duration(cfg.StreamIdleTimeoutSec) * time.Second}
 	st, err := np.OpenStream(ctx, key)
 	sendReturned = true
 	if err != nil {

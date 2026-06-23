@@ -93,6 +93,13 @@ type Config struct {
 	// ResponseExileKeywords are substrings (case-insensitive) that identify a
 	// safety-refusal body. Matched conversation is force-exiled to fallback.
 	ResponseExileKeywords []string
+
+	// StreamIdleTimeoutSec is the maximum number of seconds allowed between
+	// successive bytes on a streaming response. When the upstream stalls longer
+	// than this, the idle-timeout reader fires, the read returns an error, and
+	// the dispatch slot is released (dispatch-core-6). 0 means no idle timeout.
+	// Default 120.
+	StreamIdleTimeoutSec int
 }
 
 // Defaults returns sane baseline configuration.
@@ -130,6 +137,7 @@ func Defaults() Config {
 		SessionCooldownSec:        300,
 		ResponseExileEnabled:      false,
 		ResponseExileKeywords:     []string{"usage policy", "i can't help with that request"},
+		StreamIdleTimeoutSec:      120,
 	}
 }
 
@@ -167,6 +175,7 @@ type Patch struct {
 	SessionCooldownSec        *int
 	ResponseExileEnabled      *bool
 	ResponseExileKeywords     *[]string
+	StreamIdleTimeoutSec      *int
 }
 
 func apply(c *Config, p Patch) {
@@ -270,6 +279,9 @@ func apply(c *Config, p Patch) {
 	if p.ResponseExileKeywords != nil {
 		c.ResponseExileKeywords = *p.ResponseExileKeywords
 	}
+	if p.StreamIdleTimeoutSec != nil {
+		c.StreamIdleTimeoutSec = *p.StreamIdleTimeoutSec
+	}
 }
 
 // Resolve applies patches in order onto base (later patches win).
@@ -330,5 +342,6 @@ func DryRun(base Config, patches ...Patch) (Config, []Diff) {
 	add("SessionCooldownSec", base.SessionCooldownSec, final.SessionCooldownSec)
 	add("ResponseExileEnabled", base.ResponseExileEnabled, final.ResponseExileEnabled)
 	add("ResponseExileKeywords", base.ResponseExileKeywords, final.ResponseExileKeywords)
+	add("StreamIdleTimeoutSec", base.StreamIdleTimeoutSec, final.StreamIdleTimeoutSec)
 	return final, diffs
 }
