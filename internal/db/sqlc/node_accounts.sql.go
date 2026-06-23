@@ -193,8 +193,7 @@ const upsertCpaNodeAccount = `-- name: UpsertCpaNodeAccount :exec
 INSERT INTO node_accounts (node_id, account_id, profile_id, enabled, weight, role)
 VALUES ($1,$2,$3,$4,100,'baseline')
 ON CONFLICT (node_id, account_id) DO UPDATE SET
-  profile_id = EXCLUDED.profile_id,
-  enabled = EXCLUDED.enabled
+  profile_id = EXCLUDED.profile_id
 `
 
 type UpsertCpaNodeAccountParams struct {
@@ -204,6 +203,8 @@ type UpsertCpaNodeAccountParams struct {
 	Enabled   bool   `json:"enabled"`
 }
 
+// On conflict, only update profile_id — never touch enabled so that an admin's
+// manual disable is preserved across discovery cycles (cpa-2).
 func (q *Queries) UpsertCpaNodeAccount(ctx context.Context, arg UpsertCpaNodeAccountParams) error {
 	_, err := q.db.Exec(ctx, upsertCpaNodeAccount,
 		arg.NodeID,

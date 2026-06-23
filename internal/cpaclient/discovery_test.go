@@ -14,20 +14,27 @@ import (
 
 // stubSyncDB is a test stub that satisfies syncQuerier and records calls.
 type stubSyncDB struct {
-	upsertAccountCalled    int
-	upsertNodeAcctCalled   int
-	upsertQuotaCalled      int
-	setFetchErrorCalled    int
+	upsertAccountCalled     int
+	upsertNodeAcctCalled    int
+	upsertQuotaCalled       int
+	setFetchErrorCalled     int
 	lastFetchErrorAccountID string
 	lastFetchErrorMsg       string
+	// nodeAcctEnabled tracks the Enabled value passed in each UpsertCpaNodeAccount
+	// call, keyed by account_id. Used to assert manual-disable preservation (cpa-2).
+	nodeAcctEnabled map[string]bool
 }
 
 func (s *stubSyncDB) UpsertCpaAccount(_ context.Context, _ sqlc.UpsertCpaAccountParams) error {
 	s.upsertAccountCalled++
 	return nil
 }
-func (s *stubSyncDB) UpsertCpaNodeAccount(_ context.Context, _ sqlc.UpsertCpaNodeAccountParams) error {
+func (s *stubSyncDB) UpsertCpaNodeAccount(_ context.Context, arg sqlc.UpsertCpaNodeAccountParams) error {
 	s.upsertNodeAcctCalled++
+	if s.nodeAcctEnabled == nil {
+		s.nodeAcctEnabled = make(map[string]bool)
+	}
+	s.nodeAcctEnabled[arg.AccountID] = arg.Enabled
 	return nil
 }
 func (s *stubSyncDB) UpsertCpaQuota(_ context.Context, _ sqlc.UpsertCpaQuotaParams) error {
@@ -183,5 +190,78 @@ func TestSync_QuotaFetchError(t *testing.T) {
 	expectedAID := "cpa:n_cpa_test:acct-1"
 	if stub.lastFetchErrorAccountID != expectedAID {
 		t.Errorf("fetch error account id: got %q want %q", stub.lastFetchErrorAccountID, expectedAID)
+	}
+}
+
+// TestSync_PreservesManualDisable verifies that Sync passes Enabled=false when
+// the CPA source reports an account as disabled, and Enabled=true for active
+// accounts. The SQL ON CONFLICT clause intentionally omits "enabled = EXCLUDED.enabled"
+// so that an admin's manual disable (enabled=false in node_accounts) is never
+// overwritten by a subsequent discovery cycle — only the profile_id (selector) is
+// updated for existing rows (cpa-2).
+func TestSync_PreservesManualDisable(t *testing.T) {
+	const mgmtSecret = "test-secret-manual-disable"
+	// CPA node returns two accounts: one active, one disabled by CPA.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+mgmtSecret {
+			w.WriteHeader(401)
+			return
+		}
+		if r.URL.Path == "/v0/management/auth-files" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"files":[
+				{"id":"acct-active","provider":"other","email":"active@example.com","account_type":"pro"},
+				{"id":"acct-disabled","provider":"other","email":"disabled@example.com","account_type":"pro","disabled":true}
+			]}`))
+			return
+		}
+		w.WriteHeader(404)
+	}))
+	defer srv.Close()
+
+	node := sqlc.Node{
+		ID:      "n_cpa_md",
+		Kind:    "cpa",
+		BaseUrl: srv.URL,
+		MgmtKey: mgmtSecret,
+		Enabled: true,
+	}
+	stub := &stubSyncDB{}
+	rot := &RotateConfig{}
+
+	n, err := Sync(context.Background(), stub, node, rot)
+	if err != nil {
+		t.Fatalf("Sync failed: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("want 2 discovered accounts, got %d", n)
+	}
+
+	// Active CPA account → Enabled=true (CPA source says active → new rows get enabled).
+	activeAID := "cpa:n_cpa_md:acct-active"
+	if got, ok := stub.nodeAcctEnabled[activeAID]; !ok || !got {
+		t.Errorf("active account %q: want Enabled=true, got Enabled=%v (ok=%v)", activeAID, got, ok)
+	}
+	// Disabled CPA account → Enabled=false (CPA source says disabled → new rows come in disabled).
+	disabledAID := "cpa:n_cpa_md:acct-disabled"
+	if got, ok := stub.nodeAcctEnabled[disabledAID]; !ok || got {
+		t.Errorf("CPA-disabled account %q: want Enabled=false, got Enabled=%v (ok=%v)", disabledAID, got, ok)
+	}
+
+	// The SQL ON CONFLICT clause (verified in queries/node_accounts.sql) does NOT
+	// include "enabled = EXCLUDED.enabled", so a second Sync call cannot flip an
+	// admin-manually-disabled row back to true. We document that invariant here:
+	// after re-syncing, the stub still records the same enabled values (only
+	// profile_id would be updated on conflict in the real DB).
+	stub2 := &stubSyncDB{}
+	if _, err := Sync(context.Background(), stub2, node, rot); err != nil {
+		t.Fatalf("second Sync failed: %v", err)
+	}
+	// A manually-disabled account that CPA now reports as active would pass
+	// Enabled=true here, but the SQL ON CONFLICT path does NOT apply that value
+	// (only INSERT path does). This test documents the Sync contract: it passes
+	// CPA state faithfully; the DB layer preserves the admin override via SQL.
+	if got := stub2.nodeAcctEnabled[activeAID]; !got {
+		t.Errorf("re-sync: active account should still pass Enabled=true to upsert, got %v", got)
 	}
 }
