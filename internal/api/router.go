@@ -29,7 +29,7 @@ func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc
 	loadRolePerms := func(r *http.Request, role string) []string { return loadPerms(pool, r, role) }
 	mux.HandleFunc("GET /healthz", healthzHandler(pool))
 	mux.HandleFunc("POST /auth/login", loginHandler(pool, secret, loginThrottle, secureCookies))
-	mux.HandleFunc("POST /auth/logout", logoutHandler())
+	mux.HandleFunc("POST /auth/logout", requireSameOrigin(logoutHandler()))
 	mux.HandleFunc("GET /auth/me", requireSession(secret, q, meHandler(pool)))
 	mux.HandleFunc("GET /api/admin/server-status", requireAdmin(secret, q, serverStatusHandler()))
 	if svc != nil {
