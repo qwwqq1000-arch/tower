@@ -13,9 +13,11 @@ ON CONFLICT (request_id) DO NOTHING;
 SELECT request_id, owner_id, ts, req_body, req_headers, resp_status, resp_body FROM dispatch_log_details WHERE request_id = $1;
 
 -- name: UpdateDispatchLogDetailResponse :exec
--- Records the final response status + body for a request (logs-detail-2). No-op if
--- the detail row was already pruned.
-UPDATE dispatch_log_details SET resp_status = $2, resp_body = $3 WHERE request_id = $1;
+-- Appends a response segment and sets the latest status for a request (logs-detail-2).
+-- Appending (not overwriting) lets a failed-over request keep every attempt's error —
+-- e.g. a node 429 followed by a fallback 200 — instead of only the final outcome
+-- (logs-detail-3). Capped to 64KB. No-op if the detail row was already pruned.
+UPDATE dispatch_log_details SET resp_status = $2, resp_body = left(coalesce(resp_body, '') || $3, 65536) WHERE request_id = $1;
 
 -- name: DeleteDispatchLogDetailBefore :exec
 DELETE FROM dispatch_log_details WHERE ts < $1;

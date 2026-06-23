@@ -279,6 +279,7 @@ export interface AccountRow {
   egress: string;
   email: string;
   status?: string;
+  limitedUntil?: number;     // quota-limit reset deadline (unix ms) when status==='limited'
   slotId?: string;
   todayCostUsd?: number;
   totalCostUsd?: number;

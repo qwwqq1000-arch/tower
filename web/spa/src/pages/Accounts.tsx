@@ -71,6 +71,24 @@ function fmtCountdown(remainMs: number): string {
   return `${m}:${String(sec).padStart(2, '0')}`;
 }
 
+// LimitedBadge shows a quota-limited account as a live RECOVERY COUNTDOWN instead of a
+// wall-clock reset (which was UTC and confusing). The deadline is an absolute ms
+// timestamp, so the countdown is timezone-agnostic (quota-3 / 限额恢复倒计时).
+function LimitedBadge({ until }: { until?: number }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!until || until <= 0) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [until]);
+  const cd = until && until > 0 ? fmtCountdown(until - now) : null;
+  return (
+    <span className={`inline-flex items-center mt-1 px-1.5 py-0.5 rounded border text-[10px] font-mono ${statusColor('limited')}`}>
+      限额{cd ? `(恢复倒计时 ${cd})` : '(配额)'}
+    </span>
+  );
+}
+
 // ------------------------------------------------------------------
 // Quota badge helper
 // ------------------------------------------------------------------
@@ -498,7 +516,9 @@ function AccountTableRow({
         <td className="px-4 py-3">
           <p className="text-xs text-ink">{account.email || '—'}</p>
           <p className="text-[10px] text-muted font-mono mt-0.5">{account.profileId || '—'}</p>
-          {account.status && (
+          {account.status === 'limited' ? (
+            <LimitedBadge until={account.limitedUntil} />
+          ) : account.status && (
             <span className={`inline-flex items-center mt-1 px-1.5 py-0.5 rounded border text-[10px] font-mono ${statusColor(account.status)}`}>
               {statusLabel(account.status)}
             </span>

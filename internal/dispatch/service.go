@@ -208,21 +208,39 @@ func (s *Service) writeRequestDetail(ctx context.Context, ownerID string, body [
 	})
 }
 
-// UpdateRequestDetailResponse records the final response status + body (capped) for
-// the ctx request, so the log-detail modal can show WHY a request failed — the actual
-// error message, not just the request (logs-detail-2). Called by the HTTP handler
-// after Dispatch/DispatchStream returns. No-op if no request id or the detail expired.
-func (s *Service) UpdateRequestDetailResponse(ctx context.Context, status int, body string) {
+// appendDetailResponse appends one response segment (capped) to the ctx request's
+// detail and updates the latest status. The underlying query APPENDS, so a failed-over
+// request accumulates every attempt's error plus the final outcome (logs-detail-3).
+func (s *Service) appendDetailResponse(ctx context.Context, status int, segment string) {
 	rid := requestIDFrom(ctx)
 	if rid == "" {
 		return
 	}
-	if len(body) > maxDetailBodyBytes {
-		body = body[:maxDetailBodyBytes] + "\n…[truncated]"
+	if len(segment) > maxDetailBodyBytes {
+		segment = segment[:maxDetailBodyBytes] + "\n…[truncated]"
 	}
 	_ = s.Q.UpdateDispatchLogDetailResponse(ctx, sqlc.UpdateDispatchLogDetailResponseParams{
-		RequestID: rid, RespStatus: int32(status), RespBody: body,
+		RequestID: rid, RespStatus: int32(status), RespBody: segment,
 	})
+}
+
+// UpdateRequestDetailResponse records the FINAL response status + body (capped) for the
+// ctx request, so the log-detail modal can show WHY a request ended as it did — the
+// actual response/error (logs-detail-2). Called by the HTTP handler after
+// Dispatch/DispatchStream returns. No-op if no request id or the detail expired.
+func (s *Service) UpdateRequestDetailResponse(ctx context.Context, status int, body string) {
+	s.appendDetailResponse(ctx, status, fmt.Sprintf("── 响应 → HTTP %d ──\n%s", status, body))
+}
+
+// recordAttemptError appends one failed dispatch attempt's error to the request detail,
+// so a request that failed over still shows WHY each node was abandoned — clicking the
+// 429 row reveals the node's rate-limit body even though the request later succeeded on
+// fallback (logs-detail-3). Empty bodies are skipped.
+func (s *Service) recordAttemptError(ctx context.Context, key string, status int, body string) {
+	if strings.TrimSpace(body) == "" {
+		return
+	}
+	s.appendDetailResponse(ctx, status, fmt.Sprintf("── 失败尝试 %s → HTTP %d ──\n%s\n\n", key, status, body))
 }
 
 // applyReactiveLimit rotates an account out of dispatch until the reset time parsed
@@ -309,6 +327,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 			OnAttempt: func(key string, res ProxyResult, ok bool) {
 				if !ok {
 					s.logAttemptErr(ctx, ownerID, model, key, res.Status)
+					s.recordAttemptError(ctx, key, res.Status, res.Body) // keep the abandoned node's error in the detail (logs-detail-3)
 					s.recordRetry(ctx, acctOwnerOf(keyOwner, key, ownerID), model, key, res.Status, res.Banned)
 					s.maybeCooldown(ctx, acctOwnerOf(keyOwner, key, ownerID), key, res.Status, cfg)
 					// Reactive quota rotation: if the response is a usage-limit error,
@@ -1038,6 +1057,7 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 		}
 		// not committed → failed before first byte → log per-attempt error + failover
 		s.logAttemptErr(ctx, ownerID, model, key, out.Status)
+		s.recordAttemptError(ctx, key, out.Status, out.Body) // keep the abandoned node's error in the detail (logs-detail-3)
 		s.recordRetry(ctx, acctOwnerOf(keyOwner, key, ownerID), model, key, out.Status, ClassifyBanned(out.Status, "", cfg.BanSignals, nil))
 		s.maybeCooldown(ctx, acctOwnerOf(keyOwner, key, ownerID), key, out.Status, cfg)
 		// Reactive quota rotation on the stream path too (account-limit-reactive).
