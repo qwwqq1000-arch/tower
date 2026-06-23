@@ -79,13 +79,20 @@ func main() {
 
 	go (&reconcile.Reconciler{Q: q, Cipher: cipher}).Run(context.Background(), 120*time.Second)
 
-	// Every 60s: discover accounts on CPA (CLIProxyAPI) nodes into the pool and
+	// Every 5min: discover accounts on CPA (CLIProxyAPI) nodes into the pool and
 	// project their quota utilization into the live store so saturated CPA
 	// accounts rotate out of dispatch. SyncAll resolves the effective threshold
 	// and capacity from the live global policy each cycle (mirroring the meridian
 	// poller's threshold/maxConcurrent), so QuotaRotateThreshold / MaxConcurrent
 	// overrides gate CPA and meridian accounts identically. BaseThreshold /
 	// BaseCapacity are the fallback defaults when the policy omits an override.
+	//
+	// The interval is 5min, NOT 60s: each cycle calls the Anthropic account-usage
+	// endpoint (CPA proxies it) once per account — polling it too often piles extra
+	// requests onto an already-loaded subscription account, can itself be rate-limited
+	// (429), and is needlessly conspicuous. The 5h/7d quota windows move slowly, so
+	// 5-min freshness is ample to catch an account crossing QuotaRotateThreshold; the
+	// only cost is up to ~5min of rotation lag, which fallback covers (quota-poll-rate).
 	cpaRot := &cpaclient.RotateConfig{
 		Store:         store,
 		BaseThreshold: base.QuotaRotateThreshold,
@@ -98,7 +105,7 @@ func main() {
 		if err := cpaclient.SyncAll(context.Background(), q, cpaRot); err != nil {
 			log.Printf("cpa discovery: %v", err)
 		}
-		ticker := time.NewTicker(60 * time.Second)
+		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
 		for range ticker.C {
 			if err := cpaclient.SyncAll(context.Background(), q, cpaRot); err != nil {
