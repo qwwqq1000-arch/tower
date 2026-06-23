@@ -11,6 +11,7 @@ import {
   deleteNode,
   setNodeEnabled,
   refreshNode,
+  getNodeConsoleUrl,
   startProvision,
   getProvision,
   oauthStart,
@@ -41,13 +42,15 @@ function fmtDays(ms?: number): string {
 // ------------------------------------------------------------------
 // Status badge
 // ------------------------------------------------------------------
-// consoleUrl returns the management console URL for a node. CPA (CLIProxyAPI)
-// serves its panel at /management.html on the inference port; meridian uses root.
-function consoleUrl(node: NodeRecord): string {
-  if ((node.kind ?? '').toLowerCase() === 'cpa') {
-    return `${node.baseUrl.replace(/\/$/, '')}/management.html`;
-  }
-  return node.baseUrl;
+// openConsole opens a node's management console. The URL (with the node's key for
+// meridian, so the dashboard opens authenticated) is built server-side. The blank tab is
+// opened synchronously within the click so it isn't popup-blocked, then redirected once
+// the URL resolves (node-console-1).
+function openConsole(node: NodeRecord) {
+  const win = window.open('', '_blank', 'noopener,noreferrer');
+  getNodeConsoleUrl(node.id)
+    .then(({ url }) => { if (win) win.location.href = url; })
+    .catch(() => { if (win) win.close(); });
 }
 
 function NodeKindBadge({ kind }: { kind?: string }) {
@@ -878,14 +881,7 @@ function NodeRow({
           >
             详情
           </Link>
-          <a
-            href={consoleUrl(node)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs text-muted hover:text-ink transition"
-          >
-            控制台
-          </a>
+          <button type="button" onClick={() => openConsole(node)} className="text-xs text-muted hover:text-ink transition">控制台</button>
           <button
             onClick={() => { void handleToggle(); }}
             disabled={toggling}
@@ -996,14 +992,7 @@ function NodeMobileCard({
         >
           {node.enabled ? '停用' : '启用'}
         </button>
-        <a
-          href={consoleUrl(node)}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-xs text-muted hover:text-ink transition"
-        >
-          控制台
-        </a>
+        <button type="button" onClick={() => openConsole(node)} className="text-xs text-muted hover:text-ink transition">控制台</button>
       </div>
     </div>
   );

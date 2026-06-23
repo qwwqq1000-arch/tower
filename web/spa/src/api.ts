@@ -235,6 +235,9 @@ export const patchNodeFeatures = (id: string, adapter: string, patch: Record<str
 export const refreshNode = (id: string) =>
   api<void>('POST', `/api/admin/nodes/${id}/refresh`);
 
+export const getNodeConsoleUrl = (id: string) =>
+  api<{ url: string }>('GET', `/api/admin/nodes/${id}/console-url`);
+
 export const setNodeEnabled = (id: string, enabled: boolean) =>
   api<void>('PATCH', `/api/admin/nodes/${id}/enabled`, { enabled });
 

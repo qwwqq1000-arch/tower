@@ -12,6 +12,30 @@ import (
 	"github.com/qwwqq1000-arch/tower/internal/nodeclient"
 )
 
+// nodeConsoleURLHandler returns the management-console URL for a node. For meridian it
+// includes the node's own key (its dashboard authenticates via ?key=<apiKey>), so the
+// 控制台 button opens an already-authenticated panel (node-console-1). The decrypted key
+// is returned only to an authenticated admin who already owns the node.
+func nodeConsoleURLHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		n, err := q.GetNode(r.Context(), r.PathValue("id"))
+		if err != nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "node not found"})
+			return
+		}
+		if owner, all := scope(r); !all && n.OwnerID != owner {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "node not found"})
+			return
+		}
+		base := strings.TrimRight(n.BaseUrl, "/")
+		url := base + "/management.html" // CPA panel
+		if !strings.EqualFold(n.Kind, "cpa") {
+			url = base + "/?key=" + cipher.DecryptOrPlaintext(n.ApiKey) // meridian dashboard at root
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"url": url})
+	}
+}
+
 func nodeFeaturesGetHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		cl, n, ok := nodeClientFor(q, cipher, r, r.PathValue("id"))
