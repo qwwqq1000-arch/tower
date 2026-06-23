@@ -525,12 +525,9 @@ func (s *Service) enabledChannels(ctx context.Context, ownerID string, model str
 		if !channelAllowsModel(c.ModelAllowlist, model) {
 			continue
 		}
-		// Exclude channels whose last observed balance is below the alert
-		// threshold (fallback-5). Routing to a near-empty channel wastes the
-		// request; skip it so the caller tries the next channel or 503s cleanly.
-		if !channelAboveBalanceAlert(c) {
-			continue
-		}
+		// Balance is alert-only and NEVER removes a channel from routing: a stale or
+		// transiently-zero balance reading must not exclude the only fallback channel
+		// and turn a recoverable node failure into a 503 (fallback-5 revisited).
 		out = append(out, c)
 	}
 	return out
@@ -568,8 +565,9 @@ func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []
 	cp := &ChannelProxy{Body: body, Ch: ChannelRef{BaseURL: ch.BaseUrl, APIKey: s.Cipher.DecryptOrPlaintext(ch.ApiKey)}, IdleTimeout: time.Duration(cfg.StreamIdleTimeoutSec) * time.Second}
 	res, err := cp.Send(ctx, ch.ID)
 	if err != nil {
-		s.logErr(ctx, ownerID, model, 502, latencyMs, reason)
-		return Outcome{Status: 502, Body: `{"error":"fallback channel error"}`, Target: "fallback", Reason: reason}, true
+		// Channel unreachable — report served=false so viaChannels fails over to the
+		// next channel (matches the streaming path). Q-free, like the capacity reject.
+		return Outcome{Status: 502, Body: `{"error":"fallback channel error"}`, Target: "fallback:" + ch.ID, Reason: reason}, false
 	}
 	status := "ok"
 	if res.Status < 200 || res.Status >= 300 {
@@ -590,7 +588,9 @@ func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []
 		ProfileID: "", Status: status, HttpStatus: int32(res.Status), LatencyMs: latencyMs, FallbackReason: reason,
 		TokensIn: in, TokensOut: out, Stream: false, CostUsd: cost,
 	})
-	return Outcome{Status: res.Status, Body: res.Body, Target: "fallback:" + ch.ID, Reason: reason}, true
+	// served=false on an error status (>=400) so viaChannels fails over to the next
+	// channel; a clean <400 response is returned as-is.
+	return Outcome{Status: res.Status, Body: res.Body, Target: "fallback:" + ch.ID, Reason: reason}, res.Status < 400
 }
 
 // viaChannels forwards a non-streaming request through the owner's fallback
@@ -599,15 +599,15 @@ func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []
 // does it return the last 503 (fallback-1: failover to the next fallback channel
 // instead of 503-ing when channels[0] is full).
 func (s *Service) viaChannels(ctx context.Context, ownerID, model string, body []byte, channels []sqlc.FallbackChannel, reason string, latencyMs int64, cfg policy.Config) Outcome {
-	var capOut Outcome
+	var lastFail Outcome
 	for _, ch := range channels {
 		out, served := s.viaChannel(ctx, ownerID, model, body, ch, reason, latencyMs, cfg)
 		if served {
 			return out
 		}
-		capOut = out // channel at capacity — remember its 503 and try the next
+		lastFail = out // at capacity or errored — remember it and try the next channel
 	}
-	return capOut
+	return lastFail
 }
 
 // streamChannels forwards a streaming request through the owner's fallback
