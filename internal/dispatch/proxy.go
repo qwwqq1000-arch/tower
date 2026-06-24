@@ -71,7 +71,9 @@ func (r *idleTimeoutReader) Close() error {
 	return r.src.Close()
 }
 
-func newHTTP() *http.Client { return &http.Client{Timeout: 300 * time.Second} }
+func newHTTP(timeoutSec int) *http.Client {
+	return &http.Client{Timeout: time.Duration(timeoutSec) * time.Second}
+}
 
 // readDecoded reads the upstream response body, transparently gunzipping it when
 // the upstream compressed the response (Content-Encoding: gzip). The client's
@@ -164,13 +166,20 @@ type NodeProxy struct {
 	// timeout and releases the dispatch slot (dispatch-core-6). Zero means no
 	// idle timeout (the request context timeout governs instead).
 	IdleTimeout time.Duration
+	// UpstreamTimeoutSec is the total HTTP client timeout for upstream requests.
+	// Zero falls back to the default of 300 seconds.
+	UpstreamTimeoutSec int
 }
 
 func (p *NodeProxy) client() *http.Client {
 	if p.HTTP != nil {
 		return p.HTTP
 	}
-	return newHTTP()
+	ts := p.UpstreamTimeoutSec
+	if ts == 0 {
+		ts = 300
+	}
+	return newHTTP(ts)
 }
 
 // Send proxies to {BaseURL}/v1/messages for the resolved account.
@@ -231,13 +240,20 @@ type ChannelProxy struct {
 	// IdleTimeout, when non-zero, sets the maximum time between successive reads
 	// from a streaming response body (mirrors NodeProxy.IdleTimeout).
 	IdleTimeout time.Duration
+	// UpstreamTimeoutSec is the total HTTP client timeout for upstream requests.
+	// Zero falls back to the default of 300 seconds.
+	UpstreamTimeoutSec int
 }
 
 func (p *ChannelProxy) client() *http.Client {
 	if p.HTTP != nil {
 		return p.HTTP
 	}
-	return newHTTP()
+	ts := p.UpstreamTimeoutSec
+	if ts == 0 {
+		ts = 300
+	}
+	return newHTTP(ts)
 }
 
 // Send proxies to {BaseURL}/v1/messages on the channel.

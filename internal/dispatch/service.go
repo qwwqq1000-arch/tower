@@ -144,7 +144,7 @@ var monthAbbr = map[string]time.Month{
 // api_error "...You've hit your limit · resets H:MMam/pm (UTC)"; the reset lives only in
 // that text, so we parse the wall-clock UTC time to the next occurrence (else 1h).
 // Returns (false, 0) when no keyword matches.
-func parseLimitReset(status int, body string, now int64, keywords []string, codes []int) (bool, int64) {
+func parseLimitReset(status int, body string, now int64, keywords []string, codes []int, defaultResetMs int64) (bool, int64) {
 	// Gate by status code first so the body scan does not run on every response — only
 	// the codes a quota limit actually arrives on (429/500). Empty codes = scan all.
 	if len(codes) > 0 {
@@ -206,10 +206,11 @@ func parseLimitReset(status int, body string, now int64, keywords []string, code
 		return true, reset.UnixMilli()
 	}
 	// Keyword matched but no explicit reset time (e.g. CPA "cooling down") → default
-	// 5 min. These are transient cooldowns that recover fast, so a long block would
-	// over-rotate; the account re-limits on the next attempt if still limited
-	// (self-correcting, no polling) and recovers as soon as it stops returning it.
-	return true, now + 5*60*1000
+	// (QuotaLimitDefaultResetMs, typically 5 min). These are transient cooldowns that
+	// recover fast, so a long block would over-rotate; the account re-limits on the
+	// next attempt if still limited (self-correcting, no polling) and recovers as soon
+	// as it stops returning it.
+	return true, now + defaultResetMs
 }
 
 const maxDetailBodyBytes = 64 * 1024
@@ -383,14 +384,14 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 					s.maybeCooldown(ctx, acctOwnerOf(keyOwner, key, ownerID), key, res.Status, cfg)
 					// Reactive quota rotation: if the response is a usage-limit error,
 					// rotate the account out until the reset time parsed from it.
-					if limited, resetMs := parseLimitReset(res.Status, res.Body, s.Now(), cfg.QuotaLimitKeywords, cfg.QuotaLimitStatusCodes); limited {
+					if limited, resetMs := parseLimitReset(res.Status, res.Body, s.Now(), cfg.QuotaLimitKeywords, cfg.QuotaLimitStatusCodes, cfg.QuotaLimitDefaultResetMs); limited {
 						s.applyReactiveLimit(ctx, acctOwnerOf(keyOwner, key, ownerID), key, resetMs)
 					}
 				}
 			},
 			IsCooldownSignal: func(status int) bool { return isCooldownSignal(status, cfg) },
 		}
-		np := &NodeProxy{Body: body, Resolve: resolver, BanSignals: cfg.BanSignals, BanKeywords: cfg.BanKeywords, IdleTimeout: time.Duration(cfg.StreamIdleTimeoutSec) * time.Second}
+		np := &NodeProxy{Body: body, Resolve: resolver, BanSignals: cfg.BanSignals, BanKeywords: cfg.BanKeywords, IdleTimeout: time.Duration(cfg.StreamIdleTimeoutSec) * time.Second, UpstreamTimeoutSec: cfg.UpstreamTimeoutSec}
 		res, winKey, ok := orch.Dispatch(ctx, model, order, np)
 		if ok {
 			// Response exile: if the response body contains a safety-refusal keyword,
@@ -526,14 +527,14 @@ func (s *Service) resolveConfig(ctx context.Context, ownerID, accountID string) 
 }
 
 // slotActiveNow reports whether the given [startMin, endMin) window (minute-of-day,
-// Beijing time) is active at the instant represented by nowMs (Unix ms).
+// in tzName timezone) is active at the instant represented by nowMs (Unix ms).
 // If start == end or the window is [0, 1440) it is treated as always-active.
 // Overnight windows (start > end) are active when cur >= start OR cur < end.
-func slotActiveNow(startMin, endMin int, nowMs int64) bool {
+func slotActiveNow(startMin, endMin int, nowMs int64, tzName string) bool {
 	if startMin == endMin || (startMin == 0 && endMin == 1440) {
 		return true // always-active
 	}
-	loc, err := time.LoadLocation("Asia/Shanghai")
+	loc, err := time.LoadLocation(tzName)
 	if err != nil {
 		loc = time.UTC
 	}
@@ -598,7 +599,7 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 			// Slot-window filter: skip only when slot exists, is enabled, and window is inactive.
 			if na.SlotID != "" {
 				if sl, ok := slotMap[na.SlotID]; ok && sl.enabled {
-					if !slotActiveNow(sl.startMin, sl.endMin, nowMs) {
+					if !slotActiveNow(sl.startMin, sl.endMin, nowMs, cfg.QuietHoursTZ) {
 						continue
 					}
 				}
@@ -821,7 +822,7 @@ func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []
 	_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: "fallback", Target: ch.ID, OwnerID: ownerID, Detail: map[string]any{"reason": reason, "channelId": ch.ID, "channelName": ch.Name}})
 
 	// Decrypt the channel api_key transparently before forwarding (vault-crypto-3).
-	cp := &ChannelProxy{Body: body, Ch: ChannelRef{BaseURL: ch.BaseUrl, APIKey: s.Cipher.DecryptOrPlaintext(ch.ApiKey)}, IdleTimeout: time.Duration(cfg.StreamIdleTimeoutSec) * time.Second}
+	cp := &ChannelProxy{Body: body, Ch: ChannelRef{BaseURL: ch.BaseUrl, APIKey: s.Cipher.DecryptOrPlaintext(ch.ApiKey)}, IdleTimeout: time.Duration(cfg.StreamIdleTimeoutSec) * time.Second, UpstreamTimeoutSec: cfg.UpstreamTimeoutSec}
 	res, err := cp.Send(ctx, ch.ID)
 	if err != nil {
 		// Channel unreachable — report served=false so viaChannels fails over to the
@@ -1145,7 +1146,7 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 		s.recordRetry(ctx, acctOwnerOf(keyOwner, key, ownerID), model, key, out.Status, ClassifyBanned(out.Status, "", cfg.BanSignals, nil))
 		s.maybeCooldown(ctx, acctOwnerOf(keyOwner, key, ownerID), key, out.Status, cfg)
 		// Reactive quota rotation on the stream path too (account-limit-reactive).
-		if limited, resetMs := parseLimitReset(out.Status, out.Body, nowMs, cfg.QuotaLimitKeywords, cfg.QuotaLimitStatusCodes); limited {
+		if limited, resetMs := parseLimitReset(out.Status, out.Body, nowMs, cfg.QuotaLimitKeywords, cfg.QuotaLimitStatusCodes, cfg.QuotaLimitDefaultResetMs); limited {
 			s.applyReactiveLimit(ctx, acctOwnerOf(keyOwner, key, ownerID), key, resetMs)
 		}
 		if justExiled := s.sess.RecordError(conv, int64(cfg.SessionErrorThreshold), int64(cfg.SessionCooldownSec)*1000, nowMs); justExiled {
@@ -1452,7 +1453,7 @@ func (s *Service) streamChannel(ctx context.Context, w http.ResponseWriter, ch s
 	_ = events.Record(ctx, s.Q, s.Now(), events.Event{Type: "fallback", Target: ch.ID, OwnerID: ownerID, Detail: map[string]any{"reason": reason, "channelId": ch.ID, "channelName": ch.Name}})
 
 	// Decrypt the channel api_key transparently before forwarding (vault-crypto-3).
-	cp := &ChannelProxy{Body: body, Ch: ChannelRef{BaseURL: ch.BaseUrl, APIKey: s.Cipher.DecryptOrPlaintext(ch.ApiKey)}, IdleTimeout: time.Duration(cfg.StreamIdleTimeoutSec) * time.Second}
+	cp := &ChannelProxy{Body: body, Ch: ChannelRef{BaseURL: ch.BaseUrl, APIKey: s.Cipher.DecryptOrPlaintext(ch.ApiKey)}, IdleTimeout: time.Duration(cfg.StreamIdleTimeoutSec) * time.Second, UpstreamTimeoutSec: cfg.UpstreamTimeoutSec}
 	st, err := cp.OpenStream(ctx, ch.ID)
 	if err != nil {
 		return Outcome{}, false

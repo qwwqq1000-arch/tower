@@ -51,7 +51,7 @@ func TestSlotActiveNow(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			nowMs := beijingMs(t, tt.time)
-			got := slotActiveNow(tt.start, tt.end, nowMs)
+			got := slotActiveNow(tt.start, tt.end, nowMs, "Asia/Shanghai")
 			if got != tt.wantActive {
 				t.Errorf("slotActiveNow(%d, %d, %q) = %v, want %v",
 					tt.start, tt.end, tt.time, got, tt.wantActive)

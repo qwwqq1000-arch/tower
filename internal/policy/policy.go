@@ -122,6 +122,21 @@ type Config struct {
 	// by longest substring (e.g. "claude-opus-4-8" matches "claude-opus-4-8" and any
 	// dated suffix). Empty/zero ceiling = unlimited for that model.
 	ModelMaxTokens map[string]int
+
+	// QuietHoursTZ is the IANA timezone used when evaluating slot-window
+	// active/inactive schedules (slotActiveNow). Default "Asia/Shanghai".
+	// NOTE: billing-day boundaries (todayDayStr) use a separate, always-Shanghai
+	// constant and are not controlled by this field (different semantic scope).
+	QuietHoursTZ string
+
+	// QuotaLimitDefaultResetMs is the fallback reset duration (ms from now) when
+	// a quota-limit keyword is matched but no explicit reset time is parseable
+	// (e.g. CPA "cooling down" messages). Default 300000 (5 minutes).
+	QuotaLimitDefaultResetMs int64
+
+	// UpstreamTimeoutSec is the total HTTP client timeout for upstream requests
+	// (both node and fallback channel proxies). Default 300 (5 minutes).
+	UpstreamTimeoutSec int
 }
 
 // Defaults returns sane baseline configuration.
@@ -169,6 +184,9 @@ func Defaults() Config {
 		// Official Anthropic per-model output ceilings (max_tokens). Editable per
 		// tenant via the policy patch; an over-limit request is rejected 400 without
 		// retry (limits-1).
+		QuietHoursTZ:             "Asia/Shanghai",
+		QuotaLimitDefaultResetMs: 300000,
+		UpstreamTimeoutSec:       300,
 		ModelMaxTokens: map[string]int{
 			"claude-opus-4-8":   128000,
 			"claude-opus-4-7":   128000,
@@ -216,6 +234,9 @@ type Patch struct {
 	QuotaLimitKeywords        *[]string
 	QuotaLimitStatusCodes     *[]int
 	ModelMaxTokens            *map[string]int
+	QuietHoursTZ              *string
+	QuotaLimitDefaultResetMs  *int64
+	UpstreamTimeoutSec        *int
 }
 
 func apply(c *Config, p Patch) {
@@ -331,6 +352,15 @@ func apply(c *Config, p Patch) {
 	if p.ModelMaxTokens != nil {
 		c.ModelMaxTokens = *p.ModelMaxTokens
 	}
+	if p.QuietHoursTZ != nil {
+		c.QuietHoursTZ = *p.QuietHoursTZ
+	}
+	if p.QuotaLimitDefaultResetMs != nil {
+		c.QuotaLimitDefaultResetMs = *p.QuotaLimitDefaultResetMs
+	}
+	if p.UpstreamTimeoutSec != nil {
+		c.UpstreamTimeoutSec = *p.UpstreamTimeoutSec
+	}
 }
 
 // MaxTokensFor returns the configured output-token ceiling for model, matching the
@@ -408,5 +438,8 @@ func DryRun(base Config, patches ...Patch) (Config, []Diff) {
 	add("ResponseExileEnabled", base.ResponseExileEnabled, final.ResponseExileEnabled)
 	add("ResponseExileKeywords", base.ResponseExileKeywords, final.ResponseExileKeywords)
 	add("StreamIdleTimeoutSec", base.StreamIdleTimeoutSec, final.StreamIdleTimeoutSec)
+	add("QuietHoursTZ", base.QuietHoursTZ, final.QuietHoursTZ)
+	add("QuotaLimitDefaultResetMs", base.QuotaLimitDefaultResetMs, final.QuotaLimitDefaultResetMs)
+	add("UpstreamTimeoutSec", base.UpstreamTimeoutSec, final.UpstreamTimeoutSec)
 	return final, diffs
 }
