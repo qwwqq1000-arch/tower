@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -1188,6 +1189,45 @@ func (s *Service) logAttemptErr(ctx context.Context, ownerID, model, key string,
 	})
 }
 
+// firstContentCapBytes caps how much SSE preamble readUntilContent will buffer
+// before giving up and committing anyway. A pathological upstream that emits
+// hundreds of KB of preamble without a content_block_delta should not stall us.
+const firstContentCapBytes = 256 * 1024
+
+// sseHasContentMarker reports whether an SSE buffer has begun streaming real
+// content (the first content_block_delta — a text/thinking/tool token).
+// message_start and content_block_start alone do NOT count: an upstream that
+// emits them then dies still delivers nothing.
+func sseHasContentMarker(b []byte) bool {
+	return bytes.Contains(b, []byte("content_block_delta"))
+}
+
+// readUntilContent reads from src into a prefix buffer until the first content
+// event appears (returns prefix, true) or the stream ends/errors before any
+// content (returns prefix, false → caller must NOT commit and should fail over).
+// capBytes bounds the buffer: an unusually long preamble commits rather than
+// buffering unbounded. The caller's src is expected to carry an idle timeout
+// (OpenStream wraps st.Body with idleTimeoutReader) so a hung read errors
+// instead of blocking forever.
+func readUntilContent(src io.Reader, capBytes int) (prefix []byte, hasContent bool) {
+	buf := make([]byte, 16*1024)
+	for {
+		n, err := src.Read(buf)
+		if n > 0 {
+			prefix = append(prefix, buf[:n]...)
+			if sseHasContentMarker(prefix) {
+				return prefix, true
+			}
+			if len(prefix) >= capBytes {
+				return prefix, true // pathological long preamble — commit, don't over-buffer
+			}
+		}
+		if err != nil {
+			return prefix, false // ended before any content → empty/dead stream
+		}
+	}
+}
+
 // flushCopyCapture streams src→dst flushing each chunk; returns ttfb (ms to
 // first byte, from start) and a bounded copy of the body (for token parsing).
 func flushCopyCapture(dst http.ResponseWriter, src io.Reader, start time.Time) (ttfbMs int64, body string) {
@@ -1552,11 +1592,26 @@ func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, 
 		_ = st.Body.Close()
 		return Outcome{Status: httpStatus, Target: key, Body: string(errBody)}, false, "" // bad status before first byte → settle(false) via defer, failover
 	}
-	// commit: stream to client
+	// PREFLIGHT: buffer the SSE until the first content event before committing,
+	// so an upstream that returns 200 then an empty/dead stream fails over instead
+	// of delivering nothing. start is set here so ttfb measures time-to-first-content.
 	start := time.Now()
+	prefix, hasContent := readUntilContent(st.Body, firstContentCapBytes)
+	if !hasContent {
+		_ = st.Body.Close()
+		lastStatus = st.Status
+		// Carry ban signals in the prefix (e.g. a 200 + authentication_error stream)
+		// so settle(false) opens the breaker; parseLimitReset in the caller reads out.Body.
+		if ClassifyBanned(st.Status, string(prefix), cfg.BanSignals, cfg.BanKeywords) {
+			lastBanned = true
+		}
+		// 502 = bad upstream response; NOT committed → DispatchStream fails over.
+		return Outcome{Status: 502, Target: key, Body: string(prefix)}, false, string(prefix)
+	}
+	// content arrived → commit; replay the buffered prefix then continue copying.
 	CopyForwardableHeaders(w.Header(), st.Header)
 	w.WriteHeader(st.Status)
-	ttfb, sseBody := flushCopyCapture(w, st.Body, start)
+	ttfb, sseBody := flushCopyCapture(w, io.MultiReader(bytes.NewReader(prefix), st.Body), start)
 	_ = st.Body.Close()
 	// Claude can return a 200 header and then an `event: error` (e.g.
 	// overloaded_error) inside the SSE body. We've already committed (cannot fail
@@ -1776,10 +1831,19 @@ func (s *Service) streamChannel(ctx context.Context, w http.ResponseWriter, ch s
 		_ = st.Body.Close()
 		return Outcome{}, false
 	}
+	// PREFLIGHT: buffer until first content event before committing, so an upstream
+	// that returns 200 then an empty/dead stream fails over to the next channel
+	// instead of delivering nothing to the client.
+	start := time.Now()
+	prefix, hasContent := readUntilContent(st.Body, firstContentCapBytes)
+	if !hasContent {
+		_ = st.Body.Close()
+		return Outcome{}, false // not committed → streamChannels tries next channel
+	}
+	// content arrived → commit; replay the buffered prefix then continue copying.
 	CopyForwardableHeaders(w.Header(), st.Header)
 	w.WriteHeader(st.Status)
-	start := time.Now()
-	ttfb, sseBody := flushCopyCapture(w, st.Body, start)
+	ttfb, sseBody := flushCopyCapture(w, io.MultiReader(bytes.NewReader(prefix), st.Body), start)
 	_ = st.Body.Close()
 	in, out, cacheRead, cache5m, cache1h := parseUsageSSE(sseBody)
 	cost := billing.CostUsdFull(model, in, out, cacheRead, cache5m, cache1h)
