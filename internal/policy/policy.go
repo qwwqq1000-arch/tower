@@ -687,5 +687,41 @@ func DryRun(base Config, patches ...Patch) (Config, []Diff) {
 	add("QuietHoursTZ", base.QuietHoursTZ, final.QuietHoursTZ)
 	add("QuotaLimitDefaultResetMs", base.QuotaLimitDefaultResetMs, final.QuotaLimitDefaultResetMs)
 	add("UpstreamTimeoutSec", base.UpstreamTimeoutSec, final.UpstreamTimeoutSec)
+	// Phase 2: SpendCap
+	add("SpendCap5hEnabled", base.SpendCap5hEnabled, final.SpendCap5hEnabled)
+	add("SpendCap5hUsd", base.SpendCap5hUsd, final.SpendCap5hUsd)
+	add("SpendCap7dEnabled", base.SpendCap7dEnabled, final.SpendCap7dEnabled)
+	add("SpendCap7dUsd", base.SpendCap7dUsd, final.SpendCap7dUsd)
+	add("SpendWindow5hMs", base.SpendWindow5hMs, final.SpendWindow5hMs)
+	add("SpendWindow7dMs", base.SpendWindow7dMs, final.SpendWindow7dMs)
+	// Phase 3: HumanDelay
+	add("HumanDelayDist", base.HumanDelayDist, final.HumanDelayDist)
+	add("HumanDelayP50Ms", base.HumanDelayP50Ms, final.HumanDelayP50Ms)
+	add("HumanDelayP95Ms", base.HumanDelayP95Ms, final.HumanDelayP95Ms)
+	// Phase 3: RateGovernor
+	add("RateGovEnabled", base.RateGovEnabled, final.RateGovEnabled)
+	add("RateRPM", base.RateRPM, final.RateRPM)
+	add("RateRPH", base.RateRPH, final.RateRPH)
+	add("RateRPD", base.RateRPD, final.RateRPD)
+	add("RateExceedAction", base.RateExceedAction, final.RateExceedAction)
+	// Phase 3: SessionSim
+	add("SessionSimEnabled", base.SessionSimEnabled, final.SessionSimEnabled)
+	add("SessionBurstCount", base.SessionBurstCount, final.SessionBurstCount)
+	add("SessionPauseMs", base.SessionPauseMs, final.SessionPauseMs)
+	// Phase 3: QuietHours
+	add("QuietHoursEnabled", base.QuietHoursEnabled, final.QuietHoursEnabled)
+	add("QuietHoursWindows", base.QuietHoursWindows, final.QuietHoursWindows)
+	add("QuietHoursRPM", base.QuietHoursRPM, final.QuietHoursRPM)
+	add("QuietHoursConcurrency", base.QuietHoursConcurrency, final.QuietHoursConcurrency)
+	// Phase 4: ModelPin
+	add("ModelPinEnabled", base.ModelPinEnabled, final.ModelPinEnabled)
+	add("ModelPinMode", base.ModelPinMode, final.ModelPinMode)
+	add("ModelPinTarget", base.ModelPinTarget, final.ModelPinTarget)
+	// Phase 4: SerialQueue
+	add("SerialQueueEnabled", base.SerialQueueEnabled, final.SerialQueueEnabled)
+	add("SerialQueueWaitMs", base.SerialQueueWaitMs, final.SerialQueueWaitMs)
+	// Phase 4: BodyPad
+	add("BodyPadEnabled", base.BodyPadEnabled, final.BodyPadEnabled)
+	add("BodyPadBytes", base.BodyPadBytes, final.BodyPadBytes)
 	return final, diffs
 }

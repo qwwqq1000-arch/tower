@@ -279,6 +279,23 @@ export default function Policies() {
         const setBool = (f: FieldState<boolean> & { set: (v: boolean) => void; toggle: () => void }, key: string) => {
           if (key in p) { f.set(Boolean(p[key])); if (!f.enabled) f.toggle(); }
         };
+        const setStr = (f: FieldState<string> & { set: (v: string) => void; toggle: () => void }, key: string) => {
+          if (key in p) { f.set(String(p[key] ?? '')); if (!f.enabled) f.toggle(); }
+        };
+        const setRange = (
+          fMin: FieldState<number> & { set: (v: number) => void; toggle: () => void },
+          fMax: FieldState<number> & { set: (v: number) => void; toggle: () => void },
+          key: string,
+        ) => {
+          if (key in p) {
+            const r = p[key] as { Min?: number; Max?: number } | undefined;
+            if (r && typeof r === 'object') {
+              fMin.set(Number(r.Min ?? 0));
+              fMax.set(Number(r.Max ?? 0));
+              if (!fMin.enabled) fMin.toggle();
+            }
+          }
+        };
         const setArr = (f: FieldState<string> & { set: (v: string) => void; toggle: () => void }, key: string) => {
           if (key in p) {
             const arr = p[key] ?? [];
@@ -329,6 +346,49 @@ export default function Policies() {
         setNum(elasticScaleDownUtil, 'ElasticScaleDownUtil');
         setNum(elasticMaxReserve, 'ElasticMaxReserve');
         setNum(elasticBaselineCount, 'ElasticBaselineCount');
+        // Phase 2: SpendCap
+        setBool(spendCap5hEnabled, 'SpendCap5hEnabled');
+        setRange(spendCap5hMin, spendCap5hMax, 'SpendCap5hUsd');
+        setBool(spendCap7dEnabled, 'SpendCap7dEnabled');
+        setRange(spendCap7dMin, spendCap7dMax, 'SpendCap7dUsd');
+        setNum(spendWindow5hMs, 'SpendWindow5hMs');
+        setNum(spendWindow7dMs, 'SpendWindow7dMs');
+        // Phase 3: HumanDelay
+        setStr(humanDelayDist, 'HumanDelayDist');
+        setRange(humanDelayP50Min, humanDelayP50Max, 'HumanDelayP50Ms');
+        setRange(humanDelayP95Min, humanDelayP95Max, 'HumanDelayP95Ms');
+        // Phase 3: RateGovernor
+        setBool(rateGovEnabled, 'RateGovEnabled');
+        setRange(rateRPMMin, rateRPMMax, 'RateRPM');
+        setRange(rateRPHMin, rateRPHMax, 'RateRPH');
+        setRange(rateRPDMin, rateRPDMax, 'RateRPD');
+        setStr(rateExceedAction, 'RateExceedAction');
+        // Phase 3: SessionSim
+        setBool(sessionSimEnabled, 'SessionSimEnabled');
+        setRange(sessionBurstCountMin, sessionBurstCountMax, 'SessionBurstCount');
+        setRange(sessionPauseMsMin, sessionPauseMsMax, 'SessionPauseMs');
+        // Phase 3: QuietHours
+        setBool(quietHoursEnabled, 'QuietHoursEnabled');
+        if ('QuietHoursWindows' in p) {
+          const wins = p['QuietHoursWindows'] as Array<{ StartMin?: number; EndMin?: number }> | undefined;
+          if (Array.isArray(wins) && wins.length > 0) {
+            quietHoursStartMin.set(Number(wins[0].StartMin ?? 0));
+            quietHoursEndMin.set(Number(wins[0].EndMin ?? 0));
+            if (!quietHoursStartMin.enabled) quietHoursStartMin.toggle();
+          }
+        }
+        setRange(quietHoursRPMMin, quietHoursRPMMax, 'QuietHoursRPM');
+        setNum(quietHoursConcurrency, 'QuietHoursConcurrency');
+        // Phase 4: ModelPin
+        setBool(modelPinEnabled, 'ModelPinEnabled');
+        setStr(modelPinMode, 'ModelPinMode');
+        setStr(modelPinTarget, 'ModelPinTarget');
+        // Phase 4: SerialQueue
+        setBool(serialQueueEnabled, 'SerialQueueEnabled');
+        setNum(serialQueueWaitMs, 'SerialQueueWaitMs');
+        // Phase 4: BodyPad
+        setBool(bodyPadEnabled, 'BodyPadEnabled');
+        setRange(bodyPadBytesMin, bodyPadBytesMax, 'BodyPadBytes');
       } catch {
         // silently ignore — page still usable
       }

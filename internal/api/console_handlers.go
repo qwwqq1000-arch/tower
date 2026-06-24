@@ -194,6 +194,27 @@ func putAccountPolicyHandler(q *sqlc.Queries, svc *dispatch.Service) http.Handle
 	}
 }
 
+// deleteTenantPolicyHandler removes a per-tenant policy override, reverting the
+// tenant to the global policy resolution. Superadmin-gated by the router.
+func deleteTenantPolicyHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		tenant := r.PathValue("id")
+		if tenant == "" {
+			writeJSON(w, 400, map[string]string{"error": "tenant id required"})
+			return
+		}
+		if err := q.DeletePolicy(r.Context(), sqlc.DeletePolicyParams{ScopeType: "owner", ScopeID: tenant}); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if svc != nil {
+			svc.BumpPolicyVersion()
+		}
+		recordAudit(r, q, "policy.delete", "tenant:"+tenant, nil, nil)
+		writeJSON(w, 200, map[string]string{"ok": "true"})
+	}
+}
+
 // deleteAccountPolicyHandler removes a per-account policy override, reverting the
 // account to the tenant/global policy resolution. Superadmin-gated by the router.
 func deleteAccountPolicyHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {

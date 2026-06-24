@@ -128,6 +128,12 @@ export const listPolicies = () =>
 export const putGlobalPolicy = (data: PolicyPatch) =>
   api<{ ok: string }>('PUT', '/api/admin/policies/global', data);
 
+export const putTenantPolicy = (id: string, data: PolicyPatch) =>
+  api<{ ok: string }>('PUT', `/api/admin/policies/tenant/${id}`, data);
+
+export const deleteTenantPolicy = (id: string) =>
+  api<{ ok: string }>('DELETE', `/api/admin/policies/tenant/${id}`);
+
 export const putAccountPolicy = (accountId: string, data: PolicyPatch) =>
   api<{ ok: string }>('PUT', `/api/admin/policies/account/${accountId}`, data);
 
