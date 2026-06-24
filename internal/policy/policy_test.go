@@ -9,6 +9,8 @@ func ptrI(i int) *int         { return &i }
 func ptrB(b bool) *bool       { return &b }
 func ptrF(f float64) *float64 { return &f }
 func ptrSS(ss []string) *[]string { return &ss }
+func ptrRF(rf RangeF) *RangeF { return &rf }
+func ptrI64(i int64) *int64   { return &i }
 
 func TestMaxTokensFor(t *testing.T) {
 	c := Defaults()
@@ -246,5 +248,24 @@ func TestPickMaxConcurrent(t *testing.T) {
 				t.Fatalf("PickMaxConcurrent(%q, %v) = %v, want %v", tc.json, def, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestSpendCapDefaults(t *testing.T) {
+	d := Defaults()
+	if d.SpendCap5hUsd.Min != 100 || d.SpendCap5hUsd.Max != 200 {
+		t.Fatal("5h 默认区间错")
+	}
+	if d.SpendWindow7dMs != 604800000 {
+		t.Fatal("7d 窗口长错")
+	}
+}
+
+func TestSpendCapPatch(t *testing.T) {
+	c := Defaults()
+	en := true
+	apply(&c, Patch{SpendCap5hEnabled: &en, SpendCap5hUsd: ptrRF(RangeF{Min: 50, Max: 60})})
+	if !c.SpendCap5hEnabled || c.SpendCap5hUsd.Max != 60 {
+		t.Fatal("patch 未生效")
 	}
 }

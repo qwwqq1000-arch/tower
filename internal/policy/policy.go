@@ -137,6 +137,19 @@ type Config struct {
 	// UpstreamTimeoutSec is the total HTTP client timeout for upstream requests
 	// (both node and fallback channel proxies). Default 300 (5 minutes).
 	UpstreamTimeoutSec int
+
+	// SpendCap5hEnabled enables 5-hour spend-cap enforcement. Default false.
+	SpendCap5hEnabled bool
+	// SpendCap5hUsd is the 5-hour spend cap range (per account). Default {Min: 100, Max: 200}.
+	SpendCap5hUsd RangeF
+	// SpendCap7dEnabled enables 7-day spend-cap enforcement. Default false.
+	SpendCap7dEnabled bool
+	// SpendCap7dUsd is the 7-day spend cap range (per account). Default {Min: 500, Max: 1000}.
+	SpendCap7dUsd RangeF
+	// SpendWindow5hMs is the 5-hour window duration in milliseconds. Default 18000000 (5 hours).
+	SpendWindow5hMs int64
+	// SpendWindow7dMs is the 7-day window duration in milliseconds. Default 604800000 (7 days).
+	SpendWindow7dMs int64
 }
 
 // Defaults returns sane baseline configuration.
@@ -193,6 +206,12 @@ func Defaults() Config {
 			"claude-sonnet-4-6": 64000,
 			"claude-haiku-4-5":  64000,
 		},
+		SpendCap5hEnabled:  false,
+		SpendCap5hUsd:      RangeF{Min: 100, Max: 200},
+		SpendCap7dEnabled:  false,
+		SpendCap7dUsd:      RangeF{Min: 500, Max: 1000},
+		SpendWindow5hMs:    18000000,
+		SpendWindow7dMs:    604800000,
 	}
 }
 
@@ -237,6 +256,12 @@ type Patch struct {
 	QuietHoursTZ              *string
 	QuotaLimitDefaultResetMs  *int64
 	UpstreamTimeoutSec        *int
+	SpendCap5hEnabled         *bool
+	SpendCap5hUsd             *RangeF
+	SpendCap7dEnabled         *bool
+	SpendCap7dUsd             *RangeF
+	SpendWindow5hMs           *int64
+	SpendWindow7dMs           *int64
 }
 
 func apply(c *Config, p Patch) {
@@ -360,6 +385,24 @@ func apply(c *Config, p Patch) {
 	}
 	if p.UpstreamTimeoutSec != nil {
 		c.UpstreamTimeoutSec = *p.UpstreamTimeoutSec
+	}
+	if p.SpendCap5hEnabled != nil {
+		c.SpendCap5hEnabled = *p.SpendCap5hEnabled
+	}
+	if p.SpendCap5hUsd != nil {
+		c.SpendCap5hUsd = *p.SpendCap5hUsd
+	}
+	if p.SpendCap7dEnabled != nil {
+		c.SpendCap7dEnabled = *p.SpendCap7dEnabled
+	}
+	if p.SpendCap7dUsd != nil {
+		c.SpendCap7dUsd = *p.SpendCap7dUsd
+	}
+	if p.SpendWindow5hMs != nil {
+		c.SpendWindow5hMs = *p.SpendWindow5hMs
+	}
+	if p.SpendWindow7dMs != nil {
+		c.SpendWindow7dMs = *p.SpendWindow7dMs
 	}
 }
 
