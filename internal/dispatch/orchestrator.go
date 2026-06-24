@@ -3,6 +3,7 @@ package dispatch
 import (
 	"context"
 
+	"github.com/qwwqq1000-arch/tower/internal/policy"
 	"github.com/qwwqq1000-arch/tower/internal/state"
 )
 
@@ -26,6 +27,12 @@ type Orchestrator struct {
 	Cfg         state.BreakerCfg
 	CooldownMin int64
 	CooldownMax int64
+	// CooldownDist selects the inter-slot cooldown distribution: "uniform" (default)
+	// uses CooldownMin/CooldownMax; "lognormal" uses CooldownP50/CooldownP95 (RangeI,
+	// resolved per-key at Complete time).
+	CooldownDist string
+	CooldownP50  policy.RangeI // used when CooldownDist == "lognormal"
+	CooldownP95  policy.RangeI // used when CooldownDist == "lognormal"
 	MaxAttempts int
 	OnBan       func(key string, status int)                 // optional: fired when an account is (re)banned
 	OnRecover   func(key string)                             // optional: fired when a half-open trial succeeds (account recovers)
@@ -53,7 +60,9 @@ func (o *Orchestrator) attempt(ctx context.Context, model, key string, px Proxy)
 			return
 		}
 		settled = true
-		o.Store.Complete(key, o.CooldownMin, o.CooldownMax)
+		o.Store.CompleteDelay(key, o.CooldownDist,
+			o.CooldownP50.Resolve(key, "p50"), o.CooldownP95.Resolve(key, "p95"),
+			o.CooldownMin, o.CooldownMax)
 		if !sendReturned {
 			// proxy panicked — only release slot, no breaker penalty
 			return

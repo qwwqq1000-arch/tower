@@ -412,7 +412,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 		if maxFailover <= 0 {
 			maxFailover = 50
 		}
-		orch := &Orchestrator{Store: s.Store, Cfg: breaker, CooldownMin: cfg.SlotCooldownMinMs, CooldownMax: cfg.SlotCooldownMaxMs, MaxAttempts: maxFailover,
+		orch := &Orchestrator{Store: s.Store, Cfg: breaker, CooldownMin: cfg.SlotCooldownMinMs, CooldownMax: cfg.SlotCooldownMaxMs, CooldownDist: cfg.HumanDelayDist, CooldownP50: cfg.HumanDelayP50Ms, CooldownP95: cfg.HumanDelayP95Ms, MaxAttempts: maxFailover,
 			OnBan:     func(key string, status int) { s.recordBan(ctx, acctOwnerOf(keyOwner, key, ownerID), key, status) },
 			OnRecover: func(key string) { s.recordRecover(ctx, key) },
 			OnAttempt: func(key string, res ProxyResult, ok bool) {
@@ -1247,7 +1247,9 @@ func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, 
 			return
 		}
 		settled = true
-		s.Store.Complete(key, cfg.SlotCooldownMinMs, cfg.SlotCooldownMaxMs)
+		s.Store.CompleteDelay(key, cfg.HumanDelayDist,
+				cfg.HumanDelayP50Ms.Resolve(key, "p50"), cfg.HumanDelayP95Ms.Resolve(key, "p95"),
+				cfg.SlotCooldownMinMs, cfg.SlotCooldownMaxMs)
 		if !success && !sendReturned {
 			return // panic before upstream responded → release slot only, no ban
 		}

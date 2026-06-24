@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
+	"github.com/qwwqq1000-arch/tower/internal/policy"
 )
 
 // Store is the thread-safe in-memory registry of per-account state.
@@ -135,6 +136,31 @@ func (s *Store) Complete(key string, cooldownMin, cooldownMax int64) {
 	cd := int64(0)
 	if cooldownMax > 0 {
 		cd = s.rnd(cooldownMin, cooldownMax)
+	}
+	a.Slots.Release(s.now(), cd)
+}
+
+// CompleteDelay releases one slot with a delay computed from the given distribution.
+// dist == "lognormal": samples a log-normal distribution with the given p50 and p95 (ms).
+// Any other dist (including "uniform"): uses a uniform random in [minMs, maxMs].
+// minMs/maxMs are used only for the uniform branch; p50Ms/p95Ms only for lognormal.
+func (s *Store) CompleteDelay(key, dist string, p50Ms, p95Ms, minMs, maxMs int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.accts[key]
+	if a == nil {
+		return
+	}
+	var cd int64
+	if dist == "lognormal" {
+		cd = int64(policy.SampleLogNormal(float64(p50Ms), float64(p95Ms), key))
+		if cd < 0 {
+			cd = 0
+		}
+	} else {
+		if maxMs > 0 {
+			cd = s.rnd(minMs, maxMs)
+		}
 	}
 	a.Slots.Release(s.now(), cd)
 }

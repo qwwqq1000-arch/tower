@@ -131,6 +131,18 @@ type Config struct {
 	SpendWindow5hMs int64
 	// SpendWindow7dMs is the 7-day window duration in milliseconds. Default 604800000 (7 days).
 	SpendWindow7dMs int64
+
+	// HumanDelayDist selects the inter-slot cooldown distribution.
+	// "uniform" (default) uses SlotCooldownMinMs/MaxMs for a uniform random delay.
+	// "lognormal" uses HumanDelayP50Ms/HumanDelayP95Ms to parameterize a log-normal
+	// distribution that produces human-like timing (most delays short, occasional long).
+	HumanDelayDist string
+	// HumanDelayP50Ms is the per-account 50th-percentile cooldown (ms) for log-normal mode.
+	// Resolved deterministically per account. Default {Min: 2000, Max: 2000}.
+	HumanDelayP50Ms RangeI
+	// HumanDelayP95Ms is the per-account 95th-percentile cooldown (ms) for log-normal mode.
+	// Resolved deterministically per account. Default {Min: 5000, Max: 5000}.
+	HumanDelayP95Ms RangeI
 }
 
 // Defaults returns sane baseline configuration.
@@ -192,6 +204,9 @@ func Defaults() Config {
 		SpendCap7dUsd:     RangeF{Min: 500, Max: 1000},
 		SpendWindow5hMs:   18000000,
 		SpendWindow7dMs:   604800000,
+		HumanDelayDist:    "uniform",
+		HumanDelayP50Ms:   RangeI{Min: 2000, Max: 2000},
+		HumanDelayP95Ms:   RangeI{Min: 5000, Max: 5000},
 	}
 }
 
@@ -241,6 +256,9 @@ type Patch struct {
 	SpendCap7dUsd             *RangeF
 	SpendWindow5hMs           *int64
 	SpendWindow7dMs           *int64
+	HumanDelayDist            *string
+	HumanDelayP50Ms           *RangeI
+	HumanDelayP95Ms           *RangeI
 }
 
 func apply(c *Config, p Patch) {
@@ -375,6 +393,15 @@ func apply(c *Config, p Patch) {
 	}
 	if p.SpendWindow7dMs != nil {
 		c.SpendWindow7dMs = *p.SpendWindow7dMs
+	}
+	if p.HumanDelayDist != nil {
+		c.HumanDelayDist = *p.HumanDelayDist
+	}
+	if p.HumanDelayP50Ms != nil {
+		c.HumanDelayP50Ms = *p.HumanDelayP50Ms
+	}
+	if p.HumanDelayP95Ms != nil {
+		c.HumanDelayP95Ms = *p.HumanDelayP95Ms
 	}
 }
 
