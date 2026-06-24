@@ -400,6 +400,15 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 		order = s.pinToAffinity(conv, order, nowMs)
 	}
 
+	// BodyPad (disguise-phase4): inject padding into metadata.pad before dispatch.
+	// Guard: only active when explicitly enabled AND BodyPadBytes resolves to > 0.
+	// Default BodyPadEnabled=false + BodyPadBytes={0,0} → this block never executes.
+	// padBody is always safe: any error returns the original body unchanged.
+	if cfg.BodyPadEnabled {
+		n := int(cfg.BodyPadBytes.Resolve(conv, "bodypad"))
+		body = padBody(body, n, conv)
+	}
+
 	est := billing.CostUsd(model, int64(len(body)/4), 2000, 0, 0)
 	probeText := lastUserText(body)
 	var chPriceThreshold float64
@@ -1228,6 +1237,15 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 	nowMs := s.Now()
 	if cfg.AffinityTTLSec > 0 {
 		order = s.pinToAffinity(conv, order, nowMs)
+	}
+
+	// BodyPad (disguise-phase4): inject padding into metadata.pad before dispatch.
+	// Guard: only active when explicitly enabled AND BodyPadBytes resolves to > 0.
+	// Default BodyPadEnabled=false + BodyPadBytes={0,0} → this block never executes.
+	// padBody is always safe: any error returns the original body unchanged.
+	if cfg.BodyPadEnabled {
+		n := int(cfg.BodyPadBytes.Resolve(conv, "bodypad"))
+		body = padBody(body, n, conv)
 	}
 
 	// Probe/keyword/model fallback decision — same logic as non-streaming Dispatch.

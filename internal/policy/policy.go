@@ -223,6 +223,20 @@ type Config struct {
 	// the wait-for-slot logic is not yet implemented; only the capacity cap (=1) is active.
 	SerialQueueWaitMs int
 
+	// BodyPadEnabled enables request-body padding (disguise-phase4). Default false.
+	// When true and BodyPadBytes resolves to > 0, a deterministic pad string is
+	// injected into the metadata.pad field of each request before dispatch.
+	// Injection vector: metadata object (Anthropic API accepts arbitrary metadata keys).
+	// SAFETY: verify the injection vector against real upstream before enabling —
+	// see task brief Step 1. Default false + BodyPadBytes={0,0} means the feature
+	// is fully dormant even if someone flips BodyPadEnabled=true without also
+	// configuring a non-zero BodyPadBytes range.
+	BodyPadEnabled bool
+	// BodyPadBytes is the per-request pad size range (bytes). Resolved deterministically
+	// per conversation seed. Default {0,0} (no padding). Even when BodyPadEnabled=true,
+	// a {0,0} range means padBody is called with nBytes=0, which is a no-op.
+	BodyPadBytes RangeI
+
 	// QuietHoursEnabled enables quiet-hours rate/concurrency reduction. Default false.
 	QuietHoursEnabled bool
 	// QuietHoursWindows defines the quiet time windows (minute-of-day, supports overnight).
@@ -316,6 +330,8 @@ func Defaults() Config {
 		ModelPinTarget:        "",
 		SerialQueueEnabled:    false,
 		SerialQueueWaitMs:     2000,
+		BodyPadEnabled:        false,
+		BodyPadBytes:          RangeI{Min: 0, Max: 0},
 	}
 }
 
@@ -388,6 +404,9 @@ type Patch struct {
 
 	SerialQueueEnabled *bool
 	SerialQueueWaitMs  *int
+
+	BodyPadEnabled *bool
+	BodyPadBytes   *RangeI
 }
 
 func apply(c *Config, p Patch) {
@@ -582,6 +601,12 @@ func apply(c *Config, p Patch) {
 	}
 	if p.SerialQueueWaitMs != nil {
 		c.SerialQueueWaitMs = *p.SerialQueueWaitMs
+	}
+	if p.BodyPadEnabled != nil {
+		c.BodyPadEnabled = *p.BodyPadEnabled
+	}
+	if p.BodyPadBytes != nil {
+		c.BodyPadBytes = *p.BodyPadBytes
 	}
 }
 
