@@ -253,7 +253,7 @@ func (q *Queries) TodayDispatchForOwner(ctx context.Context, arg TodayDispatchFo
 }
 
 const updateDispatchLogDetailResponse = `-- name: UpdateDispatchLogDetailResponse :exec
-UPDATE dispatch_log_details SET resp_status = $2, resp_body = $3 WHERE request_id = $1
+UPDATE dispatch_log_details SET resp_status = $2, resp_body = left(coalesce(resp_body, '') || $3, 65536) WHERE request_id = $1
 `
 
 type UpdateDispatchLogDetailResponseParams struct {
@@ -262,8 +262,10 @@ type UpdateDispatchLogDetailResponseParams struct {
 	RespBody   string `json:"resp_body"`
 }
 
-// Records the final response status + body for a request (logs-detail-2). No-op if
-// the detail row was already pruned.
+// Appends a response segment and sets the latest status for a request (logs-detail-2).
+// Appending (not overwriting) lets a failed-over request keep every attempt's error —
+// e.g. a node 429 followed by a fallback 200 — instead of only the final outcome
+// (logs-detail-3). Capped to 64KB. No-op if the detail row was already pruned.
 func (q *Queries) UpdateDispatchLogDetailResponse(ctx context.Context, arg UpdateDispatchLogDetailResponseParams) error {
 	_, err := q.db.Exec(ctx, updateDispatchLogDetailResponse, arg.RequestID, arg.RespStatus, arg.RespBody)
 	return err

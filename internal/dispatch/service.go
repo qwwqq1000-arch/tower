@@ -312,7 +312,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 	start := time.Now()
 	s.writeRequestDetail(ctx, ownerID, body)
 
-	cfg := s.resolveConfig(ctx, ownerID)
+	cfg := s.resolveConfig(ctx, ownerID, "")
 	// Per-model max_tokens ceiling: reject an over-limit request 400 BEFORE any
 	// node/fallback attempt — it fails on every upstream, so retrying wastes
 	// attempts (limits-1).
@@ -452,35 +452,43 @@ func (s *Service) pinToAffinity(conv string, order []string, now int64) []string
 }
 
 // resolveConfig resolves the effective 封控 policy for the given dispatch owner by
-// applying the global layer first, then the owner's (tenant) layer over it, so a
-// per-tenant override wins over the global default. ownerID=="" (admin/unowned
-// dispatch key) has no tenant layer and resolves to global-over-base.
-func (s *Service) resolveConfig(ctx context.Context, ownerID string) policy.Config {
+// applying the global layer first, then the owner's (tenant) layer, then the
+// account layer over it, so later layers win. ownerID=="" (admin/unowned dispatch
+// key) has no tenant layer. accountID=="" means no account layer is applied.
+func (s *Service) resolveConfig(ctx context.Context, ownerID, accountID string) policy.Config {
 	rows, err := s.Q.ListPolicies(ctx)
 	if err != nil {
 		return s.Base
 	}
-	var globalPatch, tenantPatch *policy.Patch
+	var gp, op, ap *policy.Patch
 	for _, r := range rows {
 		switch {
 		case r.ScopeType == "global":
 			var p policy.Patch
 			if json.Unmarshal(r.Params, &p) == nil {
-				globalPatch = &p
+				gp = &p
 			}
 		case ownerID != "" && r.ScopeType == "owner" && r.ScopeID == ownerID:
 			var p policy.Patch
 			if json.Unmarshal(r.Params, &p) == nil {
-				tenantPatch = &p
+				op = &p
+			}
+		case accountID != "" && r.ScopeType == "account" && r.ScopeID == accountID:
+			var p policy.Patch
+			if json.Unmarshal(r.Params, &p) == nil {
+				ap = &p
 			}
 		}
 	}
-	patches := make([]policy.Patch, 0, 2)
-	if globalPatch != nil {
-		patches = append(patches, *globalPatch)
+	patches := make([]policy.Patch, 0, 3)
+	if gp != nil {
+		patches = append(patches, *gp)
 	}
-	if tenantPatch != nil {
-		patches = append(patches, *tenantPatch)
+	if op != nil {
+		patches = append(patches, *op)
+	}
+	if ap != nil {
+		patches = append(patches, *ap)
 	}
 	return policy.Resolve(s.Base, patches...)
 }
@@ -1005,7 +1013,7 @@ func flushCopy(dst http.ResponseWriter, src io.Reader) {
 // before the first byte; once streaming to the client starts, it commits.
 func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, ownerID, model string, body []byte) Outcome {
 	s.writeRequestDetail(ctx, ownerID, body)
-	cfg := s.resolveConfig(ctx, ownerID)
+	cfg := s.resolveConfig(ctx, ownerID, "")
 	// Per-model max_tokens ceiling (limits-1): reject 400 before any attempt. The
 	// stream handler does not write our return value, so emit the 400 to w here.
 	if limit := cfg.MaxTokensFor(model); limit > 0 {

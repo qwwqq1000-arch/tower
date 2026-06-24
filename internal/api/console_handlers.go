@@ -132,6 +132,76 @@ func putTenantPolicyHandler(q *sqlc.Queries) http.HandlerFunc {
 	}
 }
 
+// putAccountPolicyHandler stores a per-account policy override (scope_type "account",
+// scope_id = the account id from the path). The dispatch service resolves this layer
+// over the global and tenant policies so an account's override wins. Like the tenant
+// handler it merges the incoming patch over the existing account params so a partial
+// save only updates the provided keys. Superadmin-gated by the router.
+func putAccountPolicyHandler(q *sqlc.Queries) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		accountId := r.PathValue("accountId")
+		if accountId == "" {
+			writeJSON(w, 400, map[string]string{"error": "account id required"})
+			return
+		}
+		raw, _ := readAll(r)
+		if !validJSON(raw) {
+			writeJSON(w, 400, map[string]string{"error": "invalid json"})
+			return
+		}
+		// Merge the incoming patch over the existing account policy params so a
+		// partial save only updates the provided keys (never wipes other settings).
+		merged := map[string]json.RawMessage{}
+		if rows, err := q.ListPolicies(r.Context()); err != nil {
+			log.Printf("putAccountPolicyHandler: ListPolicies: %v", err)
+		} else {
+			for _, p := range rows {
+				if p.ScopeType == "account" && p.ScopeID == accountId {
+					_ = json.Unmarshal(p.Params, &merged)
+					break
+				}
+			}
+		}
+		var incoming map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &incoming); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "patch must be a JSON object"})
+			return
+		}
+		for k, v := range incoming {
+			merged[k] = v
+		}
+		out, err := json.Marshal(merged)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := q.UpsertPolicy(r.Context(), sqlc.UpsertPolicyParams{ScopeType: "account", ScopeID: accountId, Params: out, UpdatedAt: time.Now().UnixMilli()}); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		recordAudit(r, q, "policy.update", "account:"+accountId, nil, json.RawMessage(out))
+		writeJSON(w, 200, map[string]string{"ok": "true"})
+	}
+}
+
+// deleteAccountPolicyHandler removes a per-account policy override, reverting the
+// account to the tenant/global policy resolution. Superadmin-gated by the router.
+func deleteAccountPolicyHandler(q *sqlc.Queries) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		accountId := r.PathValue("accountId")
+		if accountId == "" {
+			writeJSON(w, 400, map[string]string{"error": "account id required"})
+			return
+		}
+		if err := q.DeletePolicy(r.Context(), sqlc.DeletePolicyParams{ScopeType: "account", ScopeID: accountId}); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		recordAudit(r, q, "policy.delete", "account:"+accountId, nil, nil)
+		writeJSON(w, 200, map[string]string{"ok": "true"})
+	}
+}
+
 // loadStoredGlobalConfig reads the global policy row from the DB and returns
 // the effective Config (Defaults merged with the stored global patch). If q is
 // nil or no global row exists the returned Config is policy.Defaults() so the
