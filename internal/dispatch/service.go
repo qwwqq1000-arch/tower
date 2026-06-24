@@ -800,15 +800,17 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 					}
 					hasRPMLimit = true
 				}
-				if hasRPMLimit && int64(s.Store.ReqsInWindow(key, 60000)) >= rpm {
+				// rpm<=0 means "no limit" (matches the UI "0 = 不限"); only enforce when >0.
+				if hasRPMLimit && rpm > 0 && int64(s.Store.ReqsInWindow(key, 60000)) >= rpm {
 					continue
 				}
 				// RPH / RPD only when full rate gov is enabled.
 				if acfg.RateGovEnabled {
 					rph := acfg.RateRPH.Resolve(key, "rph")
 					rpd := acfg.RateRPD.Resolve(key, "rpd")
-					if int64(s.Store.ReqsInWindow(key, 3600000)) >= rph ||
-						int64(s.Store.ReqsInWindow(key, 86400000)) >= rpd {
+					// rph/rpd<=0 means "no limit" (0 = 不限); only enforce when >0.
+					if (rph > 0 && int64(s.Store.ReqsInWindow(key, 3600000)) >= rph) ||
+						(rpd > 0 && int64(s.Store.ReqsInWindow(key, 86400000)) >= rpd) {
 						continue
 					}
 				}
