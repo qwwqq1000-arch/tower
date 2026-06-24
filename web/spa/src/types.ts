@@ -244,6 +244,8 @@ export interface LogEntry {
   ttfbMs?: number;
   tokensIn: number;
   tokensOut: number;
+  cacheRead: number;
+  cacheCreation: number;
   fallbackReason: string;
   stream?: boolean;
   costUsd?: number;

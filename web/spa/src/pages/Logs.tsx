@@ -150,7 +150,14 @@ function LogRow({ row, channelMap, accountMap, onOpen }: { row: LogEntry; channe
       <td className="px-3 py-2 text-muted text-xs whitespace-nowrap">{fmtMs(row.latencyMs)}</td>
       <td className="px-3 py-2 text-muted text-xs whitespace-nowrap">{fmtMs(row.ttfbMs)}</td>
       <td className="px-3 py-2 text-muted text-xs whitespace-nowrap">
-        {row.tokensIn ? `↑${row.tokensIn}` : '—'} / {row.tokensOut ? `↓${row.tokensOut}` : '—'}
+        <div>{row.tokensIn ? `↑${row.tokensIn}` : '—'} / {row.tokensOut ? `↓${row.tokensOut}` : '—'}</div>
+        {(row.cacheRead > 0 || row.cacheCreation > 0) && (
+          <div className="text-muted/60 text-[10px] leading-tight mt-0.5">
+            {row.cacheRead > 0 && <span>缓存读 {row.cacheRead.toLocaleString()}</span>}
+            {row.cacheRead > 0 && row.cacheCreation > 0 && <span className="mx-1">·</span>}
+            {row.cacheCreation > 0 && <span>缓存写 {row.cacheCreation.toLocaleString()}</span>}
+          </div>
+        )}
       </td>
       <td className="px-3 py-2">{streamBadge(row.stream)}</td>
       <td className="px-3 py-2 text-muted text-xs">{fmtCost(row.costUsd)}</td>
@@ -177,7 +184,7 @@ function LogCard({ row, channelMap, accountMap, onOpen }: { row: LogEntry; chann
         <span>HTTP {row.httpStatus || '—'}</span>
         <span>延迟 {fmtMs(row.latencyMs)}</span>
         <span>首字 {fmtMs(row.ttfbMs)}</span>
-        <span>↑{row.tokensIn ?? 0} / ↓{row.tokensOut ?? 0}</span>
+        <span>↑{row.tokensIn ?? 0} / ↓{row.tokensOut ?? 0}{(row.cacheRead > 0 || row.cacheCreation > 0) && <span className="text-muted/60 ml-1 text-[10px]">{row.cacheRead > 0 ? `缓存读 ${row.cacheRead.toLocaleString()}` : ''}{row.cacheRead > 0 && row.cacheCreation > 0 ? ' · ' : ''}{row.cacheCreation > 0 ? `缓存写 ${row.cacheCreation.toLocaleString()}` : ''}</span>}</span>
         <span>{streamBadge(row.stream)}</span>
         <span>{fmtCost(row.costUsd) !== '—' ? `费用 ${fmtCost(row.costUsd)}` : ''}</span>
       </div>

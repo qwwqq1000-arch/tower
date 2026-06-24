@@ -333,6 +333,7 @@ func listLogsHandler(q *sqlc.Queries) http.HandlerFunc {
 				"tokensOut": l.TokensOut, "fallbackReason": l.FallbackReason,
 				"ttfbMs": l.TtfbMs, "stream": l.Stream, "costUsd": l.CostUsd,
 				"requestId": l.RequestID,
+				"cacheRead": l.CacheRead, "cacheCreation": l.CacheCreation,
 			})
 		}
 		writeJSON(w, 200, out)

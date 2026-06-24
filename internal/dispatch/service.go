@@ -1101,9 +1101,8 @@ func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []
 		status = "error"
 	}
 	var cost float64
-	var in, out int64
+	var in, out, cacheRead, cache5m, cache1h int64
 	if status == "ok" {
-		var cacheRead, cache5m, cache1h int64
 		in, out, cacheRead, cache5m, cache1h = parseUsage(res.Body)
 		cost = billing.CostUsdFull(model, in, out, cacheRead, cache5m, cache1h)
 		// Record the channel's last-observed balance so the spend row reflects
@@ -1114,6 +1113,7 @@ func (s *Service) viaChannel(ctx context.Context, ownerID, model string, body []
 		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: "fallback:" + ch.ID,
 		ProfileID: "", Status: status, HttpStatus: int32(res.Status), LatencyMs: latencyMs, FallbackReason: reason,
 		TokensIn: in, TokensOut: out, Stream: false, CostUsd: cost,
+		CacheRead: cacheRead, CacheCreation: cache5m + cache1h,
 	})
 	// served=false on an error status (>=400) so viaChannels fails over to the next
 	// channel; a clean <400 response is returned as-is.
@@ -1161,6 +1161,7 @@ func (s *Service) logOK(ctx context.Context, ownerID, model string, res ProxyRes
 		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: key, ProfileID: "",
 		Status: "ok", HttpStatus: int32(res.Status), LatencyMs: latencyMs, TokensIn: in, TokensOut: out,
 		FallbackReason: reason, TtfbMs: latencyMs, Stream: false, CostUsd: cost,
+		CacheRead: cacheRead, CacheCreation: cache5m + cache1h,
 	})
 	if in > 0 || out > 0 {
 		_ = s.Q.AddCostRollup(ctx, sqlc.AddCostRollupParams{
@@ -1323,6 +1324,7 @@ func (s *Service) logStream(ctx context.Context, ownerID, model, key string, sta
 		Status: httpStatus, HttpStatus: int32(status), LatencyMs: latencyMs,
 		TokensIn: in, TokensOut: out, TtfbMs: ttfbMs, Stream: true, CostUsd: cost,
 		FallbackReason: streamReason,
+		CacheRead: cacheRead, CacheCreation: cache5m + cache1h,
 	})
 	if in > 0 || out > 0 {
 		_ = s.Q.AddCostRollup(ctx, sqlc.AddCostRollupParams{
@@ -1855,6 +1857,7 @@ func (s *Service) streamChannel(ctx context.Context, w http.ResponseWriter, ch s
 		Status: "ok", HttpStatus: int32(st.Status), FallbackReason: reason,
 		LatencyMs: time.Since(start).Milliseconds(), TtfbMs: ttfb,
 		TokensIn: in, TokensOut: out, Stream: true, CostUsd: cost,
+		CacheRead: cacheRead, CacheCreation: cache5m + cache1h,
 	})
 	return Outcome{Status: st.Status, Target: "fallback:" + ch.ID, Reason: reason}, true
 }

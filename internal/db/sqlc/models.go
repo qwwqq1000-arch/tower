@@ -131,6 +131,8 @@ type DispatchLog struct {
 	Stream         bool               `json:"stream"`
 	CostUsd        float64            `json:"cost_usd"`
 	RequestID      string             `json:"request_id"`
+	CacheRead      int64              `json:"cache_read"`
+	CacheCreation  int64              `json:"cache_creation"`
 }
 
 type DispatchLogDetail struct {
