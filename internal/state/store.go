@@ -154,7 +154,7 @@ func (s *Store) CompleteDelay(key, dist string, p50Ms, p95Ms, minMs, maxMs int64
 	}
 	var cd int64
 	if dist == "lognormal" {
-		cd = int64(policy.SampleLogNormal(float64(p50Ms), float64(p95Ms), key))
+		cd = int64(policy.SampleLogNormal(float64(p50Ms), float64(p95Ms)))
 		if cd < 0 {
 			cd = 0
 		}

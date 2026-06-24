@@ -515,12 +515,13 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 			if cfg.RateGovEnabled {
 				s.Store.RecordReq(winKey)
 			}
-			if cfg.SessionSimEnabled {
-				target := int(cfg.SessionBurstCount.Resolve(winKey, "burst"))
+			scfg := keyCfg[winKey]
+			if scfg.SessionSimEnabled {
+				target := int(scfg.SessionBurstCount.Resolve(winKey, "burst"))
 				s.Store.BurstTick(winKey)
 				if s.Store.BurstShouldPause(winKey, target) {
-					pause := cfg.SessionPauseMs.Resolve(winKey, "pause")
-					s.Store.SetLimited(winKey, cfg.MaxConcurrent, map[string]int64{"all": nowMs + pause})
+					pause := scfg.SessionPauseMs.Resolve(winKey, "pause")
+					s.Store.SetLimited(winKey, scfg.MaxConcurrent, map[string]int64{"all": nowMs + pause})
 					s.Store.BurstReset(winKey)
 				}
 			}
@@ -1385,12 +1386,13 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 			if cfg.RateGovEnabled {
 				s.Store.RecordReq(key)
 			}
-			if cfg.SessionSimEnabled && out.Status < 300 {
-				target := int(cfg.SessionBurstCount.Resolve(key, "burst"))
+			sscfg := keyCfgS[key]
+			if sscfg.SessionSimEnabled && out.Status < 300 {
+				target := int(sscfg.SessionBurstCount.Resolve(key, "burst"))
 				s.Store.BurstTick(key)
 				if s.Store.BurstShouldPause(key, target) {
-					pause := cfg.SessionPauseMs.Resolve(key, "pause")
-					s.Store.SetLimited(key, cfg.MaxConcurrent, map[string]int64{"all": nowMs + pause})
+					pause := sscfg.SessionPauseMs.Resolve(key, "pause")
+					s.Store.SetLimited(key, sscfg.MaxConcurrent, map[string]int64{"all": nowMs + pause})
 					s.Store.BurstReset(key)
 				}
 			}

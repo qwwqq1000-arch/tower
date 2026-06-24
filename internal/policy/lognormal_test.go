@@ -1,7 +1,6 @@
 package policy
 
 import (
-	"fmt"
 	"sort"
 	"testing"
 )
@@ -10,7 +9,7 @@ func TestLogNormalMedianApproxP50(t *testing.T) {
 	const p50, p95 = 2000.0, 5000.0
 	var samples []float64
 	for i := 0; i < 4000; i++ {
-		samples = append(samples, SampleLogNormal(p50, p95, fmt.Sprintf("k%d", i)))
+		samples = append(samples, SampleLogNormal(p50, p95))
 	}
 	sort.Float64s(samples)
 	med := samples[len(samples)/2]
