@@ -6,9 +6,10 @@
 // Only sends fields the user explicitly set.
 // ============================================================
 import { useState, useEffect } from 'react';
-import { dryRunPolicy, listPolicies, putGlobalPolicy } from '../api';
-import type { PolicyPatch, PolicyDryRunResult } from '../types';
+import { dryRunPolicy, listPolicies, putGlobalPolicy, putAccountPolicy, deleteAccountPolicy, listAccounts } from '../api';
+import type { PolicyPatch, PolicyDryRunResult, AccountRow } from '../types';
 import { useAuth } from '../auth';
+import { RangeInput } from '../components/RangeInput';
 
 // ------------------------------------------------------------------
 // Field helpers
@@ -137,9 +138,19 @@ function DiffTable({ result }: { result: PolicyDryRunResult }) {
 // ------------------------------------------------------------------
 // Policies page
 // ------------------------------------------------------------------
+// Scope type: 'global' | 'account'
+// TODO 租户 scope: putTenantPolicy exists on backend but is omitted in Phase 1
+type Scope = 'global' | 'account';
+
 export default function Policies() {
   const { role } = useAuth();
   const isSuperadmin = role === 'superadmin';
+
+  // Scope selector state
+  const [scope, setScope] = useState<Scope>('global');
+  const [accounts, setAccounts] = useState<AccountRow[]>([]);
+  const [selectedAccountId, setSelectedAccountId] = useState<string>('');
+  const [loadingAccounts, setLoadingAccounts] = useState(false);
 
   // Integer fields
   const maxConcurrent = useField<number>(3);
@@ -193,6 +204,19 @@ export default function Policies() {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+
+  // Load accounts for scope selector
+  useEffect(() => {
+    if (!isSuperadmin) return;
+    setLoadingAccounts(true);
+    void listAccounts()
+      .then((rows) => {
+        setAccounts(rows);
+        if (rows.length > 0) setSelectedAccountId(rows[0].accountId);
+      })
+      .catch(() => { /* silently ignore */ })
+      .finally(() => setLoadingAccounts(false));
+  }, [isSuperadmin]);
 
   // Load saved global policy on mount
   useEffect(() => {
@@ -270,8 +294,11 @@ export default function Policies() {
   function buildPatch(): PolicyPatch {
     const patch: PolicyPatch = {};
     if (maxConcurrent.enabled) patch.MaxConcurrent = maxConcurrent.value;
-    if (slotCooldownMinMs.enabled) patch.SlotCooldownMinMs = slotCooldownMinMs.value;
-    if (slotCooldownMaxMs.enabled) patch.SlotCooldownMaxMs = slotCooldownMaxMs.value;
+    // SlotCooldownMin/Max are controlled as a pair via the RangeInput widget
+    if (slotCooldownMinMs.enabled) {
+      patch.SlotCooldownMinMs = slotCooldownMinMs.value;
+      patch.SlotCooldownMaxMs = slotCooldownMaxMs.value;
+    }
     if (banPersistStreak.enabled) patch.BanPersistStreak = banPersistStreak.value;
     if (permanentBanStreak.enabled) patch.PermanentBanStreak = permanentBanStreak.value;
     if (cooldownBaseMs.enabled) patch.CooldownBaseMs = cooldownBaseMs.value;
@@ -354,8 +381,15 @@ export default function Policies() {
     setErr(null);
     setSaveMsg(null);
     try {
-      await putGlobalPolicy(buildPatch());
-      setSaveMsg('全局策略已保存');
+      if (scope === 'account') {
+        if (!selectedAccountId) throw new Error('请先选择账户');
+        await putAccountPolicy(selectedAccountId, buildPatch());
+        const acct = accounts.find((a) => a.accountId === selectedAccountId);
+        setSaveMsg(`账户策略已保存 (${acct?.email ?? selectedAccountId})`);
+      } else {
+        await putGlobalPolicy(buildPatch());
+        setSaveMsg('全局策略已保存');
+      }
       setTimeout(() => setSaveMsg(null), 3000);
     } catch (e) {
       setErr(e instanceof Error ? e.message : '保存失败');
@@ -364,8 +398,23 @@ export default function Policies() {
     }
   }
 
+  async function handleDeleteAccountPolicy() {
+    if (!selectedAccountId) return;
+    if (!window.confirm('确认清除此号的策略覆盖？清除后将使用全局策略。')) return;
+    setErr(null);
+    setSaveMsg(null);
+    try {
+      await deleteAccountPolicy(selectedAccountId);
+      const acct = accounts.find((a) => a.accountId === selectedAccountId);
+      setSaveMsg(`账户策略已清除 (${acct?.email ?? selectedAccountId})`);
+      setTimeout(() => setSaveMsg(null), 3000);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : '清除失败');
+    }
+  }
+
   const anyEnabled = [
-    maxConcurrent, slotCooldownMinMs, slotCooldownMaxMs, banPersistStreak, permanentBanStreak,
+    maxConcurrent, slotCooldownMinMs, banPersistStreak, permanentBanStreak,
     cooldownBaseMs, cooldownMaxMs, cooldownMult, affinityTTLSec,
     fallbackEnabled, fallbackPriceThresholdUsd, fallbackKeywords, fallbackModels, fallbackProbeEnabled, banSignals, banKeywords, cooldownSignals, cooldownSignalSec,
     quotaRotateThreshold, maxFailover,
@@ -387,26 +436,89 @@ export default function Policies() {
           </p>
         </div>
         {isSuperadmin && (
-          <div className="flex gap-2 shrink-0">
-            <button
-              onClick={() => { void handlePreview(); }}
-              disabled={previewing || !anyEnabled}
-              className="px-4 py-2 text-sm font-medium border border-accent text-accent rounded-lg
-                         hover:bg-accent/10 disabled:opacity-50 disabled:cursor-not-allowed transition"
-            >
-              {previewing ? '预览中…' : '预览 (dry-run)'}
-            </button>
+          <div className="flex gap-2 shrink-0 flex-wrap justify-end">
+            {scope === 'global' && (
+              <button
+                onClick={() => { void handlePreview(); }}
+                disabled={previewing || !anyEnabled}
+                className="px-4 py-2 text-sm font-medium border border-accent text-accent rounded-lg
+                           hover:bg-accent/10 disabled:opacity-50 disabled:cursor-not-allowed transition"
+              >
+                {previewing ? '预览中…' : '预览 (dry-run)'}
+              </button>
+            )}
+            {scope === 'account' && (
+              <button
+                onClick={() => { void handleDeleteAccountPolicy(); }}
+                disabled={!selectedAccountId}
+                className="px-4 py-2 text-sm font-medium border border-err text-err rounded-lg
+                           hover:bg-err/10 disabled:opacity-50 disabled:cursor-not-allowed transition"
+              >
+                清除此号配置
+              </button>
+            )}
             <button
               onClick={() => { void handleSave(); }}
               disabled={saving || !anyEnabled}
               className="px-4 py-2 text-sm font-medium bg-accent text-white rounded-lg
                          hover:bg-accent/80 disabled:opacity-50 disabled:cursor-not-allowed transition"
             >
-              {saving ? '保存中…' : '保存全局'}
+              {saving ? '保存中…' : scope === 'account' ? '保存账户策略' : '保存全局'}
             </button>
           </div>
         )}
       </div>
+
+      {/* Scope selector */}
+      {isSuperadmin && (
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 bg-surface border border-line rounded-xl px-4 py-3">
+          <span className="text-sm font-medium text-ink shrink-0">作用域</span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setScope('global')}
+              className={`px-3 py-1.5 text-sm rounded-lg border transition ${
+                scope === 'global'
+                  ? 'bg-accent text-white border-accent'
+                  : 'border-line text-muted hover:border-accent hover:text-ink'
+              }`}
+            >
+              全局
+            </button>
+            <button
+              onClick={() => setScope('account')}
+              className={`px-3 py-1.5 text-sm rounded-lg border transition ${
+                scope === 'account'
+                  ? 'bg-accent text-white border-accent'
+                  : 'border-line text-muted hover:border-accent hover:text-ink'
+              }`}
+            >
+              账户
+            </button>
+          </div>
+          {scope === 'account' && (
+            <div className="flex items-center gap-2 flex-1 min-w-0">
+              {loadingAccounts ? (
+                <span className="text-xs text-muted">加载账户中…</span>
+              ) : accounts.length === 0 ? (
+                <span className="text-xs text-muted">无可用账户</span>
+              ) : (
+                <select
+                  value={selectedAccountId}
+                  onChange={(e) => setSelectedAccountId(e.target.value)}
+                  className="flex-1 min-w-0 bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink
+                             focus:outline-none focus:border-accent transition"
+                >
+                  {accounts.map((a) => (
+                    <option key={a.accountId} value={a.accountId}>
+                      {a.email || a.accountId}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {err && (
         <div className="bg-err/10 border border-err/30 rounded-xl p-3 text-err text-sm">
@@ -438,32 +550,22 @@ export default function Policies() {
           />
         </FieldRow>
 
+        {/* SlotCooldown rendered as a single RangeInput widget.
+            Backend still stores SlotCooldownMinMs / SlotCooldownMaxMs separately;
+            buildPatch() maps Min→SlotCooldownMinMs, Max→SlotCooldownMaxMs.
+            Both fields share the same enabled toggle (slotCooldownMinMs). */}
         <FieldRow
-          label="SlotCooldownMinMs"
-          desc="槽位冷却最小时长 (ms)"
+          label="SlotCooldownMs (min ~ max)"
+          desc="槽位冷却时长区间 (ms)：每次随机取 [min, max] 内的值"
           enabled={slotCooldownMinMs.enabled}
           onToggle={slotCooldownMinMs.toggle}
         >
-          <NumInput
-            value={slotCooldownMinMs.value}
-            onChange={slotCooldownMinMs.set}
+          <RangeInput
+            min={slotCooldownMinMs.value}
+            max={slotCooldownMaxMs.value}
+            onChangeMin={slotCooldownMinMs.set}
+            onChangeMax={slotCooldownMaxMs.set}
             disabled={!slotCooldownMinMs.enabled}
-            min={0}
-            step={100}
-          />
-        </FieldRow>
-
-        <FieldRow
-          label="SlotCooldownMaxMs"
-          desc="槽位冷却最大时长 (ms)"
-          enabled={slotCooldownMaxMs.enabled}
-          onToggle={slotCooldownMaxMs.toggle}
-        >
-          <NumInput
-            value={slotCooldownMaxMs.value}
-            onChange={slotCooldownMaxMs.set}
-            disabled={!slotCooldownMaxMs.enabled}
-            min={0}
             step={100}
           />
         </FieldRow>

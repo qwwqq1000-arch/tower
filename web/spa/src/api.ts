@@ -128,6 +128,12 @@ export const listPolicies = () =>
 export const putGlobalPolicy = (data: PolicyPatch) =>
   api<{ ok: string }>('PUT', '/api/admin/policies/global', data);
 
+export const putAccountPolicy = (accountId: string, data: PolicyPatch) =>
+  api<{ ok: string }>('PUT', `/api/admin/policies/account/${accountId}`, data);
+
+export const deleteAccountPolicy = (accountId: string) =>
+  api<{ ok: string }>('DELETE', `/api/admin/policies/account/${accountId}`);
+
 export const dryRunPolicy = (data: PolicyPatch) =>
   api<PolicyDryRunResult>('POST', '/api/admin/policies/dry-run', data);
 
