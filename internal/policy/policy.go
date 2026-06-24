@@ -159,6 +159,20 @@ type Config struct {
 	// RateExceedAction determines what happens when a rate limit is exceeded:
 	// "rotate" (default) skips the account from candidacy; "delay" is TODO.
 	RateExceedAction string
+
+	// SessionSimEnabled enables session-simulation burst→pause rotation.
+	// When true, each account counts consecutive successful requests; once the
+	// per-account burst target is reached the account is temporarily rotated out
+	// (via SetLimited "all") for a randomised pause, then recovers automatically.
+	// Default false (zero overhead when disabled).
+	SessionSimEnabled bool
+	// SessionBurstCount is the per-account burst-size target range (number of
+	// consecutive successful requests before a coffee-break pause). Resolved
+	// deterministically per account. Default {3, 10}.
+	SessionBurstCount RangeI
+	// SessionPauseMs is the pause duration range (ms) applied when an account
+	// completes a burst. Resolved deterministically per account. Default {30000, 180000}.
+	SessionPauseMs RangeI
 }
 
 // Defaults returns sane baseline configuration.
@@ -228,6 +242,9 @@ func Defaults() Config {
 		RateRPH:           RangeI{Min: 100, Max: 100},
 		RateRPD:           RangeI{Min: 600, Max: 600},
 		RateExceedAction:  "rotate",
+		SessionSimEnabled: false,
+		SessionBurstCount: RangeI{Min: 3, Max: 10},
+		SessionPauseMs:    RangeI{Min: 30000, Max: 180000},
 	}
 }
 
@@ -285,6 +302,9 @@ type Patch struct {
 	RateRPH                   *RangeI
 	RateRPD                   *RangeI
 	RateExceedAction          *string
+	SessionSimEnabled         *bool
+	SessionBurstCount         *RangeI
+	SessionPauseMs            *RangeI
 }
 
 func apply(c *Config, p Patch) {
@@ -443,6 +463,15 @@ func apply(c *Config, p Patch) {
 	}
 	if p.RateExceedAction != nil {
 		c.RateExceedAction = *p.RateExceedAction
+	}
+	if p.SessionSimEnabled != nil {
+		c.SessionSimEnabled = *p.SessionSimEnabled
+	}
+	if p.SessionBurstCount != nil {
+		c.SessionBurstCount = *p.SessionBurstCount
+	}
+	if p.SessionPauseMs != nil {
+		c.SessionPauseMs = *p.SessionPauseMs
 	}
 }
 

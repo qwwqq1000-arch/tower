@@ -177,3 +177,42 @@ func TestAccount_CanDispatch_WarmupCap(t *testing.T) {
 		t.Fatal("WarmupCap=0 with 3/3 in-use: capacity exhausted → deny")
 	}
 }
+
+func TestSessionBurstThenPause(t *testing.T) {
+	a := NewAccount(3)
+	target := 3
+	for i := 0; i < target; i++ {
+		a.BurstTick()
+	}
+	if !a.BurstShouldPause(target) {
+		t.Fatal("发够应暂停")
+	}
+}
+
+func TestSessionBurstResetAfterPause(t *testing.T) {
+	a := NewAccount(3)
+	target := 3
+	for i := 0; i < target; i++ {
+		a.BurstTick()
+	}
+	if !a.BurstShouldPause(target) {
+		t.Fatal("发够应暂停")
+	}
+	a.BurstReset()
+	// after reset, burst should not pause until target is reached again
+	if a.BurstShouldPause(target) {
+		t.Fatal("重置后应不暂停")
+	}
+	// send target-1 more, still not pause
+	for i := 0; i < target-1; i++ {
+		a.BurstTick()
+	}
+	if a.BurstShouldPause(target) {
+		t.Fatal("target-1 次后不应暂停")
+	}
+	// send one more to hit target
+	a.BurstTick()
+	if !a.BurstShouldPause(target) {
+		t.Fatal("再发够后应暂停")
+	}
+}

@@ -376,6 +376,37 @@ func (s *Store) ReqsInWindow(key string, windowMs int64) int {
 	return a.ReqsInWindow(s.now(), windowMs)
 }
 
+// BurstTick increments the burst counter for the account (session-sim).
+// Creates the account with capacity=1 if absent (safe default, same as AddSpend/RecordReq).
+func (s *Store) BurstTick(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.ensureLocked(key, 1)
+	a.BurstTick()
+}
+
+// BurstShouldPause reports whether the account's burst counter has reached target.
+// Returns false when the account does not exist.
+func (s *Store) BurstShouldPause(key string, target int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.accts[key]
+	if a == nil {
+		return false
+	}
+	return a.BurstShouldPause(target)
+}
+
+// BurstReset resets the account's burst counter to zero (called after triggering a pause).
+// No-op when the account does not exist.
+func (s *Store) BurstReset(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if a := s.accts[key]; a != nil {
+		a.BurstReset()
+	}
+}
+
 // SetCapacity updates the slot capacity for an existing account (no-op if absent).
 func (s *Store) SetCapacity(key string, cap int) {
 	s.mu.Lock()

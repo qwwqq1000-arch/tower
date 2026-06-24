@@ -456,6 +456,15 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 			if cfg.RateGovEnabled {
 				s.Store.RecordReq(winKey)
 			}
+			if cfg.SessionSimEnabled {
+				target := int(cfg.SessionBurstCount.Resolve(winKey, "burst"))
+				s.Store.BurstTick(winKey)
+				if s.Store.BurstShouldPause(winKey, target) {
+					pause := cfg.SessionPauseMs.Resolve(winKey, "pause")
+					s.Store.SetLimited(winKey, cfg.MaxConcurrent, map[string]int64{"all": nowMs + pause})
+					s.Store.BurstReset(winKey)
+				}
+			}
 			s.logOK(ctx, ownerID, model, res, winKey, time.Since(start).Milliseconds(), "")
 			return Outcome{Status: res.Status, Body: res.Body, Target: winKey, Reason: ""}
 		}
@@ -1214,6 +1223,15 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 			// client (the stream already went to w).
 			if cfg.RateGovEnabled {
 				s.Store.RecordReq(key)
+			}
+			if cfg.SessionSimEnabled && out.Status < 300 {
+				target := int(cfg.SessionBurstCount.Resolve(key, "burst"))
+				s.Store.BurstTick(key)
+				if s.Store.BurstShouldPause(key, target) {
+					pause := cfg.SessionPauseMs.Resolve(key, "pause")
+					s.Store.SetLimited(key, cfg.MaxConcurrent, map[string]int64{"all": nowMs + pause})
+					s.Store.BurstReset(key)
+				}
 			}
 			out.Body = sseBody
 			return out

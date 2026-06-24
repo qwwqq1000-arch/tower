@@ -36,6 +36,9 @@ type Account struct {
 	CoolUntil    int64            // ms; temporary error-cooldown (e.g. 429); 0 = none. Ephemeral.
 	spendLog     []spendEntry     // 升序时间
 	reqLog       []int64          // timestamps (ms, ascending) of dispatched requests; for rate governor
+
+	// Session-sim burst state (only used when SessionSimEnabled=true).
+	burstCount int // requests served in the current burst
 }
 
 // RecordReq appends a request timestamp and prunes entries older than 1 day (86400000 ms).
@@ -184,6 +187,24 @@ func (a *Account) AddSpend(now int64, usd float64, pruneWindowMs int64) {
 	if i > 0 {
 		a.spendLog = a.spendLog[i:]
 	}
+}
+
+// BurstTick increments the burst counter by one (called on each successful dispatch
+// when SessionSim is enabled). Thread-safety is the caller's responsibility (Store
+// wrappers hold the store lock before calling this).
+func (a *Account) BurstTick() {
+	a.burstCount++
+}
+
+// BurstShouldPause reports whether the burst counter has reached or exceeded target,
+// meaning the account should take a "coffee break" pause.
+func (a *Account) BurstShouldPause(target int) bool {
+	return a.burstCount >= target
+}
+
+// BurstReset resets the burst counter to zero (called after triggering a pause).
+func (a *Account) BurstReset() {
+	a.burstCount = 0
 }
 
 // SpendInWindow returns the sum of spend entries in [now-windowMs, now].
