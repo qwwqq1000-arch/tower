@@ -8,24 +8,6 @@ import (
 	"strings"
 )
 
-// PickThreshold extracts QuotaRotateThreshold from a JSON policy patch (the
-// global policy row's params). If the patch is absent, unparseable, or holds an
-// invalid value (<=0 or >1), it returns def unchanged. This is the single source
-// of truth for how the meridian poller and the CPA discovery loop pick up the
-// live QuotaRotateThreshold, so both account kinds gate on the same value.
-func PickThreshold(patchJSON []byte, def float64) float64 {
-	var p Patch
-	if err := json.Unmarshal(patchJSON, &p); err != nil {
-		return def
-	}
-	if p.QuotaRotateThreshold != nil {
-		if v := *p.QuotaRotateThreshold; v > 0 && v <= 1 {
-			return v
-		}
-	}
-	return def
-}
-
 // PickMaxConcurrent extracts MaxConcurrent from a JSON policy patch (the global
 // policy row's params). Returns def when the patch is absent, unparseable, or does
 // not override MaxConcurrent with a positive value. Shared by the meridian poller
@@ -62,10 +44,9 @@ type Config struct {
 	// CooldownSignals are HTTP status codes (e.g. 429) that temporarily cool the
 	// account for CooldownSignalSec seconds (NOT a ban — it auto-recovers and never
 	// escalates to permanent). Empty = off.
-	CooldownSignals      []int
-	CooldownSignalSec    int
-	QuotaRotateThreshold float64
-	MaxFailover          int
+	CooldownSignals   []int
+	CooldownSignalSec int
+	MaxFailover       int
 
 	// Warmup: new accounts (onboarded within WarmupHours) serve at reduced concurrency.
 	// 0 = off.
@@ -173,7 +154,6 @@ func Defaults() Config {
 		BanKeywords:               []string{"authentication_error", "account_disabled", "account_suspended"},
 		CooldownSignals:           nil,
 		CooldownSignalSec:         60,
-		QuotaRotateThreshold:      0.95,
 		MaxFailover:               50,
 		WarmupHours:               0,
 		WarmupMaxConcurrent:       1,
@@ -235,7 +215,6 @@ type Patch struct {
 	BanKeywords               *[]string
 	CooldownSignals           *[]int
 	CooldownSignalSec         *int
-	QuotaRotateThreshold      *float64
 	MaxFailover               *int
 	WarmupHours               *int
 	WarmupMaxConcurrent       *int
@@ -318,13 +297,6 @@ func apply(c *Config, p Patch) {
 	}
 	if p.CooldownSignalSec != nil {
 		c.CooldownSignalSec = *p.CooldownSignalSec
-	}
-	if p.QuotaRotateThreshold != nil {
-		if v := *p.QuotaRotateThreshold; v > 0 && v <= 1 {
-			c.QuotaRotateThreshold = v
-		} else {
-			c.QuotaRotateThreshold = 0.95
-		}
 	}
 	if p.MaxFailover != nil {
 		c.MaxFailover = *p.MaxFailover
@@ -466,7 +438,6 @@ func DryRun(base Config, patches ...Patch) (Config, []Diff) {
 	add("BanKeywords", base.BanKeywords, final.BanKeywords)
 	add("CooldownSignals", base.CooldownSignals, final.CooldownSignals)
 	add("CooldownSignalSec", base.CooldownSignalSec, final.CooldownSignalSec)
-	add("QuotaRotateThreshold", base.QuotaRotateThreshold, final.QuotaRotateThreshold)
 	add("MaxFailover", base.MaxFailover, final.MaxFailover)
 	add("WarmupHours", base.WarmupHours, final.WarmupHours)
 	add("WarmupMaxConcurrent", base.WarmupMaxConcurrent, final.WarmupMaxConcurrent)

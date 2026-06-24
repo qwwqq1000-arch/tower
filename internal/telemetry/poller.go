@@ -17,7 +17,6 @@ import (
 type Poller struct {
 	Q            *sqlc.Queries
 	Store        *state.Store
-	Threshold    float64
 	DefaultTTLMs int64
 	Capacity     int
 	Now          func() int64
@@ -93,20 +92,6 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 	return nil
 }
 
-// threshold reads the global policy row and returns the effective QuotaRotateThreshold.
-func (p *Poller) threshold(ctx context.Context) float64 {
-	rows, err := p.Q.ListPolicies(ctx)
-	if err != nil {
-		return p.Threshold
-	}
-	for _, row := range rows {
-		if row.ScopeType == "global" {
-			return policy.PickThreshold(row.Params, p.Threshold)
-		}
-	}
-	return p.Threshold
-}
-
 // maxConcurrent reads the global policy row and returns the effective MaxConcurrent.
 // Falls back to p.Capacity when the policy row is absent or does not override it.
 func (p *Poller) maxConcurrent(ctx context.Context) int {
@@ -120,15 +105,6 @@ func (p *Poller) maxConcurrent(ctx context.Context) int {
 		}
 	}
 	return p.Capacity
-}
-
-func findProfile(q nodeclient.QuotaAll, id string) (nodeclient.ProfileQuota, bool) {
-	for _, pr := range q.Profiles {
-		if pr.ID == id {
-			return pr, true
-		}
-	}
-	return nodeclient.ProfileQuota{}, false
 }
 
 // Run polls on an interval until ctx is cancelled.

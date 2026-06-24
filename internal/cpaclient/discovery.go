@@ -9,7 +9,6 @@ import (
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 	"github.com/qwwqq1000-arch/tower/internal/policy"
 	"github.com/qwwqq1000-arch/tower/internal/state"
-	"github.com/qwwqq1000-arch/tower/internal/telemetry"
 )
 
 // RefreshQuotaForNode fetches + persists the live usage for every claude/anthropic CPA
@@ -71,52 +70,41 @@ type syncQuerier interface {
 	SetCpaQuotaFetchError(ctx context.Context, arg sqlc.SetCpaQuotaFetchErrorParams) error
 }
 
-// RotateConfig threads the live state store and rotation parameters into CPA
-// discovery so a CPA account's quota utilization gates dispatch the same way the
-// meridian telemetry poller gates meridian accounts. A nil Store disables the
-// projection (e.g. in discovery-only tests).
-//
-// Threshold and Capacity are the effective values for the current cycle. They
-// are refreshed from the live global policy (via Refresh) before each SyncAll so
-// CPA accounts honor QuotaRotateThreshold / MaxConcurrent overrides exactly like
-// the meridian poller does; BaseThreshold and BaseCapacity hold the startup
-// defaults used as fallback when the policy row is absent or does not override.
+// RotateConfig threads the live state store and the per-account slot capacity
+// (MaxConcurrent) into CPA discovery. Capacity is the effective value for the
+// current cycle, refreshed from the live global policy (via Refresh) before each
+// SyncAll so CPA accounts honor the MaxConcurrent override exactly like the
+// meridian poller does; BaseCapacity holds the startup default used as fallback
+// when the policy row is absent or does not override.
 type RotateConfig struct {
 	Store        *state.Store
-	Threshold    float64 // effective QuotaRotateThreshold for this cycle (0..1 fraction)
-	Capacity     int     // effective per-account slot capacity for this cycle (MaxConcurrent)
-	DefaultTTLMs int64   // fallback limit window when resets_at is unknown
+	Capacity     int   // effective per-account slot capacity for this cycle (MaxConcurrent)
+	DefaultTTLMs int64 // fallback limit window when resets_at is unknown
 
 	// Cipher is the runtime master-key cipher (vault-crypto-1) used to decrypt a
 	// node's stored mgmt_key before building the CPA management client
 	// (vault-crypto-3). May be nil when secrets are stored as plaintext.
 	Cipher *crypto.Cipher
 
-	// BaseThreshold/BaseCapacity are the compiled-in defaults applied when the
-	// global policy row is missing or omits an override. Mirrors Poller.Threshold
-	// / Poller.Capacity. When zero, Threshold/Capacity are used as the base.
-	BaseThreshold float64
-	BaseCapacity  int
+	// BaseCapacity is the compiled-in default applied when the global policy row
+	// is missing or omits an override. Mirrors Poller.Capacity. When zero,
+	// Capacity is used as the base.
+	BaseCapacity int
 }
 
-// Refresh resolves the effective Threshold and Capacity from the live global
-// policy row, mirroring telemetry.Poller.threshold / Poller.maxConcurrent so CPA
-// accounts gate on the same live values as meridian accounts. It must be called
-// once per cycle before SyncAll. On any error (or when rot is nil) it leaves the
-// current effective values unchanged.
+// Refresh resolves the effective Capacity from the live global policy row,
+// mirroring telemetry.Poller.maxConcurrent so CPA accounts gate on the same live
+// MaxConcurrent as meridian accounts. It must be called once per cycle before
+// SyncAll. On any error (or when rot is nil) it leaves the current effective
+// value unchanged.
 func (rot *RotateConfig) Refresh(ctx context.Context, q *sqlc.Queries) {
 	if rot == nil {
 		return
-	}
-	baseThresh := rot.BaseThreshold
-	if baseThresh == 0 {
-		baseThresh = rot.Threshold
 	}
 	baseCap := rot.BaseCapacity
 	if baseCap == 0 {
 		baseCap = rot.Capacity
 	}
-	rot.Threshold = baseThresh
 	rot.Capacity = baseCap
 	rows, err := q.ListPolicies(ctx)
 	if err != nil {
@@ -124,29 +112,10 @@ func (rot *RotateConfig) Refresh(ctx context.Context, q *sqlc.Queries) {
 	}
 	for _, row := range rows {
 		if row.ScopeType == "global" {
-			rot.Threshold = policy.PickThreshold(row.Params, baseThresh)
 			rot.Capacity = policy.PickMaxConcurrent(row.Params, baseCap)
 			return
 		}
 	}
-}
-
-// cpaWindows flattens a CPA Usage payload into telemetry windows for projection.
-func cpaWindows(u *Usage) []telemetry.CpaWindow {
-	var ws []telemetry.CpaWindow
-	if u.FiveHour != nil {
-		ws = append(ws, telemetry.CpaWindow{Type: "five_hour", Utilization: u.FiveHour.Utilization, ResetsAt: u.FiveHour.ResetsAt})
-	}
-	if u.SevenDay != nil {
-		ws = append(ws, telemetry.CpaWindow{Type: "seven_day", Utilization: u.SevenDay.Utilization, ResetsAt: u.SevenDay.ResetsAt})
-	}
-	if u.SevenDayOpus != nil {
-		ws = append(ws, telemetry.CpaWindow{Type: "seven_day_opus", Utilization: u.SevenDayOpus.Utilization, ResetsAt: u.SevenDayOpus.ResetsAt})
-	}
-	if u.SevenDaySonnet != nil {
-		ws = append(ws, telemetry.CpaWindow{Type: "seven_day_sonnet", Utilization: u.SevenDaySonnet.Utilization, ResetsAt: u.SevenDaySonnet.ResetsAt})
-	}
-	return ws
 }
 
 // quotaParams maps a CPA Usage payload to the DB upsert params.
@@ -243,12 +212,13 @@ func Sync(ctx context.Context, q syncQuerier, node sqlc.Node, rot *RotateConfig)
 	return len(accounts), nil
 }
 
-// SyncAll discovers accounts for every CPA node in the registry, projecting each
-// account's quota utilization into rot.Store (when non-nil) so saturated CPA
-// accounts rotate out of dispatch. The effective rotation threshold and capacity
-// are resolved from the live global policy at the start of each cycle (mirroring
-// the meridian poller), so QuotaRotateThreshold / MaxConcurrent overrides gate
-// CPA and meridian accounts identically.
+// SyncAll discovers accounts for every CPA node in the registry into Tower's
+// account pool. The effective per-account capacity (MaxConcurrent) is resolved
+// from the live global policy at the start of each cycle (mirroring the meridian
+// poller), so the MaxConcurrent override gates CPA and meridian accounts
+// identically. Discovery is display/pool-only: it does NOT project utilization
+// into the limit store (rotation is reactive — driven by dispatch responses and
+// the spend caps, not by polled utilization).
 func SyncAll(ctx context.Context, q *sqlc.Queries, rot *RotateConfig) error {
 	rot.Refresh(ctx, q)
 	nodes, err := q.ListNodes(ctx)

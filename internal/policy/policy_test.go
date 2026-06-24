@@ -109,41 +109,6 @@ func TestDryRun_NoChangeNoDiffs(t *testing.T) {
 	}
 }
 
-func TestResolve_QuotaRotateThreshold(t *testing.T) {
-	base := Defaults() // default 0.95
-
-	// Valid value applies.
-	got := Resolve(base, Patch{QuotaRotateThreshold: ptrF(0.8)})
-	if got.QuotaRotateThreshold != 0.8 {
-		t.Fatalf("QuotaRotateThreshold=%v, want 0.8", got.QuotaRotateThreshold)
-	}
-
-	// Invalid value (>1) falls back to 0.95.
-	got = Resolve(base, Patch{QuotaRotateThreshold: ptrF(1.5)})
-	if got.QuotaRotateThreshold != 0.95 {
-		t.Fatalf("QuotaRotateThreshold=%v, want 0.95 (out-of-range reset)", got.QuotaRotateThreshold)
-	}
-
-	// Invalid value (<=0) falls back to 0.95.
-	got = Resolve(base, Patch{QuotaRotateThreshold: ptrF(0)})
-	if got.QuotaRotateThreshold != 0.95 {
-		t.Fatalf("QuotaRotateThreshold=%v, want 0.95 (zero reset)", got.QuotaRotateThreshold)
-	}
-
-	// DryRun reports the changed field.
-	_, diffs := DryRun(base, Patch{QuotaRotateThreshold: ptrF(0.7)})
-	seen := map[string]Diff{}
-	for _, d := range diffs {
-		seen[d.Field] = d
-	}
-	if _, ok := seen["QuotaRotateThreshold"]; !ok {
-		t.Fatal("DryRun missing diff for QuotaRotateThreshold")
-	}
-	if d := seen["QuotaRotateThreshold"]; d.To != "0.7" {
-		t.Fatalf("QuotaRotateThreshold diff To=%q, want 0.7", d.To)
-	}
-}
-
 func TestResolve_MaxFailover(t *testing.T) {
 	base := Defaults() // default 50
 
@@ -200,31 +165,6 @@ func TestResolve_FallbackStrategyTriggers(t *testing.T) {
 	}
 }
 
-// TestPickThreshold covers the shared global-policy pickup used by both the
-// meridian poller and the CPA discovery loop so they gate on the same value.
-func TestPickThreshold(t *testing.T) {
-	const def = 0.95
-	cases := []struct {
-		name string
-		json []byte
-		want float64
-	}{
-		{"valid 0.8", []byte(`{"QuotaRotateThreshold":0.8}`), 0.8},
-		{"valid 1.0", []byte(`{"QuotaRotateThreshold":1.0}`), 1.0},
-		{"field absent", []byte(`{}`), def},
-		{"out of range high", []byte(`{"QuotaRotateThreshold":1.5}`), def},
-		{"out of range zero", []byte(`{"QuotaRotateThreshold":0}`), def},
-		{"empty json", []byte(``), def},
-		{"invalid json", []byte(`not-json`), def},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := PickThreshold(tc.json, def); got != tc.want {
-				t.Fatalf("PickThreshold(%q, %v) = %v, want %v", tc.json, def, got, tc.want)
-			}
-		})
-	}
-}
 
 // TestPickMaxConcurrent covers the shared MaxConcurrent pickup so CPA and
 // meridian per-account capacity track the live global policy identically.

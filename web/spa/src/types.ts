@@ -150,7 +150,6 @@ export interface PolicyPatch {
   CooldownSignals?: number[];
   CooldownSignalSec?: number;
   BanKeywords?: string[];
-  QuotaRotateThreshold?: number;
   MaxFailover?: number;
   ModelMaxTokens?: Record<string, number>; // per-model output (max_tokens) ceiling; over-limit → 400 no retry
   WarmupHours?: number;

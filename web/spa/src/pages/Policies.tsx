@@ -164,7 +164,6 @@ export default function Policies() {
   // Float field
   const cooldownMult = useField<number>(2);
   const fallbackPriceThresholdUsd = useField<number>(0.005);
-  const quotaRotateThreshold = useField<number>(0.95);
   const maxFailover = useField<number>(50);
   // Per-model max_tokens ceilings (official defaults). Over-limit → 400, no retry.
   const limitOpus48 = useField<number>(128000);
@@ -257,7 +256,6 @@ export default function Policies() {
         setArr(banKeywords, 'BanKeywords');
         setArr(cooldownSignals, 'CooldownSignals');
         setNum(cooldownSignalSec, 'CooldownSignalSec');
-        setNum(quotaRotateThreshold, 'QuotaRotateThreshold');
         setNum(maxFailover, 'MaxFailover');
         {
           const mmt = p.ModelMaxTokens as Record<string, number> | undefined;
@@ -333,7 +331,6 @@ export default function Policies() {
         .filter((n) => !isNaN(n));
     }
     if (cooldownSignalSec.enabled) patch.CooldownSignalSec = cooldownSignalSec.value;
-    if (quotaRotateThreshold.enabled) patch.QuotaRotateThreshold = quotaRotateThreshold.value;
     if (maxFailover.enabled) patch.MaxFailover = maxFailover.value;
     // ModelMaxTokens is a full-map replacement: when any override is enabled, send all
     // four models so the un-overridden ones keep their official ceiling (not unlimited).
@@ -417,7 +414,7 @@ export default function Policies() {
     maxConcurrent, slotCooldownMinMs, banPersistStreak, permanentBanStreak,
     cooldownBaseMs, cooldownMaxMs, cooldownMult, affinityTTLSec,
     fallbackEnabled, fallbackPriceThresholdUsd, fallbackKeywords, fallbackModels, fallbackProbeEnabled, banSignals, banKeywords, cooldownSignals, cooldownSignalSec,
-    quotaRotateThreshold, maxFailover,
+    maxFailover,
     warmupHours, warmupMaxConcurrent, warmupBlockOpus,
     sessionErrorThreshold, sessionCooldownSec, responseExileEnabled, responseExileKeywords, quotaLimitKeywords, quotaLimitCodes,
     elasticEnabled, elasticScaleUpUtil, elasticScaleDownUtil, elasticMaxReserve, elasticBaselineCount,
@@ -924,24 +921,6 @@ export default function Policies() {
             onChange={cooldownSignalSec.set}
             disabled={!cooldownSignalSec.enabled}
             min={1}
-          />
-        </FieldRow>
-
-        <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2 pt-4">额度轮换</h2>
-
-        <FieldRow
-          label="额度轮换阈值(0–1,利用率≥此值的号暂停派单直到配额重置)"
-          desc="配额利用率达到阈值时暂停该号派单，等待配额周期重置后恢复"
-          enabled={quotaRotateThreshold.enabled}
-          onToggle={quotaRotateThreshold.toggle}
-        >
-          <NumInput
-            value={quotaRotateThreshold.value}
-            onChange={quotaRotateThreshold.set}
-            disabled={!quotaRotateThreshold.enabled}
-            min={0}
-            max={1}
-            step={0.01}
           />
         </FieldRow>
 
