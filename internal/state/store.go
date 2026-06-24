@@ -269,6 +269,28 @@ func (s *Store) NodeStatus(nodeID string) string {
 	return best
 }
 
+// AddSpend records a spend entry for the account, creating it if absent.
+// pruneWindowMs should be the longest cap window (e.g. 7d = 604800000) to retain
+// enough history for all downstream SpendInWindow queries.
+func (s *Store) AddSpend(key string, usd float64, now int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.ensureLocked(key, 1) // capacity doesn't affect spendLog; 1 is a safe default
+	a.AddSpend(now, usd, 604800000)
+}
+
+// SpendInWindow returns the cumulative spend for key within the last windowMs milliseconds.
+// Returns 0 if the account has no recorded spend.
+func (s *Store) SpendInWindow(key string, now, windowMs int64) float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.accts[key]
+	if a == nil {
+		return 0
+	}
+	return a.SpendInWindow(now, windowMs)
+}
+
 // SetLimited replaces an account's model-class rate-limit map (creating it if absent).
 func (s *Store) SetLimited(key string, capacity int, limits map[string]int64) {
 	s.mu.Lock()

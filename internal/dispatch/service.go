@@ -307,6 +307,45 @@ func (s *Service) applyReactiveLimit(ctx context.Context, ownerID, key string, r
 	})
 }
 
+// overCap reports whether spend sum has reached or exceeded the configured cap.
+// capUsd <= 0 means disabled; returns false in that case (no cap hit possible).
+func overCap(sum, capUsd float64) bool {
+	return capUsd > 0 && sum >= capUsd
+}
+
+// recordSpend accumulates spend for key and, if a 5h or 7d cap is breached,
+// rotates the account out of dispatch via SetLimited. Best-effort: panics are
+// caught so spend tracking never fails the request.
+func (s *Service) recordSpend(ctx context.Context, ownerID, key string, cost float64) {
+	defer func() { recover() }() //nolint:errcheck
+	cfg := s.resolveConfig(ctx, ownerID, "")
+	if !cfg.SpendCap5hEnabled && !cfg.SpendCap7dEnabled {
+		return // zero overhead when both caps are off (default)
+	}
+	now := s.Now()
+	s.Store.AddSpend(key, cost, now)
+	if cfg.SpendCap5hEnabled {
+		cap5 := cfg.SpendCap5hUsd.Resolve(key, "spend5h")
+		if overCap(s.Store.SpendInWindow(key, now, cfg.SpendWindow5hMs), cap5) {
+			s.Store.SetLimited(key, s.Base.MaxConcurrent, map[string]int64{"all": now + cfg.SpendWindow5hMs})
+			_ = events.Record(ctx, s.Q, now, events.Event{
+				Type: "quota_limited", Target: key, OwnerID: ownerID,
+				Detail: map[string]any{"account": key, "resetsAt": now + cfg.SpendWindow5hMs, "source": "spend5h"},
+			})
+		}
+	}
+	if cfg.SpendCap7dEnabled {
+		cap7 := cfg.SpendCap7dUsd.Resolve(key, "spend7d")
+		if overCap(s.Store.SpendInWindow(key, now, cfg.SpendWindow7dMs), cap7) {
+			s.Store.SetLimited(key, s.Base.MaxConcurrent, map[string]int64{"all": now + cfg.SpendWindow7dMs})
+			_ = events.Record(ctx, s.Q, now, events.Event{
+				Type: "quota_limited", Target: key, OwnerID: ownerID,
+				Detail: map[string]any{"account": key, "resetsAt": now + cfg.SpendWindow7dMs, "source": "spend7d"},
+			})
+		}
+	}
+}
+
 // insertLog stamps the ctx request id onto the row so every log row of a request
 // links to its stored detail, then inserts it.
 func (s *Service) insertLog(ctx context.Context, p sqlc.InsertDispatchLogParams) {
@@ -886,6 +925,7 @@ func (s *Service) streamChannels(ctx context.Context, w http.ResponseWriter, cha
 func (s *Service) logOK(ctx context.Context, ownerID, model string, res ProxyResult, key string, latencyMs int64, reason string) {
 	in, out, cacheRead, cache5m, cache1h := parseUsage(res.Body)
 	cost := billing.CostUsdFull(model, in, out, cacheRead, cache5m, cache1h)
+	s.recordSpend(ctx, ownerID, key, cost) // node-account success path: accumulate spend + enforce caps
 	if reason == "" && !billing.KnownModel(model) {
 		reason = "unknown-model-pricing"
 	}
@@ -1004,6 +1044,9 @@ func (s *Service) logStream(ctx context.Context, ownerID, model, key string, sta
 		httpStatus = "error"
 	}
 	cost := billing.CostUsdFull(model, in, out, cacheRead, cache5m, cache1h)
+	if status >= 200 && status < 300 {
+		s.recordSpend(ctx, ownerID, key, cost) // node-account success path: accumulate spend + enforce caps
+	}
 	streamReason := ""
 	if !billing.KnownModel(model) {
 		streamReason = "unknown-model-pricing"
