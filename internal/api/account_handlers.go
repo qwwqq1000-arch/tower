@@ -300,8 +300,8 @@ func listAccountsHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFun
 					"fiveHourUtil": qr.FiveHourUtil, "fiveHourResetsAt": qr.FiveHourResetsAt,
 					"sevenDayUtil": qr.SevenDayUtil, "sevenDayResetsAt": qr.SevenDayResetsAt,
 					"sevenDaySonnetUtil": qr.SevenDaySonnetUtil, "sevenDaySonnetResetsAt": qr.SevenDaySonnetResetsAt,
-					"updatedAt":       qr.UpdatedAt,
-					"fetchError":      qr.QuotaFetchError, // non-empty when the last quota fetch failed (cpa-3)
+					"updatedAt":  qr.UpdatedAt,
+					"fetchError": qr.QuotaFetchError, // non-empty when the last quota fetch failed (cpa-3)
 				}
 			}
 			out = append(out, map[string]any{

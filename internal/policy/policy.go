@@ -186,12 +186,12 @@ func Defaults() Config {
 			"claude-sonnet-4-6": 64000,
 			"claude-haiku-4-5":  64000,
 		},
-		SpendCap5hEnabled:  false,
-		SpendCap5hUsd:      RangeF{Min: 100, Max: 200},
-		SpendCap7dEnabled:  false,
-		SpendCap7dUsd:      RangeF{Min: 500, Max: 1000},
-		SpendWindow5hMs:    18000000,
-		SpendWindow7dMs:    604800000,
+		SpendCap5hEnabled: false,
+		SpendCap5hUsd:     RangeF{Min: 100, Max: 200},
+		SpendCap7dEnabled: false,
+		SpendCap7dUsd:     RangeF{Min: 500, Max: 1000},
+		SpendWindow5hMs:   18000000,
+		SpendWindow7dMs:   604800000,
 	}
 }
 

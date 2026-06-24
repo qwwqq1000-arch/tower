@@ -5,12 +5,12 @@ import (
 	"testing"
 )
 
-func ptrI(i int) *int         { return &i }
-func ptrB(b bool) *bool       { return &b }
-func ptrF(f float64) *float64 { return &f }
+func ptrI(i int) *int             { return &i }
+func ptrB(b bool) *bool           { return &b }
+func ptrF(f float64) *float64     { return &f }
 func ptrSS(ss []string) *[]string { return &ss }
-func ptrRF(rf RangeF) *RangeF { return &rf }
-func ptrI64(i int64) *int64   { return &i }
+func ptrRF(rf RangeF) *RangeF     { return &rf }
+func ptrI64(i int64) *int64       { return &i }
 
 func TestMaxTokensFor(t *testing.T) {
 	c := Defaults()
@@ -39,7 +39,7 @@ func TestMaxTokensFor(t *testing.T) {
 func TestResolve_LayeredOverride(t *testing.T) {
 	base := Defaults()
 	got := Resolve(base,
-		Patch{MaxConcurrent: ptrI(5)},          // group layer
+		Patch{MaxConcurrent: ptrI(5)},                              // group layer
 		Patch{MaxConcurrent: ptrI(2), FallbackEnabled: ptrB(true)}, // node layer wins for MaxConcurrent
 	)
 	if got.MaxConcurrent != 2 {
@@ -164,7 +164,6 @@ func TestResolve_FallbackStrategyTriggers(t *testing.T) {
 		}
 	}
 }
-
 
 // TestPickMaxConcurrent covers the shared MaxConcurrent pickup so CPA and
 // meridian per-account capacity track the live global policy identically.
