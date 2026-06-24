@@ -189,6 +189,14 @@ export interface PolicyPatch {
   QuietHoursWindows?: { StartMin: number; EndMin: number }[];
   QuietHoursRPM?: { Min: number; Max: number };
   QuietHoursConcurrency?: number;
+  // Phase 4: Disguise (伪装)
+  ModelPinEnabled?: boolean;
+  ModelPinMode?: string;
+  ModelPinTarget?: string;
+  SerialQueueEnabled?: boolean;
+  SerialQueueWaitMs?: number;
+  BodyPadEnabled?: boolean;
+  BodyPadBytes?: { Min: number; Max: number };
 }
 
 // policy.Config (resolved)

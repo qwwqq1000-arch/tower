@@ -224,6 +224,17 @@ export default function Policies() {
   const quietHoursRPMMin = useField<number>(0);
   const quietHoursRPMMax = useField<number>(10);
   const quietHoursConcurrency = useField<number>(1);
+  // Phase 4: ModelPin (模型锁定)
+  const modelPinEnabled = useField<boolean>(false);
+  const modelPinMode = useField<string>('sticky');
+  const modelPinTarget = useField<string>('');
+  // Phase 4: SerialQueue (串行队列)
+  const serialQueueEnabled = useField<boolean>(false);
+  const serialQueueWaitMs = useField<number>(30000);
+  // Phase 4: BodyPad (请求体填充)
+  const bodyPadEnabled = useField<boolean>(false);
+  const bodyPadBytesMin = useField<number>(0);
+  const bodyPadBytesMax = useField<number>(512);
   // Boolean
   const fallbackEnabled = useField<boolean>(false);
   const fallbackProbeEnabled = useField<boolean>(false);
@@ -419,6 +430,16 @@ export default function Policies() {
     if (quietHoursStartMin.enabled) patch.QuietHoursWindows = [{ StartMin: quietHoursStartMin.value, EndMin: quietHoursEndMin.value }];
     if (quietHoursRPMMin.enabled) patch.QuietHoursRPM = { Min: quietHoursRPMMin.value, Max: quietHoursRPMMax.value };
     if (quietHoursConcurrency.enabled) patch.QuietHoursConcurrency = quietHoursConcurrency.value;
+    // Phase 4: ModelPin
+    if (modelPinEnabled.enabled) patch.ModelPinEnabled = modelPinEnabled.value;
+    if (modelPinMode.enabled) patch.ModelPinMode = modelPinMode.value;
+    if (modelPinTarget.enabled) patch.ModelPinTarget = modelPinTarget.value;
+    // Phase 4: SerialQueue
+    if (serialQueueEnabled.enabled) patch.SerialQueueEnabled = serialQueueEnabled.value;
+    if (serialQueueWaitMs.enabled) patch.SerialQueueWaitMs = serialQueueWaitMs.value;
+    // Phase 4: BodyPad
+    if (bodyPadEnabled.enabled) patch.BodyPadEnabled = bodyPadEnabled.value;
+    if (bodyPadBytesMin.enabled) patch.BodyPadBytes = { Min: bodyPadBytesMin.value, Max: bodyPadBytesMax.value };
     return patch;
   }
 
@@ -487,6 +508,10 @@ export default function Policies() {
     rateGovEnabled, rateRPMMin, rateRPHMin, rateRPDMin, rateExceedAction,
     sessionSimEnabled, sessionBurstCountMin, sessionPauseMsMin,
     quietHoursEnabled, quietHoursStartMin, quietHoursRPMMin, quietHoursConcurrency,
+    // Phase 4
+    modelPinEnabled, modelPinMode, modelPinTarget,
+    serialQueueEnabled, serialQueueWaitMs,
+    bodyPadEnabled, bodyPadBytesMin,
   ].some((f) => f.enabled);
 
   return (
@@ -1561,6 +1586,148 @@ export default function Policies() {
             onChange={quietHoursConcurrency.set}
             disabled={!quietHoursConcurrency.enabled}
             min={1}
+          />
+        </FieldRow>
+
+        {/* ============================================================
+            Phase 4: 伪装
+            ============================================================ */}
+
+        {/* Group 1: ModelPin (模型锁定) */}
+        <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2 pt-4">模型锁定（ModelPin）</h2>
+        <p className="text-xs text-muted/70 -mt-1 mb-1">将账号绑定到特定模型或按首次请求粘性锁定，避免不同模型混用暴露多账号特征。</p>
+
+        <FieldRow
+          label="ModelPinEnabled"
+          desc="启用模型锁定"
+          enabled={modelPinEnabled.enabled}
+          onToggle={modelPinEnabled.toggle}
+        >
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={modelPinEnabled.value}
+              onChange={(e) => modelPinEnabled.set(e.target.checked)}
+              disabled={!modelPinEnabled.enabled}
+              className="accent-accent w-4 h-4"
+            />
+            <span className="text-sm text-ink">{modelPinEnabled.value ? '已启用' : '已禁用'}</span>
+          </label>
+        </FieldRow>
+
+        <FieldRow
+          label="ModelPinMode"
+          desc="锁定模式：sticky = 按首次请求模型粘性绑定；fixed = 始终锁定到 Target 模型"
+          enabled={modelPinMode.enabled}
+          onToggle={modelPinMode.toggle}
+        >
+          <select
+            value={modelPinMode.value}
+            onChange={(e) => modelPinMode.set(e.target.value)}
+            disabled={!modelPinMode.enabled}
+            className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink
+                       focus:outline-none focus:border-accent transition disabled:cursor-not-allowed"
+          >
+            <option value="sticky">sticky（粘性，按首次请求锁定）</option>
+            <option value="fixed">fixed（固定，始终用 Target）</option>
+          </select>
+        </FieldRow>
+
+        <FieldRow
+          label="ModelPinTarget"
+          desc="固定模式下锁定的目标模型名（仅 fixed 模式生效）"
+          enabled={modelPinTarget.enabled}
+          onToggle={modelPinTarget.toggle}
+        >
+          <input
+            type="text"
+            value={modelPinTarget.value}
+            onChange={(e) => modelPinTarget.set(e.target.value)}
+            disabled={!modelPinTarget.enabled}
+            placeholder="claude-sonnet-4-6"
+            className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink
+                       placeholder:text-muted focus:outline-none focus:border-accent transition
+                       disabled:cursor-not-allowed"
+          />
+        </FieldRow>
+
+        {/* Group 2: SerialQueue (串行队列) */}
+        <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2 pt-4">串行队列（SerialQueue）</h2>
+        <p className="text-xs text-muted/70 -mt-1 mb-1">强制账号内请求串行执行（同一账号同时只跑一个请求），模拟单用户行为。超时后自动放弃等位。</p>
+
+        <FieldRow
+          label="SerialQueueEnabled"
+          desc="启用串行队列"
+          enabled={serialQueueEnabled.enabled}
+          onToggle={serialQueueEnabled.toggle}
+        >
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={serialQueueEnabled.value}
+              onChange={(e) => serialQueueEnabled.set(e.target.checked)}
+              disabled={!serialQueueEnabled.enabled}
+              className="accent-accent w-4 h-4"
+            />
+            <span className="text-sm text-ink">{serialQueueEnabled.value ? '已启用' : '已禁用'}</span>
+          </label>
+        </FieldRow>
+
+        <FieldRow
+          label="SerialQueueWaitMs"
+          desc="等位超时 (ms)：超时后放弃排队，换号或返回 503"
+          enabled={serialQueueWaitMs.enabled}
+          onToggle={serialQueueWaitMs.toggle}
+        >
+          <NumInput
+            value={serialQueueWaitMs.value}
+            onChange={serialQueueWaitMs.set}
+            disabled={!serialQueueWaitMs.enabled}
+            min={0}
+            step={1000}
+          />
+        </FieldRow>
+
+        {/* Group 3: BodyPad (请求体填充) */}
+        <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2 pt-4">
+          请求体填充（BodyPad）
+          <span className="ml-2 text-xs font-normal text-muted normal-case">(需上游验证)</span>
+        </h2>
+        <p className="text-xs text-muted/70 -mt-1 mb-1">在请求体末尾追加随机填充字节，使每次请求大小不完全相同，混淆流量指纹。</p>
+
+        <FieldRow
+          label="BodyPadEnabled"
+          desc="启用请求体填充"
+          enabled={bodyPadEnabled.enabled}
+          onToggle={bodyPadEnabled.toggle}
+        >
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={bodyPadEnabled.value}
+              onChange={(e) => bodyPadEnabled.set(e.target.checked)}
+              disabled={!bodyPadEnabled.enabled}
+              className="accent-accent w-4 h-4"
+            />
+            <span className="text-sm text-ink">{bodyPadEnabled.value ? '已启用' : '已禁用'}</span>
+          </label>
+        </FieldRow>
+
+        <FieldRow
+          label="BodyPadBytes (min ~ max)"
+          desc="每次请求随机填充字节数区间；0 ~ 0 = 不填充"
+          enabled={bodyPadBytesMin.enabled}
+          onToggle={bodyPadBytesMin.toggle}
+        >
+          <RangeInput
+            min={bodyPadBytesMin.value}
+            max={bodyPadBytesMax.value}
+            onChangeMin={bodyPadBytesMin.set}
+            onChangeMax={bodyPadBytesMax.set}
+            disabled={!bodyPadBytesMin.enabled}
+            step={64}
+            minLabel="min B"
+            maxLabel="max B"
           />
         </FieldRow>
 
