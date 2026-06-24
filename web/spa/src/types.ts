@@ -375,6 +375,7 @@ export interface FallbackChannel {
   baseUrl: string;
   hasKey: boolean;
   priority: number;
+  weight: number;
   maxConcurrent: number;
   cooldownMs: number;
   priceThreshold: number;

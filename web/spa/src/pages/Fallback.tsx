@@ -40,6 +40,7 @@ function emptyForm() {
     baseUrl: '',
     apiKey: '',
     priority: 0,
+    weight: 1,
     maxConcurrent: 4,
     cooldownMs: 0,
     priceThreshold: 0,
@@ -124,8 +125,8 @@ function ChannelForm({ initial, submitLabel, submitting, onSubmit, onCancel }: C
         />
       </div>
 
-      {/* Row 3: priority / maxConcurrent */}
-      <div className="grid grid-cols-2 gap-3">
+      {/* Row 3: priority / weight / maxConcurrent */}
+      <div className="grid grid-cols-3 gap-3">
         <div>
           <label className="block text-xs text-muted mb-1">Priority</label>
           <input
@@ -133,6 +134,16 @@ function ChannelForm({ initial, submitLabel, submitting, onSubmit, onCancel }: C
             value={f.priority}
             onChange={(e) => set('priority', Number(e.target.value))}
             min={0}
+            className={inputCls}
+          />
+        </div>
+        <div>
+          <label className="block text-xs text-muted mb-1">权重</label>
+          <input
+            type="number"
+            value={f.weight}
+            onChange={(e) => set('weight', Number(e.target.value))}
+            min={1}
             className={inputCls}
           />
         </div>
@@ -308,6 +319,7 @@ function EditModal({ channel, onSave, onClose }: EditModalProps) {
     baseUrl: channel.baseUrl,
     apiKey: '',
     priority: channel.priority,
+    weight: channel.weight ?? 1,
     maxConcurrent: channel.maxConcurrent,
     cooldownMs: channel.cooldownMs,
     priceThreshold: channel.priceThreshold,
@@ -471,6 +483,7 @@ export default function Fallback() {
         baseUrl: f.baseUrl,
         ...(f.apiKey ? { apiKey: f.apiKey } : {}),
         priority: f.priority,
+        weight: f.weight,
         maxConcurrent: f.maxConcurrent,
         cooldownMs: f.cooldownMs,
         priceThreshold: f.priceThreshold,
@@ -499,6 +512,7 @@ export default function Fallback() {
       baseUrl: f.baseUrl,
       ...(f.apiKey ? { apiKey: f.apiKey } : {}),
       priority: f.priority,
+      weight: f.weight,
       maxConcurrent: f.maxConcurrent,
       cooldownMs: f.cooldownMs,
       priceThreshold: f.priceThreshold,
