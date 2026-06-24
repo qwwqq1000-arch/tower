@@ -200,6 +200,19 @@ type Config struct {
 	// completes a burst. Resolved deterministically per account. Default {30000, 180000}.
 	SessionPauseMs RangeI
 
+	// ModelPinEnabled enables per-account model pinning (disguise-phase4). Default false.
+	// When enabled, each account is restricted to serving a single model class to avoid
+	// the multi-model-simultaneously ban signal.
+	ModelPinEnabled bool
+	// ModelPinMode selects the pinning strategy: "sticky" (default) pins the account to
+	// the first model it serves (TTL = AffinityTTLSec); "fixed" restricts the account to
+	// ModelPinTarget only (regardless of TTL).
+	ModelPinMode string
+	// ModelPinTarget is the model substring used in "fixed" mode. Accounts only enter the
+	// candidate pool when the request model matches this target (case-insensitive substring).
+	// Empty string = no restriction (effectively disables fixed-mode filtering).
+	ModelPinTarget string
+
 	// QuietHoursEnabled enables quiet-hours rate/concurrency reduction. Default false.
 	QuietHoursEnabled bool
 	// QuietHoursWindows defines the quiet time windows (minute-of-day, supports overnight).
@@ -288,6 +301,9 @@ func Defaults() Config {
 		QuietHoursWindows:     []TimeWindow{{StartMin: 1260, EndMin: 240}},
 		QuietHoursRPM:         RangeI{Min: 1, Max: 2},
 		QuietHoursConcurrency: 1,
+		ModelPinEnabled:       false,
+		ModelPinMode:          "sticky",
+		ModelPinTarget:        "",
 	}
 }
 
@@ -353,6 +369,10 @@ type Patch struct {
 	QuietHoursWindows     *[]TimeWindow
 	QuietHoursRPM         *RangeI
 	QuietHoursConcurrency *int
+
+	ModelPinEnabled *bool
+	ModelPinMode    *string
+	ModelPinTarget  *string
 }
 
 func apply(c *Config, p Patch) {
@@ -532,6 +552,15 @@ func apply(c *Config, p Patch) {
 	}
 	if p.QuietHoursConcurrency != nil {
 		c.QuietHoursConcurrency = *p.QuietHoursConcurrency
+	}
+	if p.ModelPinEnabled != nil {
+		c.ModelPinEnabled = *p.ModelPinEnabled
+	}
+	if p.ModelPinMode != nil {
+		c.ModelPinMode = *p.ModelPinMode
+	}
+	if p.ModelPinTarget != nil {
+		c.ModelPinTarget = *p.ModelPinTarget
 	}
 }
 

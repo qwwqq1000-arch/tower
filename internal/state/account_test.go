@@ -178,6 +178,18 @@ func TestAccount_CanDispatch_WarmupCap(t *testing.T) {
 	}
 }
 
+func TestModelPinSticky(t *testing.T) {
+	a := NewAccount(3)
+	// 首次记 opus;之后 pinnedModel 返回 opus(TTL 内)
+	a.RecordModel("claude-opus-4-8", 0, 300000)
+	if m, ok := a.PinnedModel(1000, 300000); !ok || m != "claude-opus-4-8" {
+		t.Fatal("应粘 opus")
+	}
+	if _, ok := a.PinnedModel(400000, 300000); ok {
+		t.Fatal("TTL 过期应解除")
+	}
+}
+
 func TestSessionBurstThenPause(t *testing.T) {
 	a := NewAccount(3)
 	target := 3

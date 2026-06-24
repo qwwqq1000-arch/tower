@@ -407,6 +407,29 @@ func (s *Store) BurstReset(key string) {
 	}
 }
 
+// RecordModel pins the account to model for ttl milliseconds (sticky model-pin).
+// Creates the account with capacity=1 if absent (same safe default as AddSpend).
+// No-op when the account is already pinned to an unexpired model.
+func (s *Store) RecordModel(key string, model string, ttl int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.ensureLocked(key, 1)
+	a.RecordModel(model, s.now(), ttl)
+}
+
+// PinnedModel returns the model the account is currently pinned to and whether
+// the pin is still active. Returns ("", false) when the account does not exist,
+// is unpinned, or its pin has expired.
+func (s *Store) PinnedModel(key string, ttl int64) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.accts[key]
+	if a == nil {
+		return "", false
+	}
+	return a.PinnedModel(s.now(), ttl)
+}
+
 // SetCapacity updates the slot capacity for an existing account (no-op if absent).
 func (s *Store) SetCapacity(key string, cap int) {
 	s.mu.Lock()

@@ -39,6 +39,10 @@ type Account struct {
 
 	// Session-sim burst state (only used when SessionSimEnabled=true).
 	burstCount int // requests served in the current burst
+
+	// ModelPin sticky state (only used when ModelPinEnabled=true, mode="sticky").
+	pinModel string // model this account is currently pinned to ("" = unpinned)
+	pinUntil int64  // ms epoch when the pin expires (0 = not set)
 }
 
 // RecordReq appends a request timestamp and prunes entries older than 1 day (86400000 ms).
@@ -205,6 +209,28 @@ func (a *Account) BurstShouldPause(target int) bool {
 // BurstReset resets the burst counter to zero (called after triggering a pause).
 func (a *Account) BurstReset() {
 	a.burstCount = 0
+}
+
+// RecordModel pins this account to model for ttl milliseconds, but only when the
+// account is currently unpinned or its pin has already expired. If the account is
+// already pinned to a model within the TTL window, the call is a no-op (first-model
+// wins, per sticky-pin semantics).
+func (a *Account) RecordModel(model string, now, ttl int64) {
+	if a.pinModel == "" || now >= a.pinUntil {
+		a.pinModel = model
+		a.pinUntil = now + ttl
+	}
+}
+
+// PinnedModel returns the model this account is currently pinned to and whether
+// the pin is still active (now < pinUntil). The ttl parameter is accepted for
+// interface symmetry with Store.PinnedModel but is not used in the check — the
+// expiry was already computed by RecordModel.
+func (a *Account) PinnedModel(now, _ int64) (string, bool) {
+	if a.pinModel != "" && now < a.pinUntil {
+		return a.pinModel, true
+	}
+	return "", false
 }
 
 // SpendInWindow returns the sum of spend entries in [now-windowMs, now].

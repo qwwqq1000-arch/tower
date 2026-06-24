@@ -453,6 +453,9 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 			if cfg.AffinityTTLSec > 0 {
 				s.sess.SetAffinity(conv, winKey, int64(cfg.AffinityTTLSec)*1000, nowMs)
 			}
+			if cfg.ModelPinEnabled && cfg.ModelPinMode == "sticky" {
+				s.Store.RecordModel(winKey, model, int64(cfg.AffinityTTLSec)*1000)
+			}
 			if cfg.RateGovEnabled {
 				s.Store.RecordReq(winKey)
 			}
@@ -729,6 +732,20 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 					rpd := cfg.RateRPD.Resolve(key, "rpd")
 					if int64(s.Store.ReqsInWindow(key, 3600000)) >= rph ||
 						int64(s.Store.ReqsInWindow(key, 86400000)) >= rpd {
+						continue
+					}
+				}
+			}
+			// ModelPin filter: skip accounts that are pinned to a different model.
+			if cfg.ModelPinEnabled {
+				switch cfg.ModelPinMode {
+				case "fixed":
+					if cfg.ModelPinTarget != "" && !strings.Contains(strings.ToLower(model), strings.ToLower(cfg.ModelPinTarget)) {
+						continue
+					}
+				case "sticky":
+					ttl := int64(cfg.AffinityTTLSec) * 1000
+					if pm, ok := s.Store.PinnedModel(key, ttl); ok && !strings.Contains(strings.ToLower(model), strings.ToLower(pm)) {
 						continue
 					}
 				}
@@ -1253,6 +1270,9 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 				s.sess.RecordSuccess(conv)
 				if cfg.AffinityTTLSec > 0 {
 					s.sess.SetAffinity(conv, key, int64(cfg.AffinityTTLSec)*1000, nowMs)
+				}
+				if cfg.ModelPinEnabled && cfg.ModelPinMode == "sticky" {
+					s.Store.RecordModel(key, model, int64(cfg.AffinityTTLSec)*1000)
 				}
 			}
 			// Expose the captured SSE stream as the outcome body so the log-detail
