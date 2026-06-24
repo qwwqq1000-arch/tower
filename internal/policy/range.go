@@ -13,7 +13,7 @@ type RangeF struct {
 func seedFrac(accountID, salt string) float64 {
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(accountID + "|" + salt))
-	return float64(h.Sum64()%10000) / 10000.0
+	return float64(h.Sum64()>>11) / float64(uint64(1)<<53) // frac in [0,1), fine resolution
 }
 
 func (r RangeF) Resolve(accountID, salt string) float64 {
@@ -23,7 +23,7 @@ func (r RangeF) Resolve(accountID, salt string) float64 {
 	return r.Min + seedFrac(accountID, salt)*(r.Max-r.Min)
 }
 
-// RangeI 同理,整数(时长 ms / 次数 / RPM 等)。
+// RangeI 同理,整数(时长 ms / 次数 / RPM 等)。Resolve 返回闭区间 [Min,Max] 内的稳定值。
 type RangeI struct {
 	Min int64 `json:"Min"`
 	Max int64 `json:"Max"`
@@ -34,5 +34,9 @@ func (r RangeI) Resolve(accountID, salt string) int64 {
 		return r.Min
 	}
 	span := r.Max - r.Min
-	return r.Min + int64(seedFrac(accountID, salt)*float64(span))
+	v := r.Min + int64(seedFrac(accountID, salt)*float64(span+1)) // +1 so Max is reachable
+	if v > r.Max {
+		v = r.Max
+	}
+	return v
 }

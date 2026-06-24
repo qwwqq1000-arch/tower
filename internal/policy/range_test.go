@@ -1,6 +1,9 @@
 package policy
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func TestRangeResolveDeterministicAndInBounds(t *testing.T) {
 	r := RangeF{Min: 100, Max: 200}
@@ -31,5 +34,34 @@ func TestRangeResolveDegenerate(t *testing.T) {
 	}
 	if got := (RangeI{Min: 3, Max: 10}).Resolve("acc", "burst"); got < 3 || got > 10 {
 		t.Fatalf("RangeI 越界:%v", got)
+	}
+}
+
+func TestRangeIReachesMax(t *testing.T) {
+	r := RangeI{Min: 0, Max: 5}
+	minReached := false
+	maxReached := false
+
+	for i := 0; i < 1000; i++ {
+		accountID := fmt.Sprintf("acc_%d", i)
+		result := r.Resolve(accountID, "test_salt")
+
+		if result < r.Min || result > r.Max {
+			t.Fatalf("结果越界:%d 不在 [%d,%d]", result, r.Min, r.Max)
+		}
+
+		if result == r.Min {
+			minReached = true
+		}
+		if result == r.Max {
+			maxReached = true
+		}
+	}
+
+	if !minReached {
+		t.Errorf("Min(%d) 从未被达到", r.Min)
+	}
+	if !maxReached {
+		t.Errorf("Max(%d) 从未被达到", r.Max)
 	}
 }
