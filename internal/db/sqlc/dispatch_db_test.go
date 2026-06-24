@@ -35,7 +35,7 @@ func TestDispatchTables(t *testing.T) {
 
 	// fallback channel
 	_, err = q.CreateFallbackChannel(ctx, CreateFallbackChannelParams{
-		ID: "fc_" + sfx, OwnerID: "o1", Name: "relay", BaseUrl: "http://relay:8080", Priority: 100, Weight: 100,
+		ID: "fc_" + sfx, OwnerID: "o1", Name: "relay", BaseUrl: "http://relay:8080", Priority: 100,
 	})
 	if err != nil {
 		t.Fatalf("create channel: %v", err)
