@@ -56,6 +56,23 @@ func NewService(q *sqlc.Queries, store *state.Store, base policy.Config, now fun
 	return &Service{Q: q, Store: store, Base: base, Now: now, sess: session.NewStore(), Cipher: cipher, scaledUp: make(map[string]bool)}
 }
 
+// effectiveCap returns the maximum concurrency for a single account, accounting
+// for the SerialQueue feature. When serial=true the cap is forced to 1 regardless
+// of maxc; otherwise maxc is returned unchanged. This is the dispatch-layer
+// equivalent of min(cfg.MaxConcurrent, 1) and is the core of serial-queue
+// behaviour (disguise-phase4).
+//
+// TODO(serial-wait): when SerialQueueEnabled, a taken slot should make the
+// dispatcher briefly wait (SerialQueueWaitMs) for it to free before failing over.
+// The current implementation only caps capacity — the wait-for-slot path is not
+// yet implemented.
+func effectiveCap(serial bool, maxc int) int {
+	if serial {
+		return 1
+	}
+	return maxc
+}
+
 // matchesAny reports whether body contains any of kws (case-insensitive).
 func matchesAny(body string, kws []string) bool {
 	lower := strings.ToLower(body)
@@ -692,13 +709,15 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 			// Decrypt the node api_key transparently (vault-crypto-3): ciphertext
 			// rows decrypt, legacy plaintext rows pass through unchanged.
 			refs[key] = NodeRef{BaseURL: n.BaseUrl, APIKey: s.Cipher.DecryptOrPlaintext(n.ApiKey), ProfileID: na.ProfileID, Kind: n.Kind}
-			s.Store.Ensure(key, cfg.MaxConcurrent)
-			// Quiet hours: cap concurrency to min(MaxConcurrent, QuietHoursConcurrency).
-			effectiveCap := cfg.MaxConcurrent
-			if inQuiet && cfg.QuietHoursConcurrency > 0 && cfg.QuietHoursConcurrency < effectiveCap {
-				effectiveCap = cfg.QuietHoursConcurrency
+			// baseCap: serial-queue cap (1 when enabled, MaxConcurrent otherwise).
+			// Quiet hours further reduces this to min(baseCap, QuietHoursConcurrency).
+			baseCap := effectiveCap(cfg.SerialQueueEnabled, cfg.MaxConcurrent)
+			s.Store.Ensure(key, baseCap)
+			cap := baseCap
+			if inQuiet && cfg.QuietHoursConcurrency > 0 && cfg.QuietHoursConcurrency < cap {
+				cap = cfg.QuietHoursConcurrency
 			}
-			s.Store.SetCapacity(key, effectiveCap)
+			s.Store.SetCapacity(key, cap)
 			// Apply or clear warmup cap.
 			if inWarmup {
 				s.Store.SetWarmupCap(key, cfg.WarmupMaxConcurrent)

@@ -213,6 +213,16 @@ type Config struct {
 	// Empty string = no restriction (effectively disables fixed-mode filtering).
 	ModelPinTarget string
 
+	// SerialQueueEnabled forces each account to serve at most 1 request at a time
+	// (concurrency=1). Default false (zero overhead when disabled).
+	// When combined with QuietHours, effectiveCap = min(1, QuietHoursConcurrency).
+	// SerialQueueWaitMs is reserved for future bounded-wait behaviour; not yet active.
+	SerialQueueEnabled bool
+	// SerialQueueWaitMs is the maximum time (ms) to wait for a serial slot before
+	// failing over to the next candidate. Default 2000. Currently a TODO placeholder —
+	// the wait-for-slot logic is not yet implemented; only the capacity cap (=1) is active.
+	SerialQueueWaitMs int
+
 	// QuietHoursEnabled enables quiet-hours rate/concurrency reduction. Default false.
 	QuietHoursEnabled bool
 	// QuietHoursWindows defines the quiet time windows (minute-of-day, supports overnight).
@@ -304,6 +314,8 @@ func Defaults() Config {
 		ModelPinEnabled:       false,
 		ModelPinMode:          "sticky",
 		ModelPinTarget:        "",
+		SerialQueueEnabled:    false,
+		SerialQueueWaitMs:     2000,
 	}
 }
 
@@ -373,6 +385,9 @@ type Patch struct {
 	ModelPinEnabled *bool
 	ModelPinMode    *string
 	ModelPinTarget  *string
+
+	SerialQueueEnabled *bool
+	SerialQueueWaitMs  *int
 }
 
 func apply(c *Config, p Patch) {
@@ -561,6 +576,12 @@ func apply(c *Config, p Patch) {
 	}
 	if p.ModelPinTarget != nil {
 		c.ModelPinTarget = *p.ModelPinTarget
+	}
+	if p.SerialQueueEnabled != nil {
+		c.SerialQueueEnabled = *p.SerialQueueEnabled
+	}
+	if p.SerialQueueWaitMs != nil {
+		c.SerialQueueWaitMs = *p.SerialQueueWaitMs
 	}
 }
 
