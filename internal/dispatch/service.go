@@ -816,6 +816,7 @@ func (s *Service) enabledChannels(ctx context.Context, ownerID string, model str
 		return nil
 	}
 	out := chs[:0]
+	today := todayDayStr()
 	for _, c := range chs {
 		if c.OwnerID != ownerID { // strict owner scoping: admin(owner="") uses owner="" channels; tenant uses own
 			continue
@@ -826,6 +827,20 @@ func (s *Service) enabledChannels(ctx context.Context, ownerID string, model str
 		// Balance is alert-only and NEVER removes a channel from routing: a stale or
 		// transiently-zero balance reading must not exclude the only fallback channel
 		// and turn a recoverable node failure into a 503 (fallback-5 revisited).
+
+		// Spend cap: skip (or disable) channels that have exceeded daily/total spend cap.
+		// cap=0 means disabled (overCap returns false), so default behavior is unchanged.
+		capDaily := policy.RangeF{Min: c.SpendCapDailyMinUsd, Max: c.SpendCapDailyMaxUsd}.Resolve(c.ID, "fbdaily")
+		capTotal := policy.RangeF{Min: c.SpendCapTotalMinUsd, Max: c.SpendCapTotalMaxUsd}.Resolve(c.ID, "fbtotal")
+		spentTodayRow, _ := s.Q.GetFallbackSpendToday(ctx, sqlc.GetFallbackSpendTodayParams{ChannelID: c.ID, Day: today})
+		spentTotalRow, _ := s.Q.GetFallbackSpendTotal(ctx, c.ID)
+		if overCap(spentTodayRow.Cost, capDaily) || overCap(spentTotalRow.Cost, capTotal) {
+			if c.SpendCapAction == "disable" {
+				_ = s.Q.SetFallbackChannelEnabled(ctx, sqlc.SetFallbackChannelEnabledParams{ID: c.ID, Enabled: false})
+			}
+			continue
+		}
+
 		out = append(out, c)
 	}
 	return out

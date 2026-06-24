@@ -144,25 +144,30 @@ type DispatchLogDetail struct {
 }
 
 type FallbackChannel struct {
-	ID               string             `json:"id"`
-	OwnerID          string             `json:"owner_id"`
-	GroupID          string             `json:"group_id"`
-	Name             string             `json:"name"`
-	BaseUrl          string             `json:"base_url"`
-	ApiKey           string             `json:"api_key"`
-	Priority         int32              `json:"priority"`
-	MaxConcurrent    int32              `json:"max_concurrent"`
-	CooldownMs       int64              `json:"cooldown_ms"`
-	PriceThreshold   float64            `json:"price_threshold"`
-	ModelAllowlist   string             `json:"model_allowlist"`
-	Enabled          bool               `json:"enabled"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	BalanceToken     string             `json:"balance_token"`
-	BalanceUserID    string             `json:"balance_user_id"`
-	BalanceAlertUsd  float64            `json:"balance_alert_usd"`
-	BalanceUsd       float64            `json:"balance_usd"`
-	BalanceCheckedAt int64              `json:"balance_checked_at"`
-	BalanceError     string             `json:"balance_error"`
+	ID                  string             `json:"id"`
+	OwnerID             string             `json:"owner_id"`
+	GroupID             string             `json:"group_id"`
+	Name                string             `json:"name"`
+	BaseUrl             string             `json:"base_url"`
+	ApiKey              string             `json:"api_key"`
+	Priority            int32              `json:"priority"`
+	MaxConcurrent       int32              `json:"max_concurrent"`
+	CooldownMs          int64              `json:"cooldown_ms"`
+	PriceThreshold      float64            `json:"price_threshold"`
+	ModelAllowlist      string             `json:"model_allowlist"`
+	Enabled             bool               `json:"enabled"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	BalanceToken        string             `json:"balance_token"`
+	BalanceUserID       string             `json:"balance_user_id"`
+	BalanceAlertUsd     float64            `json:"balance_alert_usd"`
+	BalanceUsd          float64            `json:"balance_usd"`
+	BalanceCheckedAt    int64              `json:"balance_checked_at"`
+	BalanceError        string             `json:"balance_error"`
+	SpendCapDailyMinUsd float64            `json:"spend_cap_daily_min_usd"`
+	SpendCapDailyMaxUsd float64            `json:"spend_cap_daily_max_usd"`
+	SpendCapTotalMinUsd float64            `json:"spend_cap_total_min_usd"`
+	SpendCapTotalMaxUsd float64            `json:"spend_cap_total_max_usd"`
+	SpendCapAction      string             `json:"spend_cap_action"`
 }
 
 type FallbackSpend struct {
