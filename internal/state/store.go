@@ -216,7 +216,9 @@ func (s *Store) SlotAvailable(key string, now int64) bool {
 // deadlineMs passes (returns false). The store mutex is NOT held during sleeps —
 // only briefly acquired on each poll — so this is race-safe with no lock contention.
 // When the account is unknown the function returns false immediately.
-func (s *Store) WaitForSlot(key string, deadlineMs int64, now func() int64) bool {
+// ctx cancellation causes an early return of false so goroutines don't linger after
+// client disconnect.
+func (s *Store) WaitForSlot(ctx context.Context, key string, deadlineMs int64, now func() int64) bool {
 	for {
 		n := now()
 		if n >= deadlineMs {
@@ -225,7 +227,11 @@ func (s *Store) WaitForSlot(key string, deadlineMs int64, now func() int64) bool
 		if s.SlotAvailable(key, n) {
 			return true
 		}
-		time.Sleep(20 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(20 * time.Millisecond):
+		}
 	}
 }
 

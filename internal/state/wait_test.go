@@ -1,6 +1,7 @@
 package state
 
 import (
+	"context"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,7 +18,7 @@ func TestWaitForSlot_AlreadyFree(t *testing.T) {
 	s.Ensure("k", 1)
 	// Slot is free — WaitForSlot should return true immediately.
 	now := time.Now().UnixMilli()
-	got := s.WaitForSlot("k", now+200, func() int64 { return time.Now().UnixMilli() })
+	got := s.WaitForSlot(context.Background(), "k", now+200, func() int64 { return time.Now().UnixMilli() })
 	if !got {
 		t.Fatal("expected true: slot is free")
 	}
@@ -41,7 +42,7 @@ func TestWaitForSlot_FreesInTime(t *testing.T) {
 		released.Store(true)
 	}()
 	now := time.Now().UnixMilli()
-	got := s.WaitForSlot("k", now+200, func() int64 { return time.Now().UnixMilli() })
+	got := s.WaitForSlot(context.Background(), "k", now+200, func() int64 { return time.Now().UnixMilli() })
 	if !got {
 		t.Fatal("expected true: slot should have been released before deadline")
 	}
@@ -59,8 +60,31 @@ func TestWaitForSlot_Timeout(t *testing.T) {
 		t.Fatal("initial dispatch should succeed")
 	}
 	now := time.Now().UnixMilli()
-	got := s.WaitForSlot("k", now+50, func() int64 { return time.Now().UnixMilli() })
+	got := s.WaitForSlot(context.Background(), "k", now+50, func() int64 { return time.Now().UnixMilli() })
 	if got {
 		t.Fatal("expected false: slot stays busy and deadline should expire")
+	}
+}
+
+func TestWaitForSlot_CtxCancelled(t *testing.T) {
+	s := NewStore(realClock(), minRand)
+	c := BreakerCfg{PersistStreak: 3, BaseMs: 1000, MaxMs: 9999, Mult: 2}
+	s.Ensure("k", 1)
+	// Acquire the only slot and never release it.
+	if !s.TryDispatch("k", "sonnet", c) {
+		t.Fatal("initial dispatch should succeed")
+	}
+	// Cancel the context immediately before calling WaitForSlot.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	start := time.Now()
+	// Deadline is far in the future; cancellation should cause early return.
+	got := s.WaitForSlot(ctx, "k", time.Now().UnixMilli()+10000, func() int64 { return time.Now().UnixMilli() })
+	elapsed := time.Since(start)
+	if got {
+		t.Fatal("expected false: context was already cancelled")
+	}
+	if elapsed > 100*time.Millisecond {
+		t.Fatalf("WaitForSlot took too long after cancellation: %v", elapsed)
 	}
 }

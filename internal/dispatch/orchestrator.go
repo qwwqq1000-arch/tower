@@ -128,7 +128,7 @@ func (o *Orchestrator) Dispatch(ctx context.Context, model string, order []strin
 		// Zero overhead when feature is off (nil maps / NowMs not set).
 		if o.NowMs != nil && o.SerialWaitKeys[key] {
 			if waitMs := o.SerialWaitMs[key]; waitMs > 0 {
-				if !o.Store.WaitForSlot(key, o.NowMs()+waitMs, o.NowMs) {
+				if !o.Store.WaitForSlot(ctx, key, o.NowMs()+waitMs, o.NowMs) {
 					continue
 				}
 			}

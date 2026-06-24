@@ -1344,7 +1344,7 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 		// Serial-wait: bounded slot-wait before attempting (same semantics as Dispatch path).
 		if serialWaitKeysS[key] {
 			if waitMs := serialWaitMsS[key]; waitMs > 0 {
-				if !s.Store.WaitForSlot(key, s.Now()+waitMs, s.Now) {
+				if !s.Store.WaitForSlot(ctx, key, s.Now()+waitMs, s.Now) {
 					continue
 				}
 			}
