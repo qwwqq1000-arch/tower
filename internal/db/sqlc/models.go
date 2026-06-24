@@ -151,7 +151,6 @@ type FallbackChannel struct {
 	BaseUrl          string             `json:"base_url"`
 	ApiKey           string             `json:"api_key"`
 	Priority         int32              `json:"priority"`
-	Weight           int32              `json:"weight"`
 	MaxConcurrent    int32              `json:"max_concurrent"`
 	CooldownMs       int64              `json:"cooldown_ms"`
 	PriceThreshold   float64            `json:"price_threshold"`

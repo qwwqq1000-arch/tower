@@ -324,7 +324,6 @@ func meListFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 				"baseUrl":         c.BaseUrl,
 				"hasKey":          c.ApiKey != "",
 				"priority":        c.Priority,
-				"weight":          c.Weight,
 				"maxConcurrent":   c.MaxConcurrent,
 				"cooldownMs":      c.CooldownMs,
 				"priceThreshold":  c.PriceThreshold,
@@ -374,7 +373,6 @@ func meCreateFallbackHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.Handle
 			BaseUrl:         b.BaseUrl,
 			ApiKey:          cipher.EncryptStr(b.ApiKey),
 			Priority:        b.Priority,
-			Weight:          b.Weight,
 			MaxConcurrent:   b.MaxConcurrent,
 			CooldownMs:      b.CooldownMs,
 			PriceThreshold:  b.PriceThreshold,
@@ -439,7 +437,6 @@ func meUpdateFallbackHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.Handle
 			BaseUrl:         b.BaseUrl,
 			ApiKey:          apiKeyEnc,
 			Priority:        b.Priority,
-			Weight:          b.Weight,
 			MaxConcurrent:   b.MaxConcurrent,
 			CooldownMs:      b.CooldownMs,
 			PriceThreshold:  b.PriceThreshold,
@@ -825,7 +822,7 @@ func meDispatchStatusHandler(q *sqlc.Queries, svc *dispatch.Service) http.Handle
 				}
 				fallbackChannels = append(fallbackChannels, map[string]any{
 					"id": ch.ID, "name": ch.Name, "enabled": ch.Enabled,
-					"priority": ch.Priority, "weight": ch.Weight,
+					"priority": ch.Priority,
 					"todayRequests": todayReq, "todayCostUsd": todayCost,
 					"inflight": inflight, "available": available,
 					"balanceUsd": ch.BalanceUsd,

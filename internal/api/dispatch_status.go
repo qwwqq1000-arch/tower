@@ -166,7 +166,7 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 			}
 			fallbackChannels = append(fallbackChannels, map[string]any{
 				"id": ch.ID, "name": ch.Name, "enabled": ch.Enabled,
-				"priority": ch.Priority, "weight": ch.Weight,
+				"priority": ch.Priority,
 				"todayRequests": todayReq, "todayCostUsd": todayCost,
 				"inflight": inflight, "available": available,
 				"balanceUsd": ch.BalanceUsd,
