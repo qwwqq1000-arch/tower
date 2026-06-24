@@ -265,7 +265,6 @@ export const createFallbackChannel = (body: {
   baseUrl: string;
   apiKey?: string;
   priority?: number;
-  weight?: number;
   maxConcurrent?: number;
   cooldownMs?: number;
   priceThreshold?: number;
@@ -273,6 +272,11 @@ export const createFallbackChannel = (body: {
   balanceToken?: string;
   balanceUserId?: string;
   balanceAlertUsd?: number;
+  spendCapDailyMinUsd?: number;
+  spendCapDailyMaxUsd?: number;
+  spendCapTotalMinUsd?: number;
+  spendCapTotalMaxUsd?: number;
+  spendCapAction?: string;
 }) => api<FallbackChannel>('POST', '/api/admin/fallback-channels', body);
 
 export const updateFallbackChannel = (id: string, body: Partial<{
@@ -280,7 +284,6 @@ export const updateFallbackChannel = (id: string, body: Partial<{
   baseUrl: string;
   apiKey: string;
   priority: number;
-  weight: number;
   maxConcurrent: number;
   cooldownMs: number;
   priceThreshold: number;
@@ -288,6 +291,11 @@ export const updateFallbackChannel = (id: string, body: Partial<{
   balanceToken: string;
   balanceUserId: string;
   balanceAlertUsd: number;
+  spendCapDailyMinUsd: number;
+  spendCapDailyMaxUsd: number;
+  spendCapTotalMinUsd: number;
+  spendCapTotalMaxUsd: number;
+  spendCapAction: string;
 }>) => api<FallbackChannel>('PATCH', `/api/admin/fallback-channels/${id}`, body);
 
 export const refreshFallbackBalance = (id: string) =>
@@ -400,7 +408,6 @@ export const createMeFallback = (body: {
   baseUrl: string;
   apiKey?: string;
   priority?: number;
-  weight?: number;
   maxConcurrent?: number;
   cooldownMs?: number;
   priceThreshold?: number;
@@ -408,6 +415,11 @@ export const createMeFallback = (body: {
   balanceToken?: string;
   balanceUserId?: string;
   balanceAlertUsd?: number;
+  spendCapDailyMinUsd?: number;
+  spendCapDailyMaxUsd?: number;
+  spendCapTotalMinUsd?: number;
+  spendCapTotalMaxUsd?: number;
+  spendCapAction?: string;
 }) => api<FallbackChannel>('POST', '/api/me/fallback-channels', body);
 
 export const updateMeFallback = (id: string, body: Partial<{
@@ -415,7 +427,6 @@ export const updateMeFallback = (id: string, body: Partial<{
   baseUrl: string;
   apiKey: string;
   priority: number;
-  weight: number;
   maxConcurrent: number;
   cooldownMs: number;
   priceThreshold: number;
@@ -423,6 +434,11 @@ export const updateMeFallback = (id: string, body: Partial<{
   balanceToken: string;
   balanceUserId: string;
   balanceAlertUsd: number;
+  spendCapDailyMinUsd: number;
+  spendCapDailyMaxUsd: number;
+  spendCapTotalMinUsd: number;
+  spendCapTotalMaxUsd: number;
+  spendCapAction: string;
 }>) => api<FallbackChannel>('PATCH', `/api/me/fallback-channels/${id}`, body);
 
 export const deleteMeFallback = (id: string) =>

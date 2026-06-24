@@ -187,6 +187,15 @@ export default function Policies() {
   const elasticScaleDownUtil = useField<number>(0.3);
   const elasticMaxReserve = useField<number>(1000);
   const elasticBaselineCount = useField<number>(1);
+  // SpendCap (5h / 7d rolling window)
+  const spendCap5hEnabled = useField<boolean>(false);
+  const spendCap5hMin = useField<number>(0);
+  const spendCap5hMax = useField<number>(0);
+  const spendCap7dEnabled = useField<boolean>(false);
+  const spendCap7dMin = useField<number>(0);
+  const spendCap7dMax = useField<number>(0);
+  const spendWindow5hMs = useField<number>(18000000); // 5h in ms
+  const spendWindow7dMs = useField<number>(604800000); // 7d in ms
   // Boolean
   const fallbackEnabled = useField<boolean>(false);
   const fallbackProbeEnabled = useField<boolean>(false);
@@ -356,6 +365,13 @@ export default function Policies() {
     if (elasticScaleDownUtil.enabled) patch.ElasticScaleDownUtil = elasticScaleDownUtil.value;
     if (elasticMaxReserve.enabled) patch.ElasticMaxReserve = elasticMaxReserve.value;
     if (elasticBaselineCount.enabled) patch.ElasticBaselineCount = elasticBaselineCount.value;
+    // SpendCap fields — 5h and 7d share the same enable checkbox approach
+    if (spendCap5hEnabled.enabled) patch.SpendCap5hEnabled = spendCap5hEnabled.value;
+    if (spendCap5hMin.enabled) patch.SpendCap5hUsd = { Min: spendCap5hMin.value, Max: spendCap5hMax.value };
+    if (spendCap7dEnabled.enabled) patch.SpendCap7dEnabled = spendCap7dEnabled.value;
+    if (spendCap7dMin.enabled) patch.SpendCap7dUsd = { Min: spendCap7dMin.value, Max: spendCap7dMax.value };
+    if (spendWindow5hMs.enabled) patch.SpendWindow5hMs = spendWindow5hMs.value;
+    if (spendWindow7dMs.enabled) patch.SpendWindow7dMs = spendWindow7dMs.value;
     return patch;
   }
 
@@ -418,6 +434,7 @@ export default function Policies() {
     warmupHours, warmupMaxConcurrent, warmupBlockOpus,
     sessionErrorThreshold, sessionCooldownSec, responseExileEnabled, responseExileKeywords, quotaLimitKeywords, quotaLimitCodes,
     elasticEnabled, elasticScaleUpUtil, elasticScaleDownUtil, elasticMaxReserve, elasticBaselineCount,
+    spendCap5hEnabled, spendCap5hMin, spendCap5hMax, spendCap7dEnabled, spendCap7dMin, spendCap7dMax, spendWindow5hMs, spendWindow7dMs,
   ].some((f) => f.enabled);
 
   return (
@@ -1082,6 +1099,113 @@ export default function Policies() {
             onChange={elasticBaselineCount.set}
             disabled={!elasticBaselineCount.enabled}
             min={1}
+          />
+        </FieldRow>
+
+        <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2 pt-4">自保限额（花费上限保护）</h2>
+        <p className="text-xs text-muted/70 -mt-1 mb-1">账户作用域下可按号设置不同的上限（随机种子区间）。0 = 不限。</p>
+
+        {/* 5h window */}
+        <FieldRow
+          label="SpendCap5hEnabled"
+          desc="启用 5h 滚动窗口花费上限检测"
+          enabled={spendCap5hEnabled.enabled}
+          onToggle={spendCap5hEnabled.toggle}
+        >
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={spendCap5hEnabled.value}
+              onChange={(e) => spendCap5hEnabled.set(e.target.checked)}
+              disabled={!spendCap5hEnabled.enabled}
+              className="accent-accent w-4 h-4"
+            />
+            <span className="text-sm text-ink">{spendCap5hEnabled.value ? '已启用' : '已禁用'}</span>
+          </label>
+        </FieldRow>
+
+        <FieldRow
+          label="SpendCap5hUsd (min ~ max)"
+          desc="5h 窗口花费上限随机区间 (USD)：每号启动时随机取 [min, max] 内的值"
+          enabled={spendCap5hMin.enabled}
+          onToggle={spendCap5hMin.toggle}
+        >
+          <RangeInput
+            min={spendCap5hMin.value}
+            max={spendCap5hMax.value}
+            onChangeMin={spendCap5hMin.set}
+            onChangeMax={spendCap5hMax.set}
+            disabled={!spendCap5hMin.enabled}
+            step={0.01}
+            minLabel="min $"
+            maxLabel="max $"
+          />
+        </FieldRow>
+
+        <FieldRow
+          label="SpendWindow5hMs"
+          desc="5h 窗口时长 (ms)，默认 18000000 (5h)"
+          enabled={spendWindow5hMs.enabled}
+          onToggle={spendWindow5hMs.toggle}
+        >
+          <NumInput
+            value={spendWindow5hMs.value}
+            onChange={spendWindow5hMs.set}
+            disabled={!spendWindow5hMs.enabled}
+            min={0}
+            step={60000}
+          />
+        </FieldRow>
+
+        {/* 7d window */}
+        <FieldRow
+          label="SpendCap7dEnabled"
+          desc="启用 7d 滚动窗口花费上限检测"
+          enabled={spendCap7dEnabled.enabled}
+          onToggle={spendCap7dEnabled.toggle}
+        >
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={spendCap7dEnabled.value}
+              onChange={(e) => spendCap7dEnabled.set(e.target.checked)}
+              disabled={!spendCap7dEnabled.enabled}
+              className="accent-accent w-4 h-4"
+            />
+            <span className="text-sm text-ink">{spendCap7dEnabled.value ? '已启用' : '已禁用'}</span>
+          </label>
+        </FieldRow>
+
+        <FieldRow
+          label="SpendCap7dUsd (min ~ max)"
+          desc="7d 窗口花费上限随机区间 (USD)：每号启动时随机取 [min, max] 内的值"
+          enabled={spendCap7dMin.enabled}
+          onToggle={spendCap7dMin.toggle}
+        >
+          <RangeInput
+            min={spendCap7dMin.value}
+            max={spendCap7dMax.value}
+            onChangeMin={spendCap7dMin.set}
+            onChangeMax={spendCap7dMax.set}
+            disabled={!spendCap7dMin.enabled}
+            step={0.1}
+            minLabel="min $"
+            maxLabel="max $"
+          />
+        </FieldRow>
+
+        <FieldRow
+          label="SpendWindow7dMs"
+          desc="7d 窗口时长 (ms)，默认 604800000 (7d)"
+          enabled={spendWindow7dMs.enabled}
+          onToggle={spendWindow7dMs.toggle}
+        >
+          <NumInput
+            value={spendWindow7dMs.value}
+            onChange={spendWindow7dMs.set}
+            disabled={!spendWindow7dMs.enabled}
+            min={0}
+            step={3600000}
           />
         </FieldRow>
       </div>

@@ -166,6 +166,13 @@ export interface PolicyPatch {
   ElasticScaleDownUtil?: number;
   ElasticMaxReserve?: number;
   ElasticBaselineCount?: number;
+  // Spend-cap (5h / 7d rolling window)
+  SpendCap5hEnabled?: boolean;
+  SpendCap5hUsd?: { Min: number; Max: number };
+  SpendCap7dEnabled?: boolean;
+  SpendCap7dUsd?: { Min: number; Max: number };
+  SpendWindow5hMs?: number;
+  SpendWindow7dMs?: number;
 }
 
 // policy.Config (resolved)
@@ -344,7 +351,6 @@ export interface FallbackChannel {
   baseUrl: string;
   hasKey: boolean;
   priority: number;
-  weight: number;
   maxConcurrent: number;
   cooldownMs: number;
   priceThreshold: number;
@@ -361,6 +367,12 @@ export interface FallbackChannel {
   balanceUserId?: string;
   balanceCheckedAt?: number;
   balanceError?: string;
+  // Spend-cap (保底花费上限)
+  spendCapDailyMinUsd: number;
+  spendCapDailyMaxUsd: number;
+  spendCapTotalMinUsd: number;
+  spendCapTotalMaxUsd: number;
+  spendCapAction: string;
 }
 
 // --- Users ---
@@ -450,7 +462,6 @@ export interface DispatchFallbackChannel {
   name: string;
   enabled: boolean;
   priority: number;
-  weight: number;
   todayRequests: number;
   todayCostUsd: number;
   inflight?: number;

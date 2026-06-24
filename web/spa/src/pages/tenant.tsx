@@ -572,7 +572,6 @@ function TenantFallbackChannelsPanel({ channels }: { channels: DispatchFallbackC
                 <th className="px-4 py-2 font-medium">渠道名</th>
                 <th className="px-4 py-2 font-medium">状态</th>
                 <th className="px-4 py-2 font-medium text-right">优先级</th>
-                <th className="px-4 py-2 font-medium text-right">权重</th>
                 <th className="px-4 py-2 font-medium text-right">余额($)</th>
                 <th className="px-4 py-2 font-medium text-right">今日消费</th>
                 <th className="px-4 py-2 font-medium text-right">并发中</th>
@@ -591,7 +590,6 @@ function TenantFallbackChannelsPanel({ channels }: { channels: DispatchFallbackC
                     </span>
                   </td>
                   <td className="px-4 py-2 text-right tabular-nums">{ch.priority}</td>
-                  <td className="px-4 py-2 text-right tabular-nums">{ch.weight}</td>
                   <td className="px-4 py-2 text-right tabular-nums">{formatBalance(ch.balanceUsd)}</td>
                   <td className="px-4 py-2 text-right tabular-nums">{formatCost(ch.todayCostUsd)}</td>
                   <td className="px-4 py-2 text-right tabular-nums">{ch.inflight ?? '—'}</td>
