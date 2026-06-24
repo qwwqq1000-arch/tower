@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/qwwqq1000-arch/tower/internal/billing"
@@ -41,6 +42,12 @@ type Service struct {
 	// to deduplicate scale_up / scale_down events.
 	scaledUpMu sync.Mutex
 	scaledUp   map[string]bool
+
+	// policyVer is a monotonic version counter bumped on every policy write.
+	// policyCache holds per-(ownerID,accountID) cached resolved configs keyed
+	// by ownerID+"|"+accountID; entries are invalidated when policyVer changes.
+	policyVer   atomic.Int64
+	policyCache sync.Map // key: string → cachedPolicyCfg
 }
 
 // NewService builds a dispatch Service. cipher is the runtime master-key cipher
@@ -451,11 +458,34 @@ func (s *Service) pinToAffinity(conv string, order []string, now int64) []string
 	return nil // pinned account unavailable → force fallback, never hop to another node account
 }
 
+// cachedPolicyCfg is a version-stamped resolved policy config entry.
+type cachedPolicyCfg struct {
+	ver int64
+	cfg policy.Config
+}
+
+// BumpPolicyVersion invalidates all cached resolveConfig entries by advancing
+// the version counter. Must be called after any policy write (upsert/delete).
+func (s *Service) BumpPolicyVersion() { s.policyVer.Add(1) }
+
 // resolveConfig resolves the effective 封控 policy for the given dispatch owner by
 // applying the global layer first, then the owner's (tenant) layer, then the
 // account layer over it, so later layers win. ownerID=="" (admin/unowned dispatch
 // key) has no tenant layer. accountID=="" means no account layer is applied.
+//
+// Results are cached per (ownerID, accountID) and invalidated when BumpPolicyVersion
+// is called, eliminating the per-request ListPolicies full-table scan on the hot path.
+// Reads are lock-free (sync.Map + atomic.Int64); concurrent rebuilds after a bump are
+// idempotent and safe.
 func (s *Service) resolveConfig(ctx context.Context, ownerID, accountID string) policy.Config {
+	ver := s.policyVer.Load()
+	key := ownerID + "|" + accountID
+	if v, ok := s.policyCache.Load(key); ok {
+		if entry := v.(cachedPolicyCfg); entry.ver == ver {
+			return entry.cfg
+		}
+	}
+
 	rows, err := s.Q.ListPolicies(ctx)
 	if err != nil {
 		return s.Base
@@ -490,7 +520,9 @@ func (s *Service) resolveConfig(ctx context.Context, ownerID, accountID string) 
 	if ap != nil {
 		patches = append(patches, *ap)
 	}
-	return policy.Resolve(s.Base, patches...)
+	cfg := policy.Resolve(s.Base, patches...)
+	s.policyCache.Store(key, cachedPolicyCfg{ver: ver, cfg: cfg})
+	return cfg
 }
 
 // slotActiveNow reports whether the given [startMin, endMin) window (minute-of-day,

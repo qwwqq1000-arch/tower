@@ -104,7 +104,7 @@ func TestPolicyRoutesSuperadminOnly(t *testing.T) {
 	const secret = "test-secret-padding-to-32-chars!"
 
 	// Build the handlers the same way the router does: wrap with requireSuperadmin.
-	putPolicyHandler := requireSuperadmin(secret, nil, putGlobalPolicyHandler(nil))
+	putPolicyHandler := requireSuperadmin(secret, nil, putGlobalPolicyHandler(nil, nil))
 	dryRunHandler := requireSuperadmin(secret, nil, dryRunPolicyHandler(nil))
 
 	doRequest := func(handler http.HandlerFunc, method, path, sub, role string) int {

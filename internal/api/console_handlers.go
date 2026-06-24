@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
+	"github.com/qwwqq1000-arch/tower/internal/dispatch"
 	"github.com/qwwqq1000-arch/tower/internal/policy"
 )
 
@@ -40,7 +41,7 @@ func listPoliciesHandler(q *sqlc.Queries) http.HandlerFunc {
 	}
 }
 
-func putGlobalPolicyHandler(q *sqlc.Queries) http.HandlerFunc {
+func putGlobalPolicyHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := readAll(r)
 		if !validJSON(raw) {
@@ -75,6 +76,9 @@ func putGlobalPolicyHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		if svc != nil {
+			svc.BumpPolicyVersion()
+		}
 		recordAudit(r, q, "policy.update", "global", nil, json.RawMessage(out))
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
@@ -85,7 +89,7 @@ func putGlobalPolicyHandler(q *sqlc.Queries) http.HandlerFunc {
 // this layer over the global policy so a tenant's override wins. Like the global
 // handler it merges the incoming patch over the existing tenant params so a
 // partial save only updates the provided keys. Superadmin-gated by the router.
-func putTenantPolicyHandler(q *sqlc.Queries) http.HandlerFunc {
+func putTenantPolicyHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tenant := r.PathValue("id")
 		if tenant == "" {
@@ -127,6 +131,9 @@ func putTenantPolicyHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		if svc != nil {
+			svc.BumpPolicyVersion()
+		}
 		recordAudit(r, q, "policy.update", "tenant:"+tenant, nil, json.RawMessage(out))
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
@@ -137,7 +144,7 @@ func putTenantPolicyHandler(q *sqlc.Queries) http.HandlerFunc {
 // over the global and tenant policies so an account's override wins. Like the tenant
 // handler it merges the incoming patch over the existing account params so a partial
 // save only updates the provided keys. Superadmin-gated by the router.
-func putAccountPolicyHandler(q *sqlc.Queries) http.HandlerFunc {
+func putAccountPolicyHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		accountId := r.PathValue("accountId")
 		if accountId == "" {
@@ -179,6 +186,9 @@ func putAccountPolicyHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		if svc != nil {
+			svc.BumpPolicyVersion()
+		}
 		recordAudit(r, q, "policy.update", "account:"+accountId, nil, json.RawMessage(out))
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
@@ -186,7 +196,7 @@ func putAccountPolicyHandler(q *sqlc.Queries) http.HandlerFunc {
 
 // deleteAccountPolicyHandler removes a per-account policy override, reverting the
 // account to the tenant/global policy resolution. Superadmin-gated by the router.
-func deleteAccountPolicyHandler(q *sqlc.Queries) http.HandlerFunc {
+func deleteAccountPolicyHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		accountId := r.PathValue("accountId")
 		if accountId == "" {
@@ -196,6 +206,9 @@ func deleteAccountPolicyHandler(q *sqlc.Queries) http.HandlerFunc {
 		if err := q.DeletePolicy(r.Context(), sqlc.DeletePolicyParams{ScopeType: "account", ScopeID: accountId}); err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
+		}
+		if svc != nil {
+			svc.BumpPolicyVersion()
 		}
 		recordAudit(r, q, "policy.delete", "account:"+accountId, nil, nil)
 		writeJSON(w, 200, map[string]string{"ok": "true"})
