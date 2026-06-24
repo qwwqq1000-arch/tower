@@ -21,6 +21,7 @@ func todayDayStr() string {
 type fallbackBody struct {
 	Name, BaseUrl, ApiKey, ModelAllowlist, OwnerId, GroupId string
 	Priority, MaxConcurrent                                 int32
+	Weight                                                  int32
 	CooldownMs                                              int64
 	PriceThreshold                                          float64
 	BalanceToken                                            string
@@ -55,6 +56,7 @@ func listFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 				"baseUrl":             c.BaseUrl,
 				"hasKey":              c.ApiKey != "",
 				"priority":            c.Priority,
+				"weight":              c.Weight,
 				"maxConcurrent":       c.MaxConcurrent,
 				"cooldownMs":          c.CooldownMs,
 				"priceThreshold":      c.PriceThreshold,
@@ -123,6 +125,7 @@ func createFallbackHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerF
 			BaseUrl:             b.BaseUrl,
 			ApiKey:              cipher.EncryptStr(b.ApiKey),
 			Priority:            b.Priority,
+			Weight:              b.Weight,
 			MaxConcurrent:       b.MaxConcurrent,
 			CooldownMs:          b.CooldownMs,
 			PriceThreshold:      b.PriceThreshold,
@@ -179,6 +182,7 @@ func updateFallbackHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerF
 			BaseUrl:             b.BaseUrl,
 			ApiKey:              apiKeyEnc,
 			Priority:            b.Priority,
+			Weight:              b.Weight,
 			MaxConcurrent:       b.MaxConcurrent,
 			CooldownMs:          b.CooldownMs,
 			PriceThreshold:      b.PriceThreshold,

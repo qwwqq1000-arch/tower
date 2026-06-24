@@ -995,6 +995,8 @@ func weightedShuffle(chs []sqlc.FallbackChannel) []sqlc.FallbackChannel {
 	if len(chs) <= 1 {
 		return chs
 	}
+	// defensive copy: chs is a sub-slice of the caller's sorted slice; mutating
+	// it in-place would corrupt the caller's view of the priority tier.
 	remaining := append([]sqlc.FallbackChannel(nil), chs...)
 	result := make([]sqlc.FallbackChannel, 0, len(chs))
 	for len(remaining) > 0 {
