@@ -2,6 +2,11 @@ package state
 
 import "strings"
 
+type spendEntry struct {
+	ts  int64
+	usd float64
+}
+
 // classOf maps a model identifier to its rate-limit class ("opus", "sonnet",
 // "haiku", or "all" for unknown/unrecognized models). The comparison is
 // case-insensitive substring matching so both raw class names ("opus") and
@@ -29,6 +34,7 @@ type Account struct {
 	LimitedUntil map[string]int64 // model class ("opus"/"sonnet"/"all") -> reset time ms
 	WarmupCap    int              // 0 = no warmup limit; >0 = max in-flight during warmup
 	CoolUntil    int64            // ms; temporary error-cooldown (e.g. 429); 0 = none. Ephemeral.
+	spendLog     []spendEntry     // 升序时间
 }
 
 // NewAccount builds an account with a slot set of the given capacity.
@@ -135,4 +141,31 @@ func (a *Account) CanDispatch(now int64, model string, cfg BreakerCfg) (ok bool,
 	default: // open
 		return false, false
 	}
+}
+
+// AddSpend records a spend entry and prunes entries older than (now-pruneWindowMs).
+// The caller should pass the longest applicable window (e.g., 7d) to avoid pruning
+// data that is still needed for shorter windows.
+func (a *Account) AddSpend(now int64, usd float64, pruneWindowMs int64) {
+	a.spendLog = append(a.spendLog, spendEntry{ts: now, usd: usd})
+	cut := now - pruneWindowMs
+	i := 0
+	for i < len(a.spendLog) && a.spendLog[i].ts < cut {
+		i++
+	}
+	if i > 0 {
+		a.spendLog = a.spendLog[i:]
+	}
+}
+
+// SpendInWindow returns the sum of spend entries in [now-windowMs, now].
+func (a *Account) SpendInWindow(now, windowMs int64) float64 {
+	cut := now - windowMs
+	var sum float64
+	for _, e := range a.spendLog {
+		if e.ts > cut {
+			sum += e.usd
+		}
+	}
+	return sum
 }
