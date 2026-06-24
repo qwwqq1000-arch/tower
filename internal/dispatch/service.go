@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net/http"
 	"regexp"
 	"sort"
@@ -971,6 +972,53 @@ func channelAllowsModel(allowlist, model string) bool {
 	return false
 }
 
+// weightedOrderWithinPriority keeps priority tiers in ascending order but
+// shuffles channels WITHIN each tier by weight (weighted-random), so same-
+// priority channels share load proportional to weight. Stateless per call.
+// Input must already be sorted by priority (ListEnabledFallbackChannels is).
+func weightedOrderWithinPriority(channels []sqlc.FallbackChannel) []sqlc.FallbackChannel {
+	out := make([]sqlc.FallbackChannel, 0, len(channels))
+	for i := 0; i < len(channels); {
+		j := i
+		for j < len(channels) && channels[j].Priority == channels[i].Priority {
+			j++
+		}
+		out = append(out, weightedShuffle(channels[i:j])...)
+		i = j
+	}
+	return out
+}
+
+// weightedShuffle returns a weighted-random permutation: each successive pick
+// draws a remaining channel with probability proportional to its weight.
+func weightedShuffle(chs []sqlc.FallbackChannel) []sqlc.FallbackChannel {
+	if len(chs) <= 1 {
+		return chs
+	}
+	remaining := append([]sqlc.FallbackChannel(nil), chs...)
+	result := make([]sqlc.FallbackChannel, 0, len(chs))
+	for len(remaining) > 0 {
+		total := 0
+		for _, c := range remaining {
+			w := int(c.Weight)
+			if w <= 0 { w = 1 }
+			total += w
+		}
+		r := rand.Intn(total)
+		idx := 0
+		for idx < len(remaining) {
+			w := int(remaining[idx].Weight)
+			if w <= 0 { w = 1 }
+			if r < w { break }
+			r -= w
+			idx++
+		}
+		result = append(result, remaining[idx])
+		remaining = append(remaining[:idx], remaining[idx+1:]...)
+	}
+	return result
+}
+
 func (s *Service) enabledChannels(ctx context.Context, ownerID string, model string) []sqlc.FallbackChannel {
 	chs, err := s.Q.ListEnabledFallbackChannels(ctx)
 	if err != nil {
@@ -1004,6 +1052,7 @@ func (s *Service) enabledChannels(ctx context.Context, ownerID string, model str
 
 		out = append(out, c)
 	}
+	out = weightedOrderWithinPriority(out)
 	return out
 }
 
