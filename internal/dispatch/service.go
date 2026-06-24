@@ -48,6 +48,13 @@ type Service struct {
 	// by ownerID+"|"+accountID; entries are invalidated when policyVer changes.
 	policyVer   atomic.Int64
 	policyCache sync.Map // key: string → cachedPolicyCfg
+
+	// keyAccount maps a dispatch key (nodeID:profileID) → the business accountID
+	// (na.AccountID, matching policies-table scope_id for account scope). Populated
+	// in buildCandidates and read in recordSpend so per-account policy overrides are
+	// reachable at points where only the key is known. key→accountId is stable, so
+	// a shared lock-free map is safe.
+	keyAccount sync.Map // key: string (nodeID:profileID) → string (accountID)
 }
 
 // NewService builds a dispatch Service. cipher is the runtime master-key cipher
@@ -335,7 +342,14 @@ func overCap(sum, capUsd float64) bool {
 // caught so spend tracking never fails the request.
 func (s *Service) recordSpend(ctx context.Context, ownerID, key string, cost float64) {
 	defer func() { recover() }() //nolint:errcheck
-	cfg := s.resolveConfig(ctx, ownerID, "")
+	// Resolve the per-account spend-cap config: look up the business accountID for
+	// this dispatch key (populated in buildCandidates). Falls back to "" (no account
+	// layer) when the key is unknown, so a per-account spend-cap override applies.
+	accountID := ""
+	if v, ok := s.keyAccount.Load(key); ok {
+		accountID, _ = v.(string)
+	}
+	cfg := s.resolveConfig(ctx, ownerID, accountID)
 	if !cfg.SpendCap5hEnabled && !cfg.SpendCap7dEnabled {
 		return // zero overhead when both caps are off (default)
 	}
@@ -465,13 +479,17 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 				if justExiled := s.sess.ForceExile(conv, int64(cfg.SessionCooldownSec)*1000, nowMs); justExiled {
 					_ = events.Record(ctx, s.Q, nowMs, events.Event{Type: "session_exile", Target: "cyber", OwnerID: ownerID})
 				}
+				// The node account (winKey) DID serve a real upstream request here even
+				// though we re-route the client to fallback — count it toward the rate
+				// governor windows, matching the no-channel branch below. Without this
+				// the rate-governor undercounts when ResponseExile + RateGov overlap.
+				if cfg.RateGovEnabled {
+					s.Store.RecordReq(winKey)
+				}
 				if len(channels) > 0 {
 					return s.viaChannels(ctx, ownerID, model, body, channels, "cyber", time.Since(start).Milliseconds(), cfg)
 				}
 				// No fallback channel — log and return the original response.
-				if cfg.RateGovEnabled {
-					s.Store.RecordReq(winKey)
-				}
 				s.logOK(ctx, ownerID, model, res, winKey, time.Since(start).Milliseconds(), "cyber")
 				return Outcome{Status: res.Status, Body: res.Body, Target: winKey, Reason: "cyber"}
 			}
@@ -701,51 +719,64 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 				}
 				// Unknown slot_id or disabled slot → treat as always-active (don't skip).
 			}
-			// Determine warmup state for this account.
+			// Resolve the per-account effective config for THIS candidate. With no
+			// account-scope policy row this returns exactly cfg, so the change is
+			// behavior-neutral unless a per-account override was set (version-cached,
+			// so cheap after warmup). Used for this candidate's per-account knobs:
+			// warmup, serial-queue/concurrency, quiet-hours RPM/concurrency,
+			// rate-governor RPM/RPH/RPD, and model-pin.
+			acfg := s.resolveConfig(ctx, ownerID, na.AccountID)
+			// Determine warmup state for this account (per-account warmup window).
 			var onboardedAt int64
 			if acc, aerr := s.Q.GetAccount(ctx, na.AccountID); aerr == nil {
 				onboardedAt = acc.OnboardedAt
 			}
-			inWarmup := cfg.WarmupHours > 0 && onboardedAt > 0 &&
-				(nowMs-onboardedAt) < int64(cfg.WarmupHours)*3_600_000
+			inWarmup := acfg.WarmupHours > 0 && onboardedAt > 0 &&
+				(nowMs-onboardedAt) < int64(acfg.WarmupHours)*3_600_000
 			// Skip opus candidates that are still warming up (if block is enabled).
-			if inWarmup && cfg.WarmupBlockOpus && isOpus {
+			if inWarmup && acfg.WarmupBlockOpus && isOpus {
 				continue
 			}
 			key := n.ID + ":" + na.ProfileID
 			// Record the account owner for ban-event attribution (events-audit-3).
 			keyOwner[key] = acctOwner[na.AccountID]
+			// Record the business accountID for this key so per-account policy
+			// overrides are reachable in recordSpend (where only the key is known).
+			s.keyAccount.Store(key, na.AccountID)
 			// Decrypt the node api_key transparently (vault-crypto-3): ciphertext
 			// rows decrypt, legacy plaintext rows pass through unchanged.
 			refs[key] = NodeRef{BaseURL: n.BaseUrl, APIKey: s.Cipher.DecryptOrPlaintext(n.ApiKey), ProfileID: na.ProfileID, Kind: n.Kind}
 			// baseCap: serial-queue cap (1 when enabled, MaxConcurrent otherwise).
 			// Quiet hours further reduces this to min(baseCap, QuietHoursConcurrency).
-			baseCap := effectiveCap(cfg.SerialQueueEnabled, cfg.MaxConcurrent)
+			// Per-account: serial-queue + concurrency knobs resolve from acfg so a
+			// per-account override applies to this candidate.
+			baseCap := effectiveCap(acfg.SerialQueueEnabled, acfg.MaxConcurrent)
 			s.Store.Ensure(key, baseCap)
 			cap := baseCap
-			if inQuiet && cfg.QuietHoursConcurrency > 0 && cfg.QuietHoursConcurrency < cap {
-				cap = cfg.QuietHoursConcurrency
+			if inQuiet && acfg.QuietHoursConcurrency > 0 && acfg.QuietHoursConcurrency < cap {
+				cap = acfg.QuietHoursConcurrency
 			}
 			s.Store.SetCapacity(key, cap)
-			// Apply or clear warmup cap.
+			// Apply or clear warmup cap (per-account warmup concurrency).
 			if inWarmup {
-				s.Store.SetWarmupCap(key, cfg.WarmupMaxConcurrent)
+				s.Store.SetWarmupCap(key, acfg.WarmupMaxConcurrent)
 			} else {
 				s.Store.SetWarmupCap(key, 0)
 			}
 			// Rate governor: skip account if any rate window is exceeded.
 			// Quiet hours adds an additional RPM cap even when RateGovEnabled=false.
-			if cfg.RateGovEnabled || inQuiet {
+			// All rate/quiet magnitude knobs resolve per-account from acfg.
+			if acfg.RateGovEnabled || inQuiet {
 				// Start with no RPM limit; apply rate-gov limit if enabled.
 				var rpm int64
 				hasRPMLimit := false
-				if cfg.RateGovEnabled {
-					rpm = cfg.RateRPM.Resolve(key, "rpm")
+				if acfg.RateGovEnabled {
+					rpm = acfg.RateRPM.Resolve(key, "rpm")
 					hasRPMLimit = true
 				}
 				// Overlay quiet-hours RPM cap (takes min).
 				if inQuiet {
-					qrpm := cfg.QuietHoursRPM.Resolve(key, "qrpm")
+					qrpm := acfg.QuietHoursRPM.Resolve(key, "qrpm")
 					if !hasRPMLimit || qrpm < rpm {
 						rpm = qrpm
 					}
@@ -755,24 +786,25 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 					continue
 				}
 				// RPH / RPD only when full rate gov is enabled.
-				if cfg.RateGovEnabled {
-					rph := cfg.RateRPH.Resolve(key, "rph")
-					rpd := cfg.RateRPD.Resolve(key, "rpd")
+				if acfg.RateGovEnabled {
+					rph := acfg.RateRPH.Resolve(key, "rph")
+					rpd := acfg.RateRPD.Resolve(key, "rpd")
 					if int64(s.Store.ReqsInWindow(key, 3600000)) >= rph ||
 						int64(s.Store.ReqsInWindow(key, 86400000)) >= rpd {
 						continue
 					}
 				}
 			}
-			// ModelPin filter: skip accounts that are pinned to a different model.
-			if cfg.ModelPinEnabled {
-				switch cfg.ModelPinMode {
+			// ModelPin filter: skip accounts that are pinned to a different model
+			// (per-account model-pin override resolves from acfg).
+			if acfg.ModelPinEnabled {
+				switch acfg.ModelPinMode {
 				case "fixed":
-					if cfg.ModelPinTarget != "" && !strings.Contains(strings.ToLower(model), strings.ToLower(cfg.ModelPinTarget)) {
+					if acfg.ModelPinTarget != "" && !strings.Contains(strings.ToLower(model), strings.ToLower(acfg.ModelPinTarget)) {
 						continue
 					}
 				case "sticky":
-					ttl := int64(cfg.AffinityTTLSec) * 1000
+					ttl := int64(acfg.AffinityTTLSec) * 1000
 					if pm, ok := s.Store.PinnedModel(key, ttl); ok && !strings.Contains(strings.ToLower(model), strings.ToLower(pm)) {
 						continue
 					}
