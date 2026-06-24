@@ -143,6 +143,22 @@ type Config struct {
 	// HumanDelayP95Ms is the per-account 95th-percentile cooldown (ms) for log-normal mode.
 	// Resolved deterministically per account. Default {Min: 5000, Max: 5000}.
 	HumanDelayP95Ms RangeI
+
+	// RateGovEnabled enables per-account RPM/RPH/RPD rate limiting in dispatch.
+	// Default false (zero overhead when disabled).
+	RateGovEnabled bool
+	// RateRPM is the per-account requests-per-minute limit (resolved per account).
+	// Default {8, 8}.
+	RateRPM RangeI
+	// RateRPH is the per-account requests-per-hour limit (resolved per account).
+	// Default {100, 100}.
+	RateRPH RangeI
+	// RateRPD is the per-account requests-per-day limit (resolved per account).
+	// Default {600, 600}.
+	RateRPD RangeI
+	// RateExceedAction determines what happens when a rate limit is exceeded:
+	// "rotate" (default) skips the account from candidacy; "delay" is TODO.
+	RateExceedAction string
 }
 
 // Defaults returns sane baseline configuration.
@@ -207,6 +223,11 @@ func Defaults() Config {
 		HumanDelayDist:    "uniform",
 		HumanDelayP50Ms:   RangeI{Min: 2000, Max: 2000},
 		HumanDelayP95Ms:   RangeI{Min: 5000, Max: 5000},
+		RateGovEnabled:    false,
+		RateRPM:           RangeI{Min: 8, Max: 8},
+		RateRPH:           RangeI{Min: 100, Max: 100},
+		RateRPD:           RangeI{Min: 600, Max: 600},
+		RateExceedAction:  "rotate",
 	}
 }
 
@@ -259,6 +280,11 @@ type Patch struct {
 	HumanDelayDist            *string
 	HumanDelayP50Ms           *RangeI
 	HumanDelayP95Ms           *RangeI
+	RateGovEnabled            *bool
+	RateRPM                   *RangeI
+	RateRPH                   *RangeI
+	RateRPD                   *RangeI
+	RateExceedAction          *string
 }
 
 func apply(c *Config, p Patch) {
@@ -402,6 +428,21 @@ func apply(c *Config, p Patch) {
 	}
 	if p.HumanDelayP95Ms != nil {
 		c.HumanDelayP95Ms = *p.HumanDelayP95Ms
+	}
+	if p.RateGovEnabled != nil {
+		c.RateGovEnabled = *p.RateGovEnabled
+	}
+	if p.RateRPM != nil {
+		c.RateRPM = *p.RateRPM
+	}
+	if p.RateRPH != nil {
+		c.RateRPH = *p.RateRPH
+	}
+	if p.RateRPD != nil {
+		c.RateRPD = *p.RateRPD
+	}
+	if p.RateExceedAction != nil {
+		c.RateExceedAction = *p.RateExceedAction
 	}
 }
 

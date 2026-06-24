@@ -35,6 +35,34 @@ type Account struct {
 	WarmupCap    int              // 0 = no warmup limit; >0 = max in-flight during warmup
 	CoolUntil    int64            // ms; temporary error-cooldown (e.g. 429); 0 = none. Ephemeral.
 	spendLog     []spendEntry     // 升序时间
+	reqLog       []int64          // timestamps (ms, ascending) of dispatched requests; for rate governor
+}
+
+// RecordReq appends a request timestamp and prunes entries older than 1 day (86400000 ms).
+// The 1-day pruning window is the longest rate window, ensuring shorter windows (1min, 1hr)
+// still have complete data.
+func (a *Account) RecordReq(now int64) {
+	a.reqLog = append(a.reqLog, now)
+	cut := now - 86400000
+	i := 0
+	for i < len(a.reqLog) && a.reqLog[i] < cut {
+		i++
+	}
+	if i > 0 {
+		a.reqLog = a.reqLog[i:]
+	}
+}
+
+// ReqsInWindow counts request entries in the closed window [now-windowMs, now].
+func (a *Account) ReqsInWindow(now, windowMs int64) int {
+	cut := now - windowMs
+	count := 0
+	for _, ts := range a.reqLog {
+		if ts >= cut && ts <= now {
+			count++
+		}
+	}
+	return count
 }
 
 // NewAccount builds an account with a slot set of the given capacity.

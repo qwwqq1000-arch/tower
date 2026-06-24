@@ -443,12 +443,18 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 					return s.viaChannels(ctx, ownerID, model, body, channels, "cyber", time.Since(start).Milliseconds(), cfg)
 				}
 				// No fallback channel — log and return the original response.
+				if cfg.RateGovEnabled {
+					s.Store.RecordReq(winKey)
+				}
 				s.logOK(ctx, ownerID, model, res, winKey, time.Since(start).Milliseconds(), "cyber")
 				return Outcome{Status: res.Status, Body: res.Body, Target: winKey, Reason: "cyber"}
 			}
 			s.sess.RecordSuccess(conv)
 			if cfg.AffinityTTLSec > 0 {
 				s.sess.SetAffinity(conv, winKey, int64(cfg.AffinityTTLSec)*1000, nowMs)
+			}
+			if cfg.RateGovEnabled {
+				s.Store.RecordReq(winKey)
 			}
 			s.logOK(ctx, ownerID, model, res, winKey, time.Since(start).Milliseconds(), "")
 			return Outcome{Status: res.Status, Body: res.Body, Target: winKey, Reason: ""}
@@ -668,6 +674,17 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 				s.Store.SetWarmupCap(key, cfg.WarmupMaxConcurrent)
 			} else {
 				s.Store.SetWarmupCap(key, 0)
+			}
+			// Rate governor: skip account if any rate window is exceeded.
+			if cfg.RateGovEnabled {
+				rpm := cfg.RateRPM.Resolve(key, "rpm")
+				rph := cfg.RateRPH.Resolve(key, "rph")
+				rpd := cfg.RateRPD.Resolve(key, "rpd")
+				if int64(s.Store.ReqsInWindow(key, 60000)) >= rpm ||
+					int64(s.Store.ReqsInWindow(key, 3600000)) >= rph ||
+					int64(s.Store.ReqsInWindow(key, 86400000)) >= rpd {
+					continue
+				}
 			}
 			cands = append(cands, cand{key: key, weight: int(na.Weight), reserve: na.Role == "reserve"})
 		}
@@ -1195,6 +1212,9 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 			// modal can show a streaming request's response, not just an empty 200
 			// (logs-detail-2). The handler caps it; nothing writes out.Body to the
 			// client (the stream already went to w).
+			if cfg.RateGovEnabled {
+				s.Store.RecordReq(key)
+			}
 			out.Body = sseBody
 			return out
 		}

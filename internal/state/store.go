@@ -355,6 +355,27 @@ func (s *Store) SetDisabled(key string, capacity int, disabled bool) {
 	s.ensureLocked(key, capacity).Disabled = disabled
 }
 
+// RecordReq records a dispatched request timestamp for the account (rate governor).
+// Creates the account entry if absent (capacity=1 safe default, same as AddSpend).
+func (s *Store) RecordReq(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.ensureLocked(key, 1)
+	a.RecordReq(s.now())
+}
+
+// ReqsInWindow returns the count of dispatched requests for key within the last
+// windowMs milliseconds. Returns 0 if the account has no recorded requests.
+func (s *Store) ReqsInWindow(key string, windowMs int64) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.accts[key]
+	if a == nil {
+		return 0
+	}
+	return a.ReqsInWindow(s.now(), windowMs)
+}
+
 // SetCapacity updates the slot capacity for an existing account (no-op if absent).
 func (s *Store) SetCapacity(key string, cap int) {
 	s.mu.Lock()
