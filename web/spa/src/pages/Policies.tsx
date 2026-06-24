@@ -196,6 +196,34 @@ export default function Policies() {
   const spendCap7dMax = useField<number>(0);
   const spendWindow5hMs = useField<number>(18000000); // 5h in ms
   const spendWindow7dMs = useField<number>(604800000); // 7d in ms
+  // Phase 3: HumanDelay (人类延迟)
+  const humanDelayDist = useField<string>('uniform');
+  const humanDelayP50Min = useField<number>(500);
+  const humanDelayP50Max = useField<number>(2000);
+  const humanDelayP95Min = useField<number>(3000);
+  const humanDelayP95Max = useField<number>(8000);
+  // Phase 3: RateGovernor (利率治理)
+  const rateGovEnabled = useField<boolean>(false);
+  const rateRPMMin = useField<number>(0);
+  const rateRPMMax = useField<number>(60);
+  const rateRPHMin = useField<number>(0);
+  const rateRPHMax = useField<number>(600);
+  const rateRPDMin = useField<number>(0);
+  const rateRPDMax = useField<number>(5000);
+  const rateExceedAction = useField<string>('rotate');
+  // Phase 3: SessionSim (会话模拟)
+  const sessionSimEnabled = useField<boolean>(false);
+  const sessionBurstCountMin = useField<number>(1);
+  const sessionBurstCountMax = useField<number>(5);
+  const sessionPauseMsMin = useField<number>(30000);
+  const sessionPauseMsMax = useField<number>(120000);
+  // Phase 3: QuietHours (安静时段)
+  const quietHoursEnabled = useField<boolean>(false);
+  const quietHoursStartMin = useField<number>(0);   // minutes since midnight
+  const quietHoursEndMin = useField<number>(360);   // 06:00
+  const quietHoursRPMMin = useField<number>(0);
+  const quietHoursRPMMax = useField<number>(10);
+  const quietHoursConcurrency = useField<number>(1);
   // Boolean
   const fallbackEnabled = useField<boolean>(false);
   const fallbackProbeEnabled = useField<boolean>(false);
@@ -372,6 +400,25 @@ export default function Policies() {
     if (spendCap7dMin.enabled) patch.SpendCap7dUsd = { Min: spendCap7dMin.value, Max: spendCap7dMax.value };
     if (spendWindow5hMs.enabled) patch.SpendWindow5hMs = spendWindow5hMs.value;
     if (spendWindow7dMs.enabled) patch.SpendWindow7dMs = spendWindow7dMs.value;
+    // Phase 3: HumanDelay
+    if (humanDelayDist.enabled) patch.HumanDelayDist = humanDelayDist.value;
+    if (humanDelayP50Min.enabled) patch.HumanDelayP50Ms = { Min: humanDelayP50Min.value, Max: humanDelayP50Max.value };
+    if (humanDelayP95Min.enabled) patch.HumanDelayP95Ms = { Min: humanDelayP95Min.value, Max: humanDelayP95Max.value };
+    // Phase 3: RateGovernor
+    if (rateGovEnabled.enabled) patch.RateGovEnabled = rateGovEnabled.value;
+    if (rateRPMMin.enabled) patch.RateRPM = { Min: rateRPMMin.value, Max: rateRPMMax.value };
+    if (rateRPHMin.enabled) patch.RateRPH = { Min: rateRPHMin.value, Max: rateRPHMax.value };
+    if (rateRPDMin.enabled) patch.RateRPD = { Min: rateRPDMin.value, Max: rateRPDMax.value };
+    if (rateExceedAction.enabled) patch.RateExceedAction = rateExceedAction.value;
+    // Phase 3: SessionSim
+    if (sessionSimEnabled.enabled) patch.SessionSimEnabled = sessionSimEnabled.value;
+    if (sessionBurstCountMin.enabled) patch.SessionBurstCount = { Min: sessionBurstCountMin.value, Max: sessionBurstCountMax.value };
+    if (sessionPauseMsMin.enabled) patch.SessionPauseMs = { Min: sessionPauseMsMin.value, Max: sessionPauseMsMax.value };
+    // Phase 3: QuietHours
+    if (quietHoursEnabled.enabled) patch.QuietHoursEnabled = quietHoursEnabled.value;
+    if (quietHoursStartMin.enabled) patch.QuietHoursWindows = [{ StartMin: quietHoursStartMin.value, EndMin: quietHoursEndMin.value }];
+    if (quietHoursRPMMin.enabled) patch.QuietHoursRPM = { Min: quietHoursRPMMin.value, Max: quietHoursRPMMax.value };
+    if (quietHoursConcurrency.enabled) patch.QuietHoursConcurrency = quietHoursConcurrency.value;
     return patch;
   }
 
@@ -435,6 +482,11 @@ export default function Policies() {
     sessionErrorThreshold, sessionCooldownSec, responseExileEnabled, responseExileKeywords, quotaLimitKeywords, quotaLimitCodes,
     elasticEnabled, elasticScaleUpUtil, elasticScaleDownUtil, elasticMaxReserve, elasticBaselineCount,
     spendCap5hEnabled, spendCap5hMin, spendCap5hMax, spendCap7dEnabled, spendCap7dMin, spendCap7dMax, spendWindow5hMs, spendWindow7dMs,
+    // Phase 3
+    humanDelayDist, humanDelayP50Min, humanDelayP95Min,
+    rateGovEnabled, rateRPMMin, rateRPHMin, rateRPDMin, rateExceedAction,
+    sessionSimEnabled, sessionBurstCountMin, sessionPauseMsMin,
+    quietHoursEnabled, quietHoursStartMin, quietHoursRPMMin, quietHoursConcurrency,
   ].some((f) => f.enabled);
 
   return (
@@ -1208,6 +1260,310 @@ export default function Policies() {
             step={3600000}
           />
         </FieldRow>
+
+        {/* ============================================================
+            Phase 3: 拟人节奏
+            ============================================================ */}
+
+        {/* Group 1: HumanDelay (人类延迟) */}
+        <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2 pt-4">人类延迟（HumanDelay）</h2>
+        <p className="text-xs text-muted/70 -mt-1 mb-1">在每次请求前注入仿人类延迟。uniform = 均匀随机；lognormal = 对数正态（更真实）。</p>
+
+        <FieldRow
+          label="HumanDelayDist"
+          desc="延迟分布类型：uniform（均匀）或 lognormal（对数正态，需设置 P50/P95）"
+          enabled={humanDelayDist.enabled}
+          onToggle={humanDelayDist.toggle}
+        >
+          <select
+            value={humanDelayDist.value}
+            onChange={(e) => humanDelayDist.set(e.target.value)}
+            disabled={!humanDelayDist.enabled}
+            className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink
+                       focus:outline-none focus:border-accent transition disabled:cursor-not-allowed"
+          >
+            <option value="uniform">uniform（均匀随机）</option>
+            <option value="lognormal">lognormal（对数正态）</option>
+          </select>
+        </FieldRow>
+
+        <FieldRow
+          label="HumanDelayP50Ms (min ~ max)"
+          desc="P50 延迟随机区间 (ms)，仅 lognormal 模式生效"
+          enabled={humanDelayP50Min.enabled}
+          onToggle={humanDelayP50Min.toggle}
+        >
+          <RangeInput
+            min={humanDelayP50Min.value}
+            max={humanDelayP50Max.value}
+            onChangeMin={humanDelayP50Min.set}
+            onChangeMax={humanDelayP50Max.set}
+            disabled={!humanDelayP50Min.enabled}
+            step={100}
+            minLabel="min ms"
+            maxLabel="max ms"
+          />
+        </FieldRow>
+
+        <FieldRow
+          label="HumanDelayP95Ms (min ~ max)"
+          desc="P95 延迟随机区间 (ms)，仅 lognormal 模式生效"
+          enabled={humanDelayP95Min.enabled}
+          onToggle={humanDelayP95Min.toggle}
+        >
+          <RangeInput
+            min={humanDelayP95Min.value}
+            max={humanDelayP95Max.value}
+            onChangeMin={humanDelayP95Min.set}
+            onChangeMax={humanDelayP95Max.set}
+            disabled={!humanDelayP95Min.enabled}
+            step={100}
+            minLabel="min ms"
+            maxLabel="max ms"
+          />
+        </FieldRow>
+
+        {/* Group 2: RateGovernor (利率治理) */}
+        <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2 pt-4">利率治理（RateGovernor）</h2>
+        <p className="text-xs text-muted/70 -mt-1 mb-1">按请求频率（RPM/RPH/RPD）限速，超出时执行 rotate（换号）或 delay（延迟）。0 = 不限。</p>
+
+        <FieldRow
+          label="RateGovEnabled"
+          desc="启用利率治理"
+          enabled={rateGovEnabled.enabled}
+          onToggle={rateGovEnabled.toggle}
+        >
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={rateGovEnabled.value}
+              onChange={(e) => rateGovEnabled.set(e.target.checked)}
+              disabled={!rateGovEnabled.enabled}
+              className="accent-accent w-4 h-4"
+            />
+            <span className="text-sm text-ink">{rateGovEnabled.value ? '已启用' : '已禁用'}</span>
+          </label>
+        </FieldRow>
+
+        <FieldRow
+          label="RateRPM (min ~ max)"
+          desc="每分钟请求数限制随机区间；0 = 不限"
+          enabled={rateRPMMin.enabled}
+          onToggle={rateRPMMin.toggle}
+        >
+          <RangeInput
+            min={rateRPMMin.value}
+            max={rateRPMMax.value}
+            onChangeMin={rateRPMMin.set}
+            onChangeMax={rateRPMMax.set}
+            disabled={!rateRPMMin.enabled}
+            step={1}
+            minLabel="min rpm"
+            maxLabel="max rpm"
+          />
+        </FieldRow>
+
+        <FieldRow
+          label="RateRPH (min ~ max)"
+          desc="每小时请求数限制随机区间；0 = 不限"
+          enabled={rateRPHMin.enabled}
+          onToggle={rateRPHMin.toggle}
+        >
+          <RangeInput
+            min={rateRPHMin.value}
+            max={rateRPHMax.value}
+            onChangeMin={rateRPHMin.set}
+            onChangeMax={rateRPHMax.set}
+            disabled={!rateRPHMin.enabled}
+            step={10}
+            minLabel="min rph"
+            maxLabel="max rph"
+          />
+        </FieldRow>
+
+        <FieldRow
+          label="RateRPD (min ~ max)"
+          desc="每天请求数限制随机区间；0 = 不限"
+          enabled={rateRPDMin.enabled}
+          onToggle={rateRPDMin.toggle}
+        >
+          <RangeInput
+            min={rateRPDMin.value}
+            max={rateRPDMax.value}
+            onChangeMin={rateRPDMin.set}
+            onChangeMax={rateRPDMax.set}
+            disabled={!rateRPDMin.enabled}
+            step={100}
+            minLabel="min rpd"
+            maxLabel="max rpd"
+          />
+        </FieldRow>
+
+        <FieldRow
+          label="RateExceedAction"
+          desc="超出频率限制时的动作：rotate（切换到下一个账号）或 delay（延迟等待）"
+          enabled={rateExceedAction.enabled}
+          onToggle={rateExceedAction.toggle}
+        >
+          <select
+            value={rateExceedAction.value}
+            onChange={(e) => rateExceedAction.set(e.target.value)}
+            disabled={!rateExceedAction.enabled}
+            className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink
+                       focus:outline-none focus:border-accent transition disabled:cursor-not-allowed"
+          >
+            <option value="rotate">rotate（换号）</option>
+            <option value="delay">delay（延迟等待）</option>
+          </select>
+        </FieldRow>
+
+        {/* Group 3: SessionSim (会话模拟) */}
+        <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2 pt-4">会话模拟（SessionSim）</h2>
+        <p className="text-xs text-muted/70 -mt-1 mb-1">模拟真实用户会话节奏：连发 N 条后暂停一段时间，避免持续高并发。</p>
+
+        <FieldRow
+          label="SessionSimEnabled"
+          desc="启用会话节奏模拟"
+          enabled={sessionSimEnabled.enabled}
+          onToggle={sessionSimEnabled.toggle}
+        >
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={sessionSimEnabled.value}
+              onChange={(e) => sessionSimEnabled.set(e.target.checked)}
+              disabled={!sessionSimEnabled.enabled}
+              className="accent-accent w-4 h-4"
+            />
+            <span className="text-sm text-ink">{sessionSimEnabled.value ? '已启用' : '已禁用'}</span>
+          </label>
+        </FieldRow>
+
+        <FieldRow
+          label="SessionBurstCount (min ~ max)"
+          desc="每个会话突发请求数随机区间（连发 N 条后进入暂停）"
+          enabled={sessionBurstCountMin.enabled}
+          onToggle={sessionBurstCountMin.toggle}
+        >
+          <RangeInput
+            min={sessionBurstCountMin.value}
+            max={sessionBurstCountMax.value}
+            onChangeMin={sessionBurstCountMin.set}
+            onChangeMax={sessionBurstCountMax.set}
+            disabled={!sessionBurstCountMin.enabled}
+            step={1}
+            minLabel="min 条"
+            maxLabel="max 条"
+          />
+        </FieldRow>
+
+        <FieldRow
+          label="SessionPauseMs (min ~ max)"
+          desc="突发后暂停时长随机区间 (ms)"
+          enabled={sessionPauseMsMin.enabled}
+          onToggle={sessionPauseMsMin.toggle}
+        >
+          <RangeInput
+            min={sessionPauseMsMin.value}
+            max={sessionPauseMsMax.value}
+            onChangeMin={sessionPauseMsMin.set}
+            onChangeMax={sessionPauseMsMax.set}
+            disabled={!sessionPauseMsMin.enabled}
+            step={1000}
+            minLabel="min ms"
+            maxLabel="max ms"
+          />
+        </FieldRow>
+
+        {/* Group 4: QuietHours (安静时段) */}
+        <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2 pt-4">安静时段（QuietHours）</h2>
+        <p className="text-xs text-muted/70 -mt-1 mb-1">在指定时段内自动降速（低 RPM + 低并发），模拟人类夜间休息行为。时间以本地分钟数（0=00:00, 360=06:00）表示。</p>
+
+        <FieldRow
+          label="QuietHoursEnabled"
+          desc="启用安静时段"
+          enabled={quietHoursEnabled.enabled}
+          onToggle={quietHoursEnabled.toggle}
+        >
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={quietHoursEnabled.value}
+              onChange={(e) => quietHoursEnabled.set(e.target.checked)}
+              disabled={!quietHoursEnabled.enabled}
+              className="accent-accent w-4 h-4"
+            />
+            <span className="text-sm text-ink">{quietHoursEnabled.value ? '已启用' : '已禁用'}</span>
+          </label>
+        </FieldRow>
+
+        <FieldRow
+          label="安静时段窗口（开始 ~ 结束）"
+          desc="以分钟数表示（0=00:00, 360=06:00, 1380=23:00）"
+          enabled={quietHoursStartMin.enabled}
+          onToggle={quietHoursStartMin.toggle}
+        >
+          <div className="flex items-center gap-2">
+            <div className="flex flex-col flex-1 min-w-0">
+              <span className="text-xs text-muted mb-0.5">开始 (min)</span>
+              <NumInput
+                value={quietHoursStartMin.value}
+                onChange={quietHoursStartMin.set}
+                disabled={!quietHoursStartMin.enabled}
+                min={0}
+                max={1439}
+                step={30}
+                placeholder="0"
+              />
+            </div>
+            <span className="text-muted text-sm mt-4">~</span>
+            <div className="flex flex-col flex-1 min-w-0">
+              <span className="text-xs text-muted mb-0.5">结束 (min)</span>
+              <NumInput
+                value={quietHoursEndMin.value}
+                onChange={quietHoursEndMin.set}
+                disabled={!quietHoursStartMin.enabled}
+                min={0}
+                max={1439}
+                step={30}
+                placeholder="360"
+              />
+            </div>
+          </div>
+        </FieldRow>
+
+        <FieldRow
+          label="QuietHoursRPM (min ~ max)"
+          desc="安静时段允许的每分钟请求数随机区间"
+          enabled={quietHoursRPMMin.enabled}
+          onToggle={quietHoursRPMMin.toggle}
+        >
+          <RangeInput
+            min={quietHoursRPMMin.value}
+            max={quietHoursRPMMax.value}
+            onChangeMin={quietHoursRPMMin.set}
+            onChangeMax={quietHoursRPMMax.set}
+            disabled={!quietHoursRPMMin.enabled}
+            step={1}
+            minLabel="min rpm"
+            maxLabel="max rpm"
+          />
+        </FieldRow>
+
+        <FieldRow
+          label="QuietHoursConcurrency"
+          desc="安静时段最大并发数"
+          enabled={quietHoursConcurrency.enabled}
+          onToggle={quietHoursConcurrency.toggle}
+        >
+          <NumInput
+            value={quietHoursConcurrency.value}
+            onChange={quietHoursConcurrency.set}
+            disabled={!quietHoursConcurrency.enabled}
+            min={1}
+          />
+        </FieldRow>
+
       </div>
       </fieldset>
 

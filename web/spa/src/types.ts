@@ -173,6 +173,22 @@ export interface PolicyPatch {
   SpendCap7dUsd?: { Min: number; Max: number };
   SpendWindow5hMs?: number;
   SpendWindow7dMs?: number;
+  // Phase 3: Cadence (拟人节奏)
+  HumanDelayDist?: string;
+  HumanDelayP50Ms?: { Min: number; Max: number };
+  HumanDelayP95Ms?: { Min: number; Max: number };
+  RateGovEnabled?: boolean;
+  RateRPM?: { Min: number; Max: number };
+  RateRPH?: { Min: number; Max: number };
+  RateRPD?: { Min: number; Max: number };
+  RateExceedAction?: string;
+  SessionSimEnabled?: boolean;
+  SessionBurstCount?: { Min: number; Max: number };
+  SessionPauseMs?: { Min: number; Max: number };
+  QuietHoursEnabled?: boolean;
+  QuietHoursWindows?: { StartMin: number; EndMin: number }[];
+  QuietHoursRPM?: { Min: number; Max: number };
+  QuietHoursConcurrency?: number;
 }
 
 // policy.Config (resolved)
