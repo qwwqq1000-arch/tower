@@ -208,3 +208,30 @@ func TestSpendCapPatch(t *testing.T) {
 		t.Fatal("patch 未生效")
 	}
 }
+
+func TestQuietWindowOvernight(t *testing.T) {
+	// 21:00-04:00 跨夜: 23:00(=1380) 命中, 12:00(=720) 不命中
+	windows := []TimeWindow{{StartMin: 1260, EndMin: 240}}
+	if !InAnyWindow(23*60, windows) {
+		t.Fatal("23点应命中安静窗口")
+	}
+	if InAnyWindow(12*60, windows) {
+		t.Fatal("12点不应命中安静窗口")
+	}
+	// Normal window (non-overnight): 09:00-18:00
+	normal := []TimeWindow{{StartMin: 9 * 60, EndMin: 18 * 60}}
+	if !InAnyWindow(10*60, normal) {
+		t.Fatal("10点应命中正常窗口")
+	}
+	if InAnyWindow(20*60, normal) {
+		t.Fatal("20点不应命中正常窗口")
+	}
+	// Edge: exactly at start
+	if !InAnyWindow(1260, windows) {
+		t.Fatal("21:00整应命中安静窗口")
+	}
+	// Edge: exactly at end (exclusive)
+	if InAnyWindow(240, windows) {
+		t.Fatal("04:00整不应命中(端点排除)")
+	}
+}

@@ -633,6 +633,19 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 		}
 	}
 
+	// Quiet hours: compute once whether we are in a quiet window.
+	// Used inside the account loop to cap concurrency and RPM.
+	inQuiet := false
+	if cfg.QuietHoursEnabled && len(cfg.QuietHoursWindows) > 0 {
+		loc, _ := time.LoadLocation(cfg.QuietHoursTZ)
+		if loc == nil {
+			loc = time.UTC
+		}
+		t := time.UnixMilli(nowMs).In(loc)
+		curMin := t.Hour()*60 + t.Minute()
+		inQuiet = policy.InAnyWindow(curMin, cfg.QuietHoursWindows)
+	}
+
 	for _, n := range nodes {
 		if !n.Enabled {
 			continue
@@ -677,7 +690,12 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 			// rows decrypt, legacy plaintext rows pass through unchanged.
 			refs[key] = NodeRef{BaseURL: n.BaseUrl, APIKey: s.Cipher.DecryptOrPlaintext(n.ApiKey), ProfileID: na.ProfileID, Kind: n.Kind}
 			s.Store.Ensure(key, cfg.MaxConcurrent)
-			s.Store.SetCapacity(key, cfg.MaxConcurrent)
+			// Quiet hours: cap concurrency to min(MaxConcurrent, QuietHoursConcurrency).
+			effectiveCap := cfg.MaxConcurrent
+			if inQuiet && cfg.QuietHoursConcurrency > 0 && cfg.QuietHoursConcurrency < effectiveCap {
+				effectiveCap = cfg.QuietHoursConcurrency
+			}
+			s.Store.SetCapacity(key, effectiveCap)
 			// Apply or clear warmup cap.
 			if inWarmup {
 				s.Store.SetWarmupCap(key, cfg.WarmupMaxConcurrent)
@@ -685,14 +703,34 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 				s.Store.SetWarmupCap(key, 0)
 			}
 			// Rate governor: skip account if any rate window is exceeded.
-			if cfg.RateGovEnabled {
-				rpm := cfg.RateRPM.Resolve(key, "rpm")
-				rph := cfg.RateRPH.Resolve(key, "rph")
-				rpd := cfg.RateRPD.Resolve(key, "rpd")
-				if int64(s.Store.ReqsInWindow(key, 60000)) >= rpm ||
-					int64(s.Store.ReqsInWindow(key, 3600000)) >= rph ||
-					int64(s.Store.ReqsInWindow(key, 86400000)) >= rpd {
+			// Quiet hours adds an additional RPM cap even when RateGovEnabled=false.
+			if cfg.RateGovEnabled || inQuiet {
+				// Start with no RPM limit; apply rate-gov limit if enabled.
+				var rpm int64
+				hasRPMLimit := false
+				if cfg.RateGovEnabled {
+					rpm = cfg.RateRPM.Resolve(key, "rpm")
+					hasRPMLimit = true
+				}
+				// Overlay quiet-hours RPM cap (takes min).
+				if inQuiet {
+					qrpm := cfg.QuietHoursRPM.Resolve(key, "qrpm")
+					if !hasRPMLimit || qrpm < rpm {
+						rpm = qrpm
+					}
+					hasRPMLimit = true
+				}
+				if hasRPMLimit && int64(s.Store.ReqsInWindow(key, 60000)) >= rpm {
 					continue
+				}
+				// RPH / RPD only when full rate gov is enabled.
+				if cfg.RateGovEnabled {
+					rph := cfg.RateRPH.Resolve(key, "rph")
+					rpd := cfg.RateRPD.Resolve(key, "rpd")
+					if int64(s.Store.ReqsInWindow(key, 3600000)) >= rph ||
+						int64(s.Store.ReqsInWindow(key, 86400000)) >= rpd {
+						continue
+					}
 				}
 			}
 			cands = append(cands, cand{key: key, weight: int(na.Weight), reserve: na.Role == "reserve"})

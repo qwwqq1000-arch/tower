@@ -8,6 +8,32 @@ import (
 	"strings"
 )
 
+// TimeWindow is a [StartMin, EndMin) interval expressed in minute-of-day (0–1439).
+// Overnight windows have StartMin > EndMin (e.g. {1260, 240} = 21:00–04:00).
+type TimeWindow struct {
+	StartMin int `json:"StartMin"`
+	EndMin   int `json:"EndMin"`
+}
+
+// InAnyWindow reports whether minuteOfDay falls inside any of the given windows.
+// For a normal window (start <= end): active when start <= cur < end.
+// For an overnight window (start > end): active when cur >= start OR cur < end.
+func InAnyWindow(minuteOfDay int, windows []TimeWindow) bool {
+	for _, w := range windows {
+		if w.StartMin <= w.EndMin {
+			if minuteOfDay >= w.StartMin && minuteOfDay < w.EndMin {
+				return true
+			}
+		} else {
+			// overnight: e.g. 21:00 → 04:00
+			if minuteOfDay >= w.StartMin || minuteOfDay < w.EndMin {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // PickMaxConcurrent extracts MaxConcurrent from a JSON policy patch (the global
 // policy row's params). Returns def when the patch is absent, unparseable, or does
 // not override MaxConcurrent with a positive value. Shared by the meridian poller
@@ -173,6 +199,18 @@ type Config struct {
 	// SessionPauseMs is the pause duration range (ms) applied when an account
 	// completes a burst. Resolved deterministically per account. Default {30000, 180000}.
 	SessionPauseMs RangeI
+
+	// QuietHoursEnabled enables quiet-hours rate/concurrency reduction. Default false.
+	QuietHoursEnabled bool
+	// QuietHoursWindows defines the quiet time windows (minute-of-day, supports overnight).
+	// Default [{1260, 240}] = 21:00–04:00. Uses QuietHoursTZ for timezone.
+	QuietHoursWindows []TimeWindow
+	// QuietHoursRPM is the per-account RPM cap applied during quiet hours.
+	// Default {1, 2}. Resolved deterministically per account.
+	QuietHoursRPM RangeI
+	// QuietHoursConcurrency is the effective max-concurrent cap during quiet hours.
+	// Default 1. Applied via SetCapacity; takes min with MaxConcurrent.
+	QuietHoursConcurrency int
 }
 
 // Defaults returns sane baseline configuration.
@@ -245,6 +283,11 @@ func Defaults() Config {
 		SessionSimEnabled: false,
 		SessionBurstCount: RangeI{Min: 3, Max: 10},
 		SessionPauseMs:    RangeI{Min: 30000, Max: 180000},
+		// QuietHours: off by default; window = 21:00–04:00 (Asia/Shanghai via QuietHoursTZ).
+		QuietHoursEnabled:     false,
+		QuietHoursWindows:     []TimeWindow{{StartMin: 1260, EndMin: 240}},
+		QuietHoursRPM:         RangeI{Min: 1, Max: 2},
+		QuietHoursConcurrency: 1,
 	}
 }
 
@@ -305,6 +348,11 @@ type Patch struct {
 	SessionSimEnabled         *bool
 	SessionBurstCount         *RangeI
 	SessionPauseMs            *RangeI
+
+	QuietHoursEnabled     *bool
+	QuietHoursWindows     *[]TimeWindow
+	QuietHoursRPM         *RangeI
+	QuietHoursConcurrency *int
 }
 
 func apply(c *Config, p Patch) {
@@ -472,6 +520,18 @@ func apply(c *Config, p Patch) {
 	}
 	if p.SessionPauseMs != nil {
 		c.SessionPauseMs = *p.SessionPauseMs
+	}
+	if p.QuietHoursEnabled != nil {
+		c.QuietHoursEnabled = *p.QuietHoursEnabled
+	}
+	if p.QuietHoursWindows != nil {
+		c.QuietHoursWindows = *p.QuietHoursWindows
+	}
+	if p.QuietHoursRPM != nil {
+		c.QuietHoursRPM = *p.QuietHoursRPM
+	}
+	if p.QuietHoursConcurrency != nil {
+		c.QuietHoursConcurrency = *p.QuietHoursConcurrency
 	}
 }
 
