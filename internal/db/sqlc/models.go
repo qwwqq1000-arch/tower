@@ -168,6 +168,7 @@ type FallbackChannel struct {
 	SpendCapTotalMinUsd float64            `json:"spend_cap_total_min_usd"`
 	SpendCapTotalMaxUsd float64            `json:"spend_cap_total_max_usd"`
 	SpendCapAction      string             `json:"spend_cap_action"`
+	Weight              int32              `json:"weight"`
 }
 
 type FallbackSpend struct {

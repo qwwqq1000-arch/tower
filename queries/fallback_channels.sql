@@ -1,6 +1,6 @@
 -- name: CreateFallbackChannel :one
-INSERT INTO fallback_channels (id, owner_id, group_id, name, base_url, api_key, priority, max_concurrent, cooldown_ms, price_threshold, model_allowlist, balance_token, balance_user_id, balance_alert_usd, spend_cap_daily_min_usd, spend_cap_daily_max_usd, spend_cap_total_min_usd, spend_cap_total_max_usd, spend_cap_action)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+INSERT INTO fallback_channels (id, owner_id, group_id, name, base_url, api_key, priority, max_concurrent, cooldown_ms, price_threshold, model_allowlist, balance_token, balance_user_id, balance_alert_usd, spend_cap_daily_min_usd, spend_cap_daily_max_usd, spend_cap_total_min_usd, spend_cap_total_max_usd, spend_cap_action, weight)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
 RETURNING *;
 
 -- name: ListFallbackChannelsByOwner :many
@@ -17,7 +17,8 @@ UPDATE fallback_channels SET name=$2, base_url=$3, api_key=$4, priority=$5,
   max_concurrent=$6, cooldown_ms=$7, price_threshold=$8, model_allowlist=$9,
   balance_token=$10, balance_user_id=$11, balance_alert_usd=$12,
   spend_cap_daily_min_usd=$13, spend_cap_daily_max_usd=$14,
-  spend_cap_total_min_usd=$15, spend_cap_total_max_usd=$16, spend_cap_action=$17
+  spend_cap_total_min_usd=$15, spend_cap_total_max_usd=$16, spend_cap_action=$17,
+  weight=$18
 WHERE id=$1;
 
 -- name: SetFallbackBalance :exec
