@@ -1350,7 +1350,7 @@ export default function Policies() {
 
         {/* Group 2: RateGovernor (利率治理) */}
         <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2 pt-4">利率治理（RateGovernor）</h2>
-        <p className="text-xs text-muted/70 -mt-1 mb-1">按请求频率（RPM/RPH/RPD）限速，超出时执行 rotate（换号）或 delay（延迟）。0 = 不限。</p>
+        <p className="text-xs text-muted/70 -mt-1 mb-1">按请求频率（RPM/RPH/RPD）限速，超出时执行 rotate（换号）。0 = 不限。</p>
 
         <FieldRow
           label="RateGovEnabled"
@@ -1426,7 +1426,7 @@ export default function Policies() {
 
         <FieldRow
           label="RateExceedAction"
-          desc="超出频率限制时的动作：rotate（切换到下一个账号）或 delay（延迟等待）"
+          desc="超出频率限制时的动作：rotate（切换到下一个账号）。仅支持 rotate。"
           enabled={rateExceedAction.enabled}
           onToggle={rateExceedAction.toggle}
         >
@@ -1438,7 +1438,6 @@ export default function Policies() {
                        focus:outline-none focus:border-accent transition disabled:cursor-not-allowed"
           >
             <option value="rotate">rotate（换号）</option>
-            <option value="delay">delay（延迟等待）</option>
           </select>
         </FieldRow>
 

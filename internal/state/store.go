@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 	"github.com/qwwqq1000-arch/tower/internal/policy"
@@ -192,6 +193,40 @@ func (s *Store) IsPermanent(key string) bool {
 		return a.Breaker.Permanent()
 	}
 	return false
+}
+
+// NowMs returns the current time in milliseconds using the store's clock.
+func (s *Store) NowMs() int64 {
+	return s.now()
+}
+
+// SlotAvailable reports whether the account has at least one slot available at now.
+// Returns false when the account is unknown.
+func (s *Store) SlotAvailable(key string, now int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.accts[key]
+	if a == nil {
+		return false
+	}
+	return a.Slots.Available(now) > 0
+}
+
+// WaitForSlot polls SlotAvailable every 20ms until a slot is free (returns true) or
+// deadlineMs passes (returns false). The store mutex is NOT held during sleeps —
+// only briefly acquired on each poll — so this is race-safe with no lock contention.
+// When the account is unknown the function returns false immediately.
+func (s *Store) WaitForSlot(key string, deadlineMs int64, now func() int64) bool {
+	for {
+		n := now()
+		if n >= deadlineMs {
+			return false
+		}
+		if s.SlotAvailable(key, n) {
+			return true
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 // SetCooldown puts an account into a temporary error-cooldown until untilMs

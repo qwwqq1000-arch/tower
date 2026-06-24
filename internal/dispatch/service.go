@@ -69,10 +69,9 @@ func NewService(q *sqlc.Queries, store *state.Store, base policy.Config, now fun
 // equivalent of min(cfg.MaxConcurrent, 1) and is the core of serial-queue
 // behaviour (disguise-phase4).
 //
-// TODO(serial-wait): when SerialQueueEnabled, a taken slot should make the
-// dispatcher briefly wait (SerialQueueWaitMs) for it to free before failing over.
-// The current implementation only caps capacity — the wait-for-slot path is not
-// yet implemented.
+// SerialQueueEnabled forces cap=1 AND enables bounded slot-wait (SerialQueueWaitMs):
+// when the single slot is busy the dispatcher waits up to SerialQueueWaitMs ms for
+// it to free before failing over. Both behaviours are now implemented.
 func effectiveCap(serial bool, maxc int) int {
 	if serial {
 		return 1
@@ -405,7 +404,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 		BaseMs: cfg.CooldownBaseMs, MaxMs: cfg.CooldownMaxMs, Mult: cfg.CooldownMult,
 	}
 
-	order, resolver, keyOwner := s.buildCandidates(ctx, ownerID, model, cfg)
+	order, resolver, keyOwner, keyCfg := s.buildCandidates(ctx, ownerID, model, cfg)
 	channels := s.enabledChannels(ctx, ownerID, model)
 
 	conv := session.ConvID(body)
@@ -452,6 +451,16 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 		if maxFailover <= 0 {
 			maxFailover = 50
 		}
+		// Build per-key serial-wait maps from per-account config (SerialQueueEnabled + WaitMs).
+		// Zero overhead when all accounts have SerialQueueEnabled=false (default).
+		serialWaitKeys := map[string]bool{}
+		serialWaitMs := map[string]int64{}
+		for _, k := range order {
+			if ac, ok := keyCfg[k]; ok && ac.SerialQueueEnabled && ac.SerialQueueWaitMs > 0 {
+				serialWaitKeys[k] = true
+				serialWaitMs[k] = int64(ac.SerialQueueWaitMs)
+			}
+		}
 		orch := &Orchestrator{Store: s.Store, Cfg: breaker, CooldownMin: cfg.SlotCooldownMinMs, CooldownMax: cfg.SlotCooldownMaxMs, CooldownDist: cfg.HumanDelayDist, CooldownP50: cfg.HumanDelayP50Ms, CooldownP95: cfg.HumanDelayP95Ms, MaxAttempts: maxFailover,
 			OnBan:     func(key string, status int) { s.recordBan(ctx, acctOwnerOf(keyOwner, key, ownerID), key, status) },
 			OnRecover: func(key string) { s.recordRecover(ctx, key) },
@@ -469,6 +478,9 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 				}
 			},
 			IsCooldownSignal: func(status int) bool { return isCooldownSignal(status, cfg) },
+			NowMs:            s.Now,
+			SerialWaitKeys:   serialWaitKeys,
+			SerialWaitMs:     serialWaitMs,
 		}
 		np := &NodeProxy{Body: body, Resolve: resolver, BanSignals: cfg.BanSignals, BanKeywords: cfg.BanKeywords, IdleTimeout: time.Duration(cfg.StreamIdleTimeoutSec) * time.Second, UpstreamTimeoutSec: cfg.UpstreamTimeoutSec}
 		res, winKey, ok := orch.Dispatch(ctx, model, order, np)
@@ -648,8 +660,11 @@ func slotActiveNow(startMin, endMin int, nowMs int64, tzName string) bool {
 	return cur >= startMin || cur < endMin
 }
 
-func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cfg policy.Config) ([]string, Resolver, map[string]string) {
+func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cfg policy.Config) ([]string, Resolver, map[string]string, map[string]policy.Config) {
 	nodes, _ := s.Q.ListNodes(ctx)
+	// keyCfg holds the per-account resolved config for each dispatch key.
+	// Used by callers to populate per-key SerialWaitKeys/SerialWaitMs on the Orchestrator.
+	keyCfg := map[string]policy.Config{}
 	// Build account-owner map for strict tenant isolation.
 	acctOwner := map[string]string{}
 	if ownerRows, aerr := s.Q.ListAccountOwners(ctx); aerr == nil {
@@ -738,6 +753,8 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 				continue
 			}
 			key := n.ID + ":" + na.ProfileID
+			// Capture per-account config for this key (used by callers to wire SerialWaitKeys/Ms).
+			keyCfg[key] = acfg
 			// Record the account owner for ban-event attribution (events-audit-3).
 			keyOwner[key] = acctOwner[na.AccountID]
 			// Record the business accountID for this key so per-account policy
@@ -822,7 +839,7 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 			order[i] = c.key
 		}
 		resolver := func(key string) (NodeRef, bool) { r, ok := refs[key]; return r, ok }
-		return order, resolver, keyOwner
+		return order, resolver, keyOwner, keyCfg
 	}
 
 	// Elastic path: partition by count — first N (weight-desc) are baseline; the rest are reserve.
@@ -910,7 +927,7 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 	}
 
 	resolver := func(key string) (NodeRef, bool) { r, ok := refs[key]; return r, ok }
-	return order, resolver, keyOwner
+	return order, resolver, keyOwner, keyCfg
 }
 
 // channelAboveBalanceAlert reports whether a fallback channel has a sufficient
@@ -1262,7 +1279,7 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 		PersistStreak: cfg.BanPersistStreak, PermStreak: cfg.PermanentBanStreak,
 		BaseMs: cfg.CooldownBaseMs, MaxMs: cfg.CooldownMaxMs, Mult: cfg.CooldownMult,
 	}
-	order, resolver, keyOwner := s.buildCandidates(ctx, ownerID, model, cfg)
+	order, resolver, keyOwner, keyCfgS := s.buildCandidates(ctx, ownerID, model, cfg)
 	channels := s.enabledChannels(ctx, ownerID, model)
 
 	conv := session.ConvID(body)
@@ -1310,10 +1327,27 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 	if maxFailover <= 0 {
 		maxFailover = 50
 	}
+	// Build per-key serial-wait maps for the stream path (same logic as Dispatch).
+	serialWaitKeysS := map[string]bool{}
+	serialWaitMsS := map[string]int64{}
+	for _, k := range order {
+		if ac, ok := keyCfgS[k]; ok && ac.SerialQueueEnabled && ac.SerialQueueWaitMs > 0 {
+			serialWaitKeysS[k] = true
+			serialWaitMsS[k] = int64(ac.SerialQueueWaitMs)
+		}
+	}
 	attempts := 0
 	for _, key := range order {
 		if attempts >= maxFailover {
 			break
+		}
+		// Serial-wait: bounded slot-wait before attempting (same semantics as Dispatch path).
+		if serialWaitKeysS[key] {
+			if waitMs := serialWaitMsS[key]; waitMs > 0 {
+				if !s.Store.WaitForSlot(key, s.Now()+waitMs, s.Now) {
+					continue
+				}
+			}
 		}
 		attempts++
 		ok, trial := s.Store.TryDispatchTrial(key, model, breaker)

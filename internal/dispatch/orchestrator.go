@@ -38,6 +38,14 @@ type Orchestrator struct {
 	OnRecover   func(key string)                             // optional: fired when a half-open trial succeeds (account recovers)
 	OnAttempt   func(key string, res ProxyResult, ok bool) // optional: fired after each attempt (res carries Status/Body/Banned)
 	IsCooldownSignal func(status int) bool                   // optional: status that cools (not bans) the account, e.g. 429
+
+	// SerialWait: bounded slot-wait for accounts with SerialQueueEnabled.
+	// When SerialWaitKeys[key] is true and SerialWaitMs[key] > 0, Dispatch waits
+	// up to SerialWaitMs[key] ms for a free slot before skipping the account.
+	// When nil/empty these maps add zero overhead (feature is off by default).
+	NowMs          func() int64       // clock used for serial-wait deadline; nil disables feature
+	SerialWaitKeys map[string]bool    // which keys have serial wait enabled
+	SerialWaitMs   map[string]int64   // per-key wait deadline in ms
 }
 
 // attempt sends one request to key with guaranteed settlement. ok reports a clean
@@ -114,6 +122,16 @@ func (o *Orchestrator) Dispatch(ctx context.Context, model string, order []strin
 	for _, key := range order {
 		if attempts >= o.MaxAttempts {
 			break
+		}
+		// Serial-wait: if this key has bounded wait enabled, block until a slot
+		// frees or the deadline expires. On timeout we skip (same as slot-busy).
+		// Zero overhead when feature is off (nil maps / NowMs not set).
+		if o.NowMs != nil && o.SerialWaitKeys[key] {
+			if waitMs := o.SerialWaitMs[key]; waitMs > 0 {
+				if !o.Store.WaitForSlot(key, o.NowMs()+waitMs, o.NowMs) {
+					continue
+				}
+			}
 		}
 		res, ok, dispatched := o.attempt(ctx, model, key, px)
 		if !dispatched {

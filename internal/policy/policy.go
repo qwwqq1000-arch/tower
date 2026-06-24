@@ -183,7 +183,7 @@ type Config struct {
 	// Default {600, 600}.
 	RateRPD RangeI
 	// RateExceedAction determines what happens when a rate limit is exceeded:
-	// "rotate" (default) skips the account from candidacy; "delay" is TODO.
+	// only "rotate" (default) is supported; "delay" was removed (see fix-b-report.md).
 	RateExceedAction string
 
 	// SessionSimEnabled enables session-simulation burst→pause rotation.
