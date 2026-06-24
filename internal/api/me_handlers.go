@@ -319,22 +319,27 @@ func meListFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 			todaySpend, _ := q.GetFallbackSpendToday(r.Context(), sqlc.GetFallbackSpendTodayParams{ChannelID: c.ID, Day: today})
 			totalSpend, _ := q.GetFallbackSpendTotal(r.Context(), c.ID)
 			out = append(out, map[string]any{
-				"id":              c.ID,
-				"name":            c.Name,
-				"baseUrl":         c.BaseUrl,
-				"hasKey":          c.ApiKey != "",
-				"priority":        c.Priority,
-				"maxConcurrent":   c.MaxConcurrent,
-				"cooldownMs":      c.CooldownMs,
-				"priceThreshold":  c.PriceThreshold,
-				"modelAllowlist":  c.ModelAllowlist,
-				"enabled":         c.Enabled,
-				"todayCostUsd":    todaySpend.Cost,
-				"todayRequests":   todaySpend.Requests,
-				"totalCostUsd":    totalSpend.Cost,
-				"totalRequests":   totalSpend.Requests,
-				"balanceUsd":      c.BalanceUsd,
-				"balanceAlertUsd": c.BalanceAlertUsd,
+				"id":                  c.ID,
+				"name":                c.Name,
+				"baseUrl":             c.BaseUrl,
+				"hasKey":              c.ApiKey != "",
+				"priority":            c.Priority,
+				"maxConcurrent":       c.MaxConcurrent,
+				"cooldownMs":          c.CooldownMs,
+				"priceThreshold":      c.PriceThreshold,
+				"modelAllowlist":      c.ModelAllowlist,
+				"enabled":             c.Enabled,
+				"todayCostUsd":        todaySpend.Cost,
+				"todayRequests":       todaySpend.Requests,
+				"totalCostUsd":        totalSpend.Cost,
+				"totalRequests":       totalSpend.Requests,
+				"balanceUsd":          c.BalanceUsd,
+				"balanceAlertUsd":     c.BalanceAlertUsd,
+				"spendCapDailyMinUsd": c.SpendCapDailyMinUsd,
+				"spendCapDailyMaxUsd": c.SpendCapDailyMaxUsd,
+				"spendCapTotalMinUsd": c.SpendCapTotalMinUsd,
+				"spendCapTotalMaxUsd": c.SpendCapTotalMaxUsd,
+				"spendCapAction":      c.SpendCapAction,
 			})
 		}
 		writeJSON(w, 200, out)
@@ -365,21 +370,30 @@ func meCreateFallbackHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.Handle
 			return
 		}
 		// Encrypt channel secrets at rest (vault-crypto-3); nil cipher = no-op.
+		meCreateSpendCapAction := b.SpendCapAction
+		if meCreateSpendCapAction == "" {
+			meCreateSpendCapAction = "skip"
+		}
 		c, err := q.CreateFallbackChannel(r.Context(), sqlc.CreateFallbackChannelParams{
-			ID:              randHex("fc_"),
-			OwnerID:         owner, // forced — never trust body ownerId
-			GroupID:         b.GroupId,
-			Name:            b.Name,
-			BaseUrl:         b.BaseUrl,
-			ApiKey:          cipher.EncryptStr(b.ApiKey),
-			Priority:        b.Priority,
-			MaxConcurrent:   b.MaxConcurrent,
-			CooldownMs:      b.CooldownMs,
-			PriceThreshold:  b.PriceThreshold,
-			ModelAllowlist:  b.ModelAllowlist,
-			BalanceToken:    cipher.EncryptStr(b.BalanceToken),
-			BalanceUserID:   b.BalanceUserId,
-			BalanceAlertUsd: b.BalanceAlertUsd,
+			ID:                  randHex("fc_"),
+			OwnerID:             owner, // forced — never trust body ownerId
+			GroupID:             b.GroupId,
+			Name:                b.Name,
+			BaseUrl:             b.BaseUrl,
+			ApiKey:              cipher.EncryptStr(b.ApiKey),
+			Priority:            b.Priority,
+			MaxConcurrent:       b.MaxConcurrent,
+			CooldownMs:          b.CooldownMs,
+			PriceThreshold:      b.PriceThreshold,
+			ModelAllowlist:      b.ModelAllowlist,
+			BalanceToken:        cipher.EncryptStr(b.BalanceToken),
+			BalanceUserID:       b.BalanceUserId,
+			BalanceAlertUsd:     b.BalanceAlertUsd,
+			SpendCapDailyMinUsd: b.SpendCapDailyMinUsd,
+			SpendCapDailyMaxUsd: b.SpendCapDailyMaxUsd,
+			SpendCapTotalMinUsd: b.SpendCapTotalMinUsd,
+			SpendCapTotalMaxUsd: b.SpendCapTotalMaxUsd,
+			SpendCapAction:      meCreateSpendCapAction,
 		})
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
@@ -431,19 +445,28 @@ func meUpdateFallbackHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.Handle
 		if b.BalanceToken == "" {
 			balTokenEnc = ch.BalanceToken
 		}
+		meUpdateSpendCapAction := b.SpendCapAction
+		if meUpdateSpendCapAction == "" {
+			meUpdateSpendCapAction = "skip"
+		}
 		if err := q.UpdateFallbackChannel(r.Context(), sqlc.UpdateFallbackChannelParams{
-			ID:              ch.ID,
-			Name:            b.Name,
-			BaseUrl:         b.BaseUrl,
-			ApiKey:          apiKeyEnc,
-			Priority:        b.Priority,
-			MaxConcurrent:   b.MaxConcurrent,
-			CooldownMs:      b.CooldownMs,
-			PriceThreshold:  b.PriceThreshold,
-			ModelAllowlist:  b.ModelAllowlist,
-			BalanceToken:    balTokenEnc,
-			BalanceUserID:   b.BalanceUserId,
-			BalanceAlertUsd: b.BalanceAlertUsd,
+			ID:                  ch.ID,
+			Name:                b.Name,
+			BaseUrl:             b.BaseUrl,
+			ApiKey:              apiKeyEnc,
+			Priority:            b.Priority,
+			MaxConcurrent:       b.MaxConcurrent,
+			CooldownMs:          b.CooldownMs,
+			PriceThreshold:      b.PriceThreshold,
+			ModelAllowlist:      b.ModelAllowlist,
+			BalanceToken:        balTokenEnc,
+			BalanceUserID:       b.BalanceUserId,
+			BalanceAlertUsd:     b.BalanceAlertUsd,
+			SpendCapDailyMinUsd: b.SpendCapDailyMinUsd,
+			SpendCapDailyMaxUsd: b.SpendCapDailyMaxUsd,
+			SpendCapTotalMinUsd: b.SpendCapTotalMinUsd,
+			SpendCapTotalMaxUsd: b.SpendCapTotalMaxUsd,
+			SpendCapAction:      meUpdateSpendCapAction,
 		}); err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
