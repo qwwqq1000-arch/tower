@@ -25,6 +25,30 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 			keyOwner[a.NodeID+":"+a.ProfileID] = a.AcctOwnerID
 		}
 	}
+
+	// Resolve elastic reserve set: for each owner, compute which keys are reserve
+	// (not yet scaled up and beyond the baseline count). Used to display 待命 (standby).
+	// For superadmin (all=true) we need to resolve per unique owner; for a tenant,
+	// only that owner's policy matters.
+	reserveKeys := map[string]bool{}
+	if svc != nil {
+		owners := map[string]bool{}
+		if all {
+			for _, o := range keyOwner {
+				if o != "" {
+					owners[o] = true
+				}
+			}
+		} else {
+			owners[owner] = true
+		}
+		for o := range owners {
+			cfg := svc.ResolveConfigForOwner(ctx, o)
+			for k := range svc.ReserveKeys(ctx, o, cfg) {
+				reserveKeys[k] = true
+			}
+		}
+	}
 	// An account is "known" only while its node_accounts row still exists; a deleted
 	// node can leave stale in-memory store entries that must not surface as ghost rows.
 	known := make(map[string]bool, len(keyOwner))
@@ -73,10 +97,18 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 			if s.Limited {
 				status = "limited"
 			}
+			// Elastic reserve overlay: accounts beyond the baseline that haven't been
+			// scaled up yet show as "reserve" (待命) instead of "active". Banned/limited
+			// accounts keep their real status so they still sort to the end.
+			isReserve := reserveKeys[s.Key]
+			if isReserve && status == "active" {
+				status = "reserve"
+			}
 			accounts = append(accounts, map[string]any{
 				"key":          s.Key,
 				"label":        labels[s.Key],
 				"status":       status,
+				"reserve":      isReserve,
 				"limitedUntil": s.LimitedUntil,
 				"limitReason":  s.LimitReason,
 				"inflight":     s.Inflight,

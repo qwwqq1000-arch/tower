@@ -38,19 +38,22 @@ export function StatusBadge({ status, limitedUntil, limitReason, className = '' 
   return <span className={cls}>{statusLabel(status)}</span>;
 }
 
-// statusRank orders accounts so normal/active sort first and quota-limited sort last
-// (限额排最后，正常排前面). Lower rank = higher in the list.
+// statusRank orders accounts: 活跃 (0) → 待命/reserve (1) → cooldown/half_open (2)
+// → limited (3) → banned/permanent/disabled LAST (4).
+// Lower rank = higher in the list.
 export function statusRank(status?: string): number {
   switch (status) {
-    case 'limited':
-      return 3;
     case 'banned':
     case 'permanent':
     case 'disabled':
-      return 2;
+      return 4; // banned last
+    case 'limited':
+      return 3;
     case 'cooldown':
     case 'half_open':
-      return 1;
+      return 2;
+    case 'reserve':
+      return 1; // 待命: after active, before limited/banned
     default:
       return 0; // active / unknown → first
   }

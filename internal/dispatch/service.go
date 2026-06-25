@@ -730,6 +730,13 @@ func (s *Service) resolveConfig(ctx context.Context, ownerID, accountID string) 
 	return cfg
 }
 
+// ResolveConfigForOwner returns the effective policy.Config for the given owner
+// (global + owner-scope patches applied, no per-account patch). Exposed for callers
+// outside the dispatch package (e.g. the status handler).
+func (s *Service) ResolveConfigForOwner(ctx context.Context, ownerID string) policy.Config {
+	return s.resolveConfig(ctx, ownerID, "")
+}
+
 // slotActiveNow reports whether the given [startMin, endMin) window (minute-of-day,
 // in tzName timezone) is active at the instant represented by nowMs (Unix ms).
 // If start == end or the window is [0, 1440) it is treated as always-active.
@@ -1044,6 +1051,75 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 
 	resolver := func(key string) (NodeRef, bool) { r, ok := refs[key]; return r, ok }
 	return order, resolver, keyOwner, keyCfg
+}
+
+// ReserveKeys returns the set of dispatch keys that are currently RESERVE (not in
+// the elastic active working set) for the given owner. A key is reserve when:
+//   - ElasticEnabled is true, AND
+//   - the owner is NOT currently scaled up, AND
+//   - the key is beyond the first ElasticBaselineCount accounts in weight-desc order.
+//
+// Returns an empty map when elastic is off (all accounts treated as active) or when
+// the owner is currently scaled up (all reserves are activated). Mirrors the
+// partition logic in buildCandidates exactly. Used by the status UI to show 待命 vs 活跃.
+func (s *Service) ReserveKeys(ctx context.Context, ownerID string, cfg policy.Config) map[string]bool {
+	if !cfg.ElasticEnabled {
+		return nil // elastic off → all accounts active
+	}
+	// Check scaled-up state first; if scaled up all reserves are active → no reserve keys.
+	s.scaledUpMu.Lock()
+	isScaledUp := s.scaledUp[ownerID]
+	s.scaledUpMu.Unlock()
+	if isScaledUp {
+		return nil
+	}
+
+	// Replicate the candidate enumeration from buildCandidates (owner-scoped, weight-desc).
+	type cand struct {
+		key    string
+		weight int
+	}
+	var cands []cand
+	nodes, _ := s.Q.ListNodes(ctx)
+	acctOwner := map[string]string{}
+	if ownerRows, err := s.Q.ListAccountOwners(ctx); err == nil {
+		for _, row := range ownerRows {
+			acctOwner[row.ID] = row.OwnerID
+		}
+	}
+	for _, n := range nodes {
+		if !n.Enabled {
+			continue
+		}
+		accs, err := s.Q.ListNodeAccountsByNode(ctx, n.ID)
+		if err != nil {
+			continue
+		}
+		for _, na := range accs {
+			if !na.Enabled {
+				continue
+			}
+			if ownerID != "" && acctOwner[na.AccountID] != ownerID {
+				continue
+			}
+			key := n.ID + ":" + na.ProfileID
+			cands = append(cands, cand{key: key, weight: int(na.Weight)})
+		}
+	}
+	sort.SliceStable(cands, func(i, j int) bool { return cands[i].weight > cands[j].weight })
+
+	n := cfg.ElasticBaselineCount
+	if n < 1 {
+		n = 1
+	}
+	if n > len(cands) {
+		n = len(cands)
+	}
+	reserve := make(map[string]bool)
+	for i := n; i < len(cands); i++ {
+		reserve[cands[i].key] = true
+	}
+	return reserve
 }
 
 // channelAboveBalanceAlert reports whether a fallback channel has a sufficient
