@@ -769,7 +769,7 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 			s.keyAccount.Store(key, na.AccountID)
 			// Decrypt the node api_key transparently (vault-crypto-3): ciphertext
 			// rows decrypt, legacy plaintext rows pass through unchanged.
-			refs[key] = NodeRef{BaseURL: n.BaseUrl, APIKey: s.Cipher.DecryptOrPlaintext(n.ApiKey), ProfileID: na.ProfileID, Kind: n.Kind}
+			refs[key] = NodeRef{BaseURL: n.BaseUrl, APIKey: s.Cipher.DecryptOrPlaintext(n.ApiKey), ProfileID: na.ProfileID, Kind: n.Kind, Passthrough: n.Passthrough}
 			// baseCap: serial-queue cap (1 when enabled, MaxConcurrent otherwise).
 			// Quiet hours further reduces this to min(baseCap, QuietHoursConcurrency).
 			// Per-account: serial-queue + concurrency knobs resolve from acfg so a

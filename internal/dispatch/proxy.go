@@ -125,10 +125,11 @@ func msgURL(baseURL string) string {
 
 // NodeRef locates one account on a node.
 type NodeRef struct {
-	BaseURL   string
-	APIKey    string
-	ProfileID string
-	Kind      string // "meridian" (default) or "cpa"
+	BaseURL     string
+	APIKey      string
+	ProfileID   string
+	Kind        string // "meridian" (default) or "cpa"
+	Passthrough bool   // cpa only: skip X-CLIProxy-Account, let CLIProxyAPI rotate
 }
 
 // setNodeAuthHeaders applies the per-kind auth/account-selection headers.
@@ -140,7 +141,7 @@ func setNodeAuthHeaders(h http.Header, ref NodeRef) {
 		if ref.APIKey != "" {
 			h.Set("Authorization", "Bearer "+ref.APIKey)
 		}
-		if ref.ProfileID != "" {
+		if !ref.Passthrough && ref.ProfileID != "" {
 			h.Set("X-CLIProxy-Account", ref.ProfileID)
 		}
 		return

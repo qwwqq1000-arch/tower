@@ -581,6 +581,7 @@ function AddNodeForm({ onAdded }: AddNodeFormProps) {
   const [ownerId, setOwnerId] = useState('');
   const [kind, setKind] = useState<'meridian' | 'cpa'>('meridian');
   const [mgmtKey, setMgmtKey] = useState('');
+  const [passthrough, setPassthrough] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -596,11 +597,13 @@ function AddNodeForm({ onAdded }: AddNodeFormProps) {
         ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
         ...(ownerId.trim() ? { ownerId: ownerId.trim() } : {}),
         ...(kind === 'cpa' && mgmtKey.trim() ? { mgmtKey: mgmtKey.trim() } : {}),
+        ...(kind === 'cpa' && passthrough ? { passthrough: true } : {}),
       });
       setBaseUrl('');
       setApiKey('');
       setOwnerId('');
       setMgmtKey('');
+      setPassthrough(false);
       onAdded();
     } catch (error) {
       setErr(error instanceof Error ? error.message : '添加失败');
@@ -669,6 +672,16 @@ function AddNodeForm({ onAdded }: AddNodeFormProps) {
             className="w-full bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition"
           />
           <p className="text-[11px] text-muted mt-1">CPA 节点会自动读取其下所有账户并显示在号库;调度时按账户单独路由(X-CLIProxy-Account)。</p>
+          <label className="flex items-center gap-2 mt-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={passthrough}
+              onChange={(e) => setPassthrough(e.target.checked)}
+              className="w-3.5 h-3.5 accent-accent"
+            />
+            <span className="text-[11px] text-ink">透传(不钉账户·仅 cpa)</span>
+          </label>
+          <p className="text-[11px] text-muted mt-0.5">cpa 节点开启后不发送 X-CLIProxy-Account，由 CLIProxyAPI 自行轮换号池</p>
         </div>
       )}
       {err && <p className="text-xs text-err mt-2">{err}</p>}

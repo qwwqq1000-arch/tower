@@ -42,7 +42,10 @@ func nextNodeName(ctx context.Context, q *sqlc.Queries) string {
 
 func createNodeHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var body struct{ Name, BaseUrl, ApiKey, OwnerId, Kind, MgmtKey string }
+		var body struct {
+			Name, BaseUrl, ApiKey, OwnerId, Kind, MgmtKey string
+			Passthrough bool
+		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.BaseUrl == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "baseUrl required"})
 			return
@@ -67,13 +70,14 @@ func createNodeHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc 
 		n, err := q.CreateNode(r.Context(), sqlc.CreateNodeParams{
 			ID: randHex("n_"), Name: body.Name, BaseUrl: body.BaseUrl, ApiKey: cipher.EncryptStr(body.ApiKey),
 			MgmtKey: cipher.EncryptStr(body.MgmtKey), OwnerID: body.OwnerId, Kind: kind,
+			Passthrough: body.Passthrough,
 		})
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
 		recordAudit(r, q, "node.create", "node:"+n.ID, nil, map[string]any{"name": n.Name, "baseUrl": n.BaseUrl, "ownerId": n.OwnerID, "kind": n.Kind})
-		writeJSON(w, http.StatusOK, map[string]any{"id": n.ID, "name": n.Name, "baseUrl": n.BaseUrl, "ownerId": n.OwnerID, "enabled": n.Enabled, "kind": n.Kind})
+		writeJSON(w, http.StatusOK, map[string]any{"id": n.ID, "name": n.Name, "baseUrl": n.BaseUrl, "ownerId": n.OwnerID, "enabled": n.Enabled, "kind": n.Kind, "passthrough": n.Passthrough})
 	}
 }
 
@@ -151,6 +155,7 @@ func listNodesHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 				"ownerId":     n.OwnerID,
 				"enabled":     n.Enabled,
 				"kind":        n.Kind,
+				"passthrough": n.Passthrough,
 				"version":     n.Version,
 				"createdAt":   createdAtMs,
 				"loggedIn":    results[i].loggedIn,

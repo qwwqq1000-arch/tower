@@ -221,6 +221,30 @@ func TestNodeProxy_Send_GzipResponseDecoded(t *testing.T) {
 	}
 }
 
+func TestSetNodeAuthHeaders_CPA_PinMode(t *testing.T) {
+	// passthrough=false: must send X-CLIProxy-Account pin
+	h := http.Header{}
+	setNodeAuthHeaders(h, NodeRef{Kind: "cpa", APIKey: "k", ProfileID: "acct.json", Passthrough: false})
+	if h.Get("Authorization") != "Bearer k" {
+		t.Fatalf("Authorization=%q, want Bearer k", h.Get("Authorization"))
+	}
+	if h.Get("X-CLIProxy-Account") != "acct.json" {
+		t.Fatalf("X-CLIProxy-Account=%q, want acct.json", h.Get("X-CLIProxy-Account"))
+	}
+}
+
+func TestSetNodeAuthHeaders_CPA_PassthroughMode(t *testing.T) {
+	// passthrough=true: must NOT send X-CLIProxy-Account, but must keep Bearer auth
+	h := http.Header{}
+	setNodeAuthHeaders(h, NodeRef{Kind: "cpa", APIKey: "k", ProfileID: "acct.json", Passthrough: true})
+	if h.Get("Authorization") != "Bearer k" {
+		t.Fatalf("Authorization=%q, want Bearer k", h.Get("Authorization"))
+	}
+	if h.Get("X-CLIProxy-Account") != "" {
+		t.Fatalf("X-CLIProxy-Account must be empty in passthrough mode, got %q", h.Get("X-CLIProxy-Account"))
+	}
+}
+
 func TestChannelProxy_Send(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"relayed":true}`))

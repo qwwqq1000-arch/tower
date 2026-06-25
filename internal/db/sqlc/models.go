@@ -208,6 +208,7 @@ type Node struct {
 	Enabled         bool               `json:"enabled"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	Kind            string             `json:"kind"`
+	Passthrough     bool               `json:"passthrough"`
 }
 
 type NodeAccount struct {

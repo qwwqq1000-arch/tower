@@ -17,6 +17,7 @@ export interface NodeRecord {
   ownerId: string;
   enabled: boolean;
   kind?: string; // "meridian" | "cpa"
+  passthrough?: boolean;
   version?: string;
   status?: string;
   createdAt?: number;

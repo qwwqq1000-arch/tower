@@ -1,6 +1,6 @@
 -- name: CreateNode :one
-INSERT INTO nodes (id, name, base_url, api_key, mgmt_key, owner_id, group_id, region, short_id, version, fingerprint_seed, kind)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+INSERT INTO nodes (id, name, base_url, api_key, mgmt_key, owner_id, group_id, region, short_id, version, fingerprint_seed, kind, passthrough)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 RETURNING *;
 
 -- name: GetNode :one
