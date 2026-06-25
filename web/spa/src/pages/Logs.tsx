@@ -2,7 +2,7 @@
 // Tower SPA — 日志 unified page (调度日志 | 审计日志 | 事件)
 // Tabs: DispatchLogsTab | AuditTab | EventsTab
 // ============================================================
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   getLogs, getAudit, getEvents, listFallbackChannels, listAccounts,
   getMeLogs, getMeEvents, listMeFallback, getMeAccounts,
@@ -57,6 +57,28 @@ function streamBadge(stream?: boolean) {
 function fmtCost(usd?: number): string {
   if (!usd) return '—';
   return `$${usd.toFixed(4)}`;
+}
+
+const PAGE_SIZE = 25;
+
+function PaginationBar({ page, total, pageSize, onPrev, onNext }: {
+  page: number; total: number; pageSize: number;
+  onPrev: () => void; onNext: () => void;
+}) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  return (
+    <div className="flex items-center justify-between text-xs text-muted">
+      <button
+        onClick={onPrev} disabled={page === 0}
+        className="px-3 py-1.5 border border-line rounded-lg hover:text-ink hover:border-accent transition disabled:opacity-40"
+      >上一页</button>
+      <span>第 {page + 1} / {totalPages} 页 · 共 {total} 条</span>
+      <button
+        onClick={onNext} disabled={(page + 1) * pageSize >= total}
+        className="px-3 py-1.5 border border-line rounded-lg hover:text-ink hover:border-accent transition disabled:opacity-40"
+      >下一页</button>
+    </div>
+  );
 }
 
 // resolveEmail maps a dispatch target to an account email. The target is the dispatch
@@ -227,6 +249,7 @@ function DispatchLogsTab({ isTenant }: { isTenant: boolean }) {
   const [channelMap, setChannelMap] = useState<Map<string, string>>(new Map());
   const [accountMap, setAccountMap] = useState<Map<string, string>>(new Map());
   const [detailId, setDetailId] = useState<string | null>(null); // requestId of the row being inspected
+  const [dispatchPage, setDispatchPage] = useState(0);
 
   useEffect(() => {
     (isTenant ? listMeFallback() : listFallbackChannels())
@@ -264,7 +287,7 @@ function DispatchLogsTab({ isTenant }: { isTenant: boolean }) {
   const fetchLogs = useCallback(async () => {
     setLoading(true);
     try {
-      const data = isTenant ? await getMeLogs(200) : await getLogs({ limit: '200' });
+      const data = isTenant ? await getMeLogs(500) : await getLogs({ limit: '500' });
       setRows(Array.isArray(data) ? data : []);
       setError(null);
     } catch (e) {
@@ -277,7 +300,7 @@ function DispatchLogsTab({ isTenant }: { isTenant: boolean }) {
   useEffect(() => { void fetchLogs(); }, [fetchLogs]);
 
   const q = query.trim().toLowerCase();
-  const filtered = q
+  const filtered = useMemo(() => q
     ? rows.filter(
         (r) =>
           r.model?.toLowerCase().includes(q) ||
@@ -286,13 +309,17 @@ function DispatchLogsTab({ isTenant }: { isTenant: boolean }) {
           r.fallbackReason?.toLowerCase().includes(q) ||
           String(r.httpStatus).includes(q),
       )
-    : rows;
+    : rows, [rows, q]);
+
+  useEffect(() => { setDispatchPage(0); }, [q]);
+
+  const pagedDispatch = filtered.slice(dispatchPage * PAGE_SIZE, (dispatchPage + 1) * PAGE_SIZE);
 
   return (
     <div className="space-y-4">
       {detailId && <LogDetailModal requestId={detailId} isTenant={isTenant} onClose={() => setDetailId(null)} />}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <p className="text-xs text-muted">最近 200 条请求记录 · 点击行查看完整请求</p>
+        <p className="text-xs text-muted">最近 500 条请求记录 · 点击行查看完整请求</p>
         <button
           onClick={() => { void fetchLogs(); }}
           disabled={loading}
@@ -348,7 +375,7 @@ function DispatchLogsTab({ isTenant }: { isTenant: boolean }) {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((row, i) => (
+                {pagedDispatch.map((row, i) => (
                   <LogRow key={i} row={row} channelMap={channelMap} accountMap={accountMap}
                     onOpen={row.requestId ? () => setDetailId(row.requestId!) : undefined} />
                 ))}
@@ -356,12 +383,14 @@ function DispatchLogsTab({ isTenant }: { isTenant: boolean }) {
             </table>
           </div>
           <div className="md:hidden space-y-3">
-            {filtered.map((row, i) => <LogCard key={i} row={row} channelMap={channelMap} accountMap={accountMap}
+            {pagedDispatch.map((row, i) => <LogCard key={i} row={row} channelMap={channelMap} accountMap={accountMap}
               onOpen={row.requestId ? () => setDetailId(row.requestId!) : undefined} />)}
           </div>
-          <p className="text-xs text-muted text-right">
-            显示 {filtered.length} / {rows.length} 条
-          </p>
+          <PaginationBar
+            page={dispatchPage} total={filtered.length} pageSize={PAGE_SIZE}
+            onPrev={() => setDispatchPage((p) => Math.max(0, p - 1))}
+            onNext={() => setDispatchPage((p) => p + 1)}
+          />
         </>
       )}
     </div>
@@ -390,24 +419,28 @@ function actionBadge(action: string) {
 }
 
 function AuditRow({ row }: { row: AuditRecord }) {
+  const actorDisplay = row.actorName ?? row.actor;
+  const targetDisplay = row.targetName ?? row.target;
   return (
     <tr className="border-t border-line hover:bg-line/20 transition text-sm">
       <td className="px-3 py-2 text-xs text-muted whitespace-nowrap font-mono">{fmtTime(row.ts)}</td>
-      <td className="px-3 py-2 text-ink font-mono text-xs truncate max-w-[120px]" title={row.actor}>{row.actor || '—'}</td>
+      <td className="px-3 py-2 text-ink font-mono text-xs truncate max-w-[120px]" title={row.actor}>{actorDisplay || '—'}</td>
       <td className="px-3 py-2">{actionBadge(row.action)}</td>
-      <td className="px-3 py-2 text-muted text-xs truncate max-w-[200px]" title={row.target}>{row.target || '—'}</td>
+      <td className="px-3 py-2 text-muted text-xs truncate max-w-[200px]" title={row.target}>{targetDisplay || '—'}</td>
     </tr>
   );
 }
 
 function AuditCard({ row }: { row: AuditRecord }) {
+  const actorDisplay = row.actorName ?? row.actor;
+  const targetDisplay = row.targetName ?? row.target;
   return (
     <div className="bg-surface border border-line rounded-xl p-4 space-y-2 text-sm">
       <div className="flex items-start justify-between gap-2">
-        <span className="text-ink font-mono text-xs truncate">{row.actor || '—'}</span>
+        <span className="text-ink font-mono text-xs truncate" title={row.actor}>{actorDisplay || '—'}</span>
         {actionBadge(row.action)}
       </div>
-      <p className="text-xs text-muted truncate">{row.target || '—'}</p>
+      <p className="text-xs text-muted truncate" title={row.target}>{targetDisplay || '—'}</p>
       <p className="text-xs text-muted/60 font-mono">{fmtTime(row.ts)}</p>
     </div>
   );
@@ -418,11 +451,12 @@ function AuditTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [auditPage, setAuditPage] = useState(0);
 
   const fetchAudit = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await getAudit({ limit: '200' });
+      const data = await getAudit({ limit: '500' });
       setRows(Array.isArray(data) ? data : []);
       setError(null);
     } catch (e) {
@@ -435,14 +469,20 @@ function AuditTab() {
   useEffect(() => { void fetchAudit(); }, [fetchAudit]);
 
   const q = query.trim().toLowerCase();
-  const filtered = q
+  const filtered = useMemo(() => q
     ? rows.filter(
         (r) =>
           r.actor?.toLowerCase().includes(q) ||
+          r.actorName?.toLowerCase().includes(q) ||
           r.action?.toLowerCase().includes(q) ||
-          r.target?.toLowerCase().includes(q),
+          r.target?.toLowerCase().includes(q) ||
+          r.targetName?.toLowerCase().includes(q),
       )
-    : rows;
+    : rows, [rows, q]);
+
+  useEffect(() => { setAuditPage(0); }, [q]);
+
+  const pagedAudit = filtered.slice(auditPage * PAGE_SIZE, (auditPage + 1) * PAGE_SIZE);
 
   return (
     <div className="space-y-4">
@@ -496,16 +536,18 @@ function AuditTab() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((row, i) => <AuditRow key={i} row={row} />)}
+                {pagedAudit.map((row, i) => <AuditRow key={i} row={row} />)}
               </tbody>
             </table>
           </div>
           <div className="md:hidden space-y-3">
-            {filtered.map((row, i) => <AuditCard key={i} row={row} />)}
+            {pagedAudit.map((row, i) => <AuditCard key={i} row={row} />)}
           </div>
-          <p className="text-xs text-muted text-right">
-            显示 {filtered.length} / {rows.length} 条
-          </p>
+          <PaginationBar
+            page={auditPage} total={filtered.length} pageSize={PAGE_SIZE}
+            onPrev={() => setAuditPage((p) => Math.max(0, p - 1))}
+            onNext={() => setAuditPage((p) => p + 1)}
+          />
         </>
       )}
     </div>
@@ -570,25 +612,26 @@ function renderTargetText(
   detail: Record<string, unknown>,
   accountMap: Map<string, string>,
   channelMap: Map<string, string>,
+  serverTargetName?: string,
 ): string {
   if (type === 'dispatch_ok') {
-    const email = resolveEmail(target, accountMap);
-    return email ? `派单成功 · ${email}` : `派单成功 · ${target || '节点'}`;
+    const email = serverTargetName || resolveEmail(target, accountMap) || target || '节点';
+    return `派单成功 · ${email}`;
   }
   if (type === 'ban') {
-    const email = resolveEmail(target, accountMap);
-    return email ? `封控 · ${email}` : `封控 · ${target || '节点'}`;
+    const email = serverTargetName || resolveEmail(target, accountMap) || target || '节点';
+    return `封控 · ${email}`;
   }
   if (type === 'fallback') {
     const cn = FALLBACK_REASON_CN[target] ?? target;
     const channelId = typeof detail['channel'] === 'string' ? detail['channel'] : '';
-    const channelName = channelId ? channelMap.get(channelId) : undefined;
+    const channelName = (channelId ? channelMap.get(channelId) : undefined) ?? serverTargetName;
     const base = cn ? `保底触发 · ${cn}` : '保底触发';
     return channelName ? `${base} · ${channelName}` : base;
   }
   if (type === 'quota_limited') {
-    const email = resolveEmail(target, accountMap);
-    return email ? `账户限额 · ${email}` : `账户限额 · ${target || '节点'}`;
+    const email = serverTargetName || resolveEmail(target, accountMap) || target || '节点';
+    return `账户限额 · ${email}`;
   }
   if (type === 'session_exile') {
     const suffix = SESSION_EXILE_SUFFIX[target] ?? target;
@@ -601,7 +644,7 @@ function renderTargetText(
     return `弹性缩容 · ${target || ''}`.trimEnd().replace(/ · $/, '');
   }
   if (type === 'balance_low') {
-    const channelName = channelMap.get(target) ?? target;
+    const channelName = serverTargetName ?? channelMap.get(target) ?? target;
     const balance = typeof detail['balance'] === 'number' ? `$${(detail['balance'] as number).toFixed(2)}` : undefined;
     const alert = typeof detail['alert'] === 'number' ? `$${(detail['alert'] as number).toFixed(2)}` : undefined;
     const base = `余额不足 · ${channelName}`;
@@ -624,8 +667,18 @@ function EventItem({
   const { dot, badge } = style;
   const label = style.label ?? row.type;
   const detail = parseDetail(row.detail as Record<string, unknown> | string | undefined);
-  const targetText = renderTargetText(row.type, row.target ?? '', detail, accountMap, channelMap);
+  const targetText = renderTargetText(row.type, row.target ?? '', detail, accountMap, channelMap, row.targetName);
   const showDetail = row.detail && Object.keys(row.detail).length > 0 && row.type !== 'fallback' && row.type !== 'balance_low';
+
+  // Build display detail: replace detail.account with resolved email if available
+  const displayDetail = showDetail && (row.detailAccount || detail['account'])
+    ? (() => {
+        const copy = { ...detail };
+        if (row.detailAccount && copy['account']) copy['account'] = row.detailAccount;
+        return copy;
+      })()
+    : detail;
+
   return (
     <div className="flex gap-4">
       <div className="flex flex-col items-center">
@@ -644,7 +697,7 @@ function EventItem({
         )}
         {showDetail && (
           <pre className="mt-1.5 text-xs text-muted bg-bg border border-line rounded-lg px-3 py-2 overflow-x-auto max-w-full">
-            {JSON.stringify(row.detail, null, 2)}
+            {JSON.stringify(displayDetail, null, 2)}
           </pre>
         )}
       </div>
@@ -659,11 +712,12 @@ function EventsTab({ isTenant }: { isTenant: boolean }) {
   const [query, setQuery] = useState('');
   const [accountMap, setAccountMap] = useState<Map<string, string>>(new Map());
   const [channelMap, setChannelMap] = useState<Map<string, string>>(new Map());
+  const [eventsPage, setEventsPage] = useState(0);
 
   const fetchEvents = useCallback(async () => {
     setLoading(true);
     try {
-      const data = isTenant ? await getMeEvents(200) : await getEvents({ limit: '200' });
+      const data = isTenant ? await getMeEvents(500) : await getEvents({ limit: '500' });
       setRows(Array.isArray(data) ? data : []);
       setError(null);
     } catch (e) {
@@ -711,18 +765,23 @@ function EventsTab({ isTenant }: { isTenant: boolean }) {
   }, [isTenant]);
 
   const q = query.trim().toLowerCase();
-  const filtered = q
+  const filtered = useMemo(() => q
     ? rows.filter(
         (r) =>
           r.type?.toLowerCase().includes(q) ||
-          r.target?.toLowerCase().includes(q),
+          r.target?.toLowerCase().includes(q) ||
+          r.targetName?.toLowerCase().includes(q),
       )
-    : rows;
+    : rows, [rows, q]);
+
+  useEffect(() => { setEventsPage(0); }, [q]);
+
+  const pagedEvents = filtered.slice(eventsPage * PAGE_SIZE, (eventsPage + 1) * PAGE_SIZE);
 
   return (
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <p className="text-xs text-muted">最近 200 条系统事件时间线</p>
+        <p className="text-xs text-muted">最近 500 条系统事件时间线</p>
         <button
           onClick={() => { void fetchEvents(); }}
           disabled={loading}
@@ -759,16 +818,18 @@ function EventsTab({ isTenant }: { isTenant: boolean }) {
         </div>
       )}
       {!loading && !error && filtered.length > 0 && (
-        <div className="bg-surface border border-line rounded-xl px-5 pt-5 pb-0">
-          {filtered.map((row, i) => (
-            <EventItem key={i} row={row} accountMap={accountMap} channelMap={channelMap} />
-          ))}
-        </div>
-      )}
-      {!loading && !error && filtered.length > 0 && (
-        <p className="text-xs text-muted text-right">
-          显示 {filtered.length} / {rows.length} 条
-        </p>
+        <>
+          <div className="bg-surface border border-line rounded-xl px-5 pt-5 pb-0">
+            {pagedEvents.map((row, i) => (
+              <EventItem key={i} row={row} accountMap={accountMap} channelMap={channelMap} />
+            ))}
+          </div>
+          <PaginationBar
+            page={eventsPage} total={filtered.length} pageSize={PAGE_SIZE}
+            onPrev={() => setEventsPage((p) => Math.max(0, p - 1))}
+            onNext={() => setEventsPage((p) => p + 1)}
+          />
+        </>
       )}
     </div>
   );

@@ -399,10 +399,87 @@ func logDetailHandler(q *sqlc.Queries) http.HandlerFunc {
 	}
 }
 
+func buildAccountEmailMap(ctx context.Context, q *sqlc.Queries) map[string]string {
+	m := map[string]string{}
+	if accs, err := q.ListNodeAccountsAll(ctx); err == nil {
+		for _, a := range accs {
+			if a.Email != "" {
+				m[a.NodeID+":"+a.ProfileID] = a.Email
+				m[a.ProfileID] = a.Email
+			}
+		}
+	}
+	return m
+}
+
+func resolveAccountKey(key string, emailMap map[string]string) string {
+	if e, ok := emailMap[key]; ok {
+		return e
+	}
+	for k := 0; k < len(key); k++ {
+		if key[k] == ':' {
+			if e, ok := emailMap[key[k+1:]]; ok {
+				return e
+			}
+			break
+		}
+	}
+	return ""
+}
+
+func buildChannelNameMap(ctx context.Context, q *sqlc.Queries) map[string]string {
+	m := map[string]string{}
+	if chs, err := q.ListAllFallbackChannels(ctx); err == nil {
+		for _, ch := range chs {
+			m[ch.ID] = ch.Name
+		}
+	}
+	return m
+}
+
+func resolveEventTarget(target string, emailMap map[string]string, channelMap map[string]string) string {
+	if target == "" {
+		return ""
+	}
+	if strings.HasPrefix(target, "fc_") {
+		if n, ok := channelMap[target]; ok {
+			return n
+		}
+		return target
+	}
+	if e := resolveAccountKey(target, emailMap); e != "" {
+		return e
+	}
+	if n, ok := channelMap[target]; ok {
+		return n
+	}
+	return target
+}
+
+func resolveAuditTarget(raw string, emailMap map[string]string, channelMap map[string]string) string {
+	if strings.HasPrefix(raw, "fallback:") {
+		id := strings.TrimPrefix(raw, "fallback:")
+		if n, ok := channelMap[id]; ok {
+			return n
+		}
+		return raw
+	}
+	stripped := raw
+	if strings.HasPrefix(stripped, "account:cpa:") {
+		stripped = strings.TrimPrefix(stripped, "account:cpa:")
+	} else if strings.HasPrefix(stripped, "account:") {
+		stripped = strings.TrimPrefix(stripped, "account:")
+	}
+	if e := resolveAccountKey(stripped, emailMap); e != "" {
+		return e
+	}
+	return raw
+}
+
 func listEventsHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		owner, all := scope(r)
-		limit := limitParam(r, 100)
+		limit := limitParam(r, 500)
 		// Push the owner filter into SQL so LIMIT applies after filtering (events-audit-4).
 		var rows []sqlc.DispatchEvent
 		var err error
@@ -415,11 +492,31 @@ func listEventsHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		emailMap := buildAccountEmailMap(r.Context(), q)
+		channelMap := buildChannelNameMap(r.Context(), q)
 		out := make([]map[string]any, 0, len(rows))
 		for _, e := range rows {
+			targetName := resolveEventTarget(e.Target, emailMap, channelMap)
+			// resolve detail.account if present
+			detailAccount := ""
+			var d map[string]any
+			if len(e.Detail) > 0 {
+				if jerr := json.Unmarshal(e.Detail, &d); jerr == nil {
+					if acct, ok := d["account"].(string); ok && acct != "" {
+						resolved := resolveAccountKey(acct, emailMap)
+						if resolved != "" {
+							detailAccount = resolved
+						} else {
+							detailAccount = acct
+						}
+					}
+				}
+			}
 			out = append(out, map[string]any{
 				"ts": e.Ts, "type": e.Type, "target": e.Target,
-				"detail": json.RawMessage(e.Detail),
+				"detail":        json.RawMessage(e.Detail),
+				"targetName":    targetName,
+				"detailAccount": detailAccount,
 			})
 		}
 		writeJSON(w, 200, out)
@@ -434,15 +531,31 @@ func listAuditHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "superadmin required"})
 			return
 		}
-		rows, err := q.ListRecentAudit(r.Context(), limitParam(r, 100))
+		rows, err := q.ListRecentAudit(r.Context(), limitParam(r, 500))
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		// Build userID→username map for actor resolution.
+		userMap := map[string]string{}
+		if tenants, terr := q.ListTenantsBasic(r.Context()); terr == nil {
+			for _, t := range tenants {
+				userMap[t.ID] = t.Username
+			}
+		}
+		emailMap := buildAccountEmailMap(r.Context(), q)
+		channelMap := buildChannelNameMap(r.Context(), q)
 		out := make([]map[string]any, 0, len(rows))
 		for _, a := range rows {
+			actorName := a.Actor
+			if n, ok := userMap[a.Actor]; ok {
+				actorName = n
+			}
+			targetName := resolveAuditTarget(a.Target, emailMap, channelMap)
 			out = append(out, map[string]any{
 				"ts": a.Ts, "actor": a.Actor, "action": a.Action, "target": a.Target,
+				"actorName":  actorName,
+				"targetName": targetName,
 			})
 		}
 		writeJSON(w, 200, out)

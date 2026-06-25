@@ -266,6 +266,8 @@ export interface EventRecord {
   type: string;
   target: string;
   detail?: Record<string, unknown>;
+  targetName?: string;    // server-resolved channel name or email
+  detailAccount?: string; // server-resolved email for detail.account
 }
 
 // --- Audit ---
@@ -274,6 +276,8 @@ export interface AuditRecord {
   actor: string;
   action: string;
   target: string;
+  actorName?: string;  // server-resolved username
+  targetName?: string; // server-resolved email or channel name
 }
 
 // --- Settle / Ledger ---
