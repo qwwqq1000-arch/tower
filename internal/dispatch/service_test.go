@@ -305,6 +305,137 @@ func TestElasticHysteresis(t *testing.T) {
 	}
 }
 
+// TestReserveKeys_MatchesBuildCandidatesPartition asserts that ReserveKeys and
+// buildCandidates produce the SAME baseline / reserve partition for the same owner
+// and time. This guards against partition divergence (e.g. one function applying
+// slot-window or other filters that the other misses), which is the confirmed root
+// cause of non-affinity requests reaching reserve accounts without scale-up.
+//
+// Scenario: 3 accounts assigned to a shared node. One account has an INACTIVE
+// slot window. ElasticBaselineCount=1. buildCandidates must see 2 eligible accounts
+// (the slot-inactive one is excluded) and put the second one as reserve.
+// ReserveKeys must identify exactly that same second account as reserve.
+func TestReserveKeys_MatchesBuildCandidatesPartition(t *testing.T) {
+	q, closeDB := setupDB(t)
+	defer closeDB()
+	ctx := context.Background()
+
+	sfx := suffixDispatch(t)
+	nodeID := "n_rsv_" + sfx
+	if _, err := q.CreateNode(ctx, sqlc.CreateNodeParams{
+		ID: nodeID, Name: "rsv-node-" + sfx, BaseUrl: "http://unused", ApiKey: "k", OwnerID: "",
+	}); err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+
+	owner := "owner_rsv_" + sfx
+	// Three accounts: A (weight 300), B (weight 200), C (weight 100).
+	// C has an inactive slot window → excluded by buildCandidates.
+	// With ElasticBaselineCount=1: baseline=[A], reserve=[B], C is excluded entirely.
+	for _, acc := range []struct {
+		id     string
+		weight int32
+	}{
+		{"acc_a_rsv_" + sfx, 300},
+		{"acc_b_rsv_" + sfx, 200},
+		{"acc_c_rsv_" + sfx, 100},
+	} {
+		if _, err := q.CreateAccount(ctx, sqlc.CreateAccountParams{ID: acc.id, OwnerID: owner}); err != nil {
+			t.Fatalf("create account %s: %v", acc.id, err)
+		}
+	}
+
+	// Create a slot with a window that is currently INACTIVE: startMin=0, endMin=1
+	// (only active 00:00–00:01 UTC). nowMs will be well after midnight.
+	slotID := "slot_rsv_" + sfx
+	if _, err := q.CreateSlot(ctx, sqlc.CreateSlotParams{
+		ID: slotID, Name: "inactive-window-" + sfx, StartMin: 0, EndMin: 1,
+	}); err != nil {
+		t.Fatalf("create slot: %v", err)
+	}
+	if err := q.SetSlotEnabled(ctx, sqlc.SetSlotEnabledParams{ID: slotID, Enabled: true}); err != nil {
+		t.Fatalf("enable slot: %v", err)
+	}
+
+	// Assign accounts to node: A and B without slot (always active), C with inactive slot.
+	if _, err := q.AssignAccount(ctx, sqlc.AssignAccountParams{
+		NodeID: nodeID, AccountID: "acc_a_rsv_" + sfx, ProfileID: "profA", Weight: 300, Role: "baseline",
+	}); err != nil {
+		t.Fatalf("assign A: %v", err)
+	}
+	if _, err := q.AssignAccount(ctx, sqlc.AssignAccountParams{
+		NodeID: nodeID, AccountID: "acc_b_rsv_" + sfx, ProfileID: "profB", Weight: 200, Role: "baseline",
+	}); err != nil {
+		t.Fatalf("assign B: %v", err)
+	}
+	if _, err := q.AssignAccount(ctx, sqlc.AssignAccountParams{
+		NodeID: nodeID, AccountID: "acc_c_rsv_" + sfx, ProfileID: "profC", Weight: 100, Role: "baseline",
+		SlotID: slotID, // inactive → excluded from dispatch candidates
+	}); err != nil {
+		t.Fatalf("assign C: %v", err)
+	}
+
+	keyA := nodeID + ":profA"
+	keyB := nodeID + ":profB"
+	keyC := nodeID + ":profC"
+
+	// nowMs is 12:00 UTC — well outside the slot window [00:00, 00:01) → C is inactive.
+	noonUTC := int64(12 * 3600 * 1000) // 1970-01-01 12:00 UTC (ms)
+	store := state.NewStore(func() int64 { return noonUTC }, func(min, max int64) int64 { return min })
+	svc := &Service{Q: q, Store: store, Base: policy.Defaults(), Now: func() int64 { return noonUTC }, scaledUp: make(map[string]bool)}
+
+	cfg := policy.Defaults()
+	cfg.ElasticEnabled = true
+	cfg.ElasticBaselineCount = 1
+	cfg.ElasticScaleUpUtil = 0.8
+	cfg.ElasticScaleDownUtil = 0.3
+
+	// buildCandidates should see A and B (C filtered by slot), baseline=[A], reserve=[B].
+	order, _, _, _, _ := svc.buildCandidates(ctx, owner, "claude-3", cfg)
+
+	dispatchBaseline := make(map[string]bool)
+	for _, k := range order {
+		dispatchBaseline[k] = true
+	}
+
+	// Verify dispatch: A in baseline, B in order (either baseline or reserve), C excluded.
+	if !dispatchBaseline[keyA] {
+		t.Errorf("buildCandidates: expected keyA=%s in baseline order, got %v", keyA, order)
+	}
+	if dispatchBaseline[keyC] {
+		t.Errorf("buildCandidates: keyC=%s (inactive slot) must NOT appear in dispatch order, got %v", keyC, order)
+	}
+
+	// ReserveKeys must produce a reserve set that matches: keyB=reserve, keyA=not-reserve, keyC=not-reserve.
+	reserveKeys := svc.ReserveKeys(ctx, owner, cfg)
+
+	if reserveKeys[keyC] {
+		t.Errorf("ReserveKeys: keyC=%s (inactive slot) must NOT appear in reserve set — partition divergence from buildCandidates", keyC)
+	}
+	if !reserveKeys[keyB] {
+		t.Errorf("ReserveKeys: keyB=%s must be reserve (beyond baseline after slot filter), got reserve=%v", keyB, reserveKeys)
+	}
+	if reserveKeys[keyA] {
+		t.Errorf("ReserveKeys: keyA=%s must be in baseline (not reserve), got reserve=%v", keyA, reserveKeys)
+	}
+
+	// Cross-check: the union of (dispatch order) and (reserve keys) must equal A+B;
+	// C must appear in neither (slot-inactive, excluded from both).
+	allInDispatch := make(map[string]bool)
+	for _, k := range order {
+		allInDispatch[k] = true
+	}
+	for k := range reserveKeys {
+		allInDispatch[k] = true
+	}
+	if allInDispatch[keyC] {
+		t.Errorf("keyC=%s appears in dispatch+reserve union but has inactive slot — partition mismatch", keyC)
+	}
+	if !allInDispatch[keyA] || !allInDispatch[keyB] {
+		t.Errorf("expected A+B in combined dispatch+reserve set, got %v", allInDispatch)
+	}
+}
+
 // TestBuildCandidates_OwnerIsolation verifies that buildCandidates filters by account owner:
 // - ownerID="A" → only accounts owned by A are candidates
 // - ownerID="" (admin) → all accounts are candidates

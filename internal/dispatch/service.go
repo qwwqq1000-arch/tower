@@ -1234,7 +1234,9 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 //
 // Returns an empty map when elastic is off (all accounts treated as active) or when
 // the owner is currently scaled up (all reserves are activated). Mirrors the
-// partition logic in buildCandidates exactly. Used by the status UI to show 待命 vs 活跃.
+// partition logic in buildCandidates exactly — including the slot-window filter —
+// so the status display's reserve/active split always matches what dispatch actually
+// does. Used by the status UI to show 待命 vs 活跃.
 func (s *Service) ReserveKeys(ctx context.Context, ownerID string, cfg policy.Config) map[string]bool {
 	if !cfg.ElasticEnabled {
 		return nil // elastic off → all accounts active
@@ -1245,6 +1247,19 @@ func (s *Service) ReserveKeys(ctx context.Context, ownerID string, cfg policy.Co
 	s.scaledUpMu.Unlock()
 	if isScaledUp {
 		return nil
+	}
+
+	nowMs := s.Now()
+
+	// Load slots once, mirroring buildCandidates' slot-window filter.
+	// Accounts in inactive slot windows are excluded from dispatch and must therefore
+	// also be excluded here so the baseline/reserve partition is identical.
+	type slotEntry struct{ startMin, endMin int; enabled bool }
+	slotMap := map[string]slotEntry{}
+	if slotRows, serr := s.Q.ListSlots(ctx); serr == nil {
+		for _, sl := range slotRows {
+			slotMap[sl.ID] = slotEntry{startMin: int(sl.StartMin), endMin: int(sl.EndMin), enabled: sl.Enabled}
+		}
 	}
 
 	// Replicate the candidate enumeration from buildCandidates (owner-scoped, weight-desc).
@@ -1274,6 +1289,16 @@ func (s *Service) ReserveKeys(ctx context.Context, ownerID string, cfg policy.Co
 			}
 			if ownerID != "" && acctOwner[na.AccountID] != ownerID {
 				continue
+			}
+			// Slot-window filter: mirrors buildCandidates exactly.
+			// Skip only when the slot exists, is enabled, and the window is inactive.
+			if na.SlotID != "" {
+				if sl, ok := slotMap[na.SlotID]; ok && sl.enabled {
+					if !slotActiveNow(sl.startMin, sl.endMin, nowMs, cfg.QuietHoursTZ) {
+						continue
+					}
+				}
+				// Unknown slot_id or disabled slot → treat as always-active (don't skip).
 			}
 			key := n.ID + ":" + na.ProfileID
 			cands = append(cands, cand{key: key, weight: int(na.Weight)})
