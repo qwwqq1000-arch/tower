@@ -110,6 +110,70 @@ func TestEffectivePriceThreshold_FallsBackToGlobal(t *testing.T) {
 	}
 }
 
+func TestMatchesKeyword(t *testing.T) {
+	if !MatchesKeyword("please refactor this code", []string{"refactor"}) {
+		t.Fatal("should match keyword 'refactor'")
+	}
+	if MatchesKeyword("hello world", []string{"refactor"}) {
+		t.Fatal("should not match when keyword absent")
+	}
+	if MatchesKeyword("any text", []string{}) {
+		t.Fatal("empty keywords should not match")
+	}
+}
+
+func TestMatchesModel(t *testing.T) {
+	if !MatchesModel("claude-opus-4-8", []string{"opus-4-8"}) {
+		t.Fatal("should match model substring")
+	}
+	if MatchesModel("claude-sonnet-4-6", []string{"opus-4-8"}) {
+		t.Fatal("should not match when model absent")
+	}
+}
+
+func TestDecideSoft_Probe(t *testing.T) {
+	in := base()
+	in.ProbeText = "hi"
+	in.ProbeEnabled = true
+	if g := DecideSoft(in); g != Probe {
+		t.Fatalf("DecideSoft: got %v, want Probe", g)
+	}
+}
+
+func TestDecideSoft_Price(t *testing.T) {
+	in := base()
+	in.EstCostUsd = 0.001 // below 0.005
+	if g := DecideSoft(in); g != Price {
+		t.Fatalf("DecideSoft: got %v, want Price", g)
+	}
+}
+
+func TestDecideSoft_Exhausted(t *testing.T) {
+	in := base()
+	in.PoolEmpty = true
+	if g := DecideSoft(in); g != Exhausted {
+		t.Fatalf("DecideSoft: got %v, want Exhausted", g)
+	}
+}
+
+func TestDecideSoft_None(t *testing.T) {
+	in := base()
+	if g := DecideSoft(in); g != None {
+		t.Fatalf("DecideSoft: got %v, want None", g)
+	}
+}
+
+func TestDecideSoft_NeverKeywordOrModel(t *testing.T) {
+	in := base()
+	in.Keywords = []string{"refactor"}
+	in.FallbackModels = []string{"opus-4-8"}
+	in.EstCostUsd = 0.001 // would trigger Price; keyword/model must not appear
+	g := DecideSoft(in)
+	if g == Keyword || g == Model {
+		t.Fatalf("DecideSoft must never return Keyword or Model; got %v", g)
+	}
+}
+
 func TestDecide_ChannelThresholdOverridesGlobal(t *testing.T) {
 	// A request costing 0.003 with a channel threshold of 0.01 should trigger Price,
 	// even though the global threshold (0.001) would not.

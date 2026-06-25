@@ -142,6 +142,7 @@ export interface PolicyPatch {
   CooldownMaxMs?: number;
   CooldownMult?: number;
   AffinityTTLSec?: number;
+  AffinityWaitMs?: number;
   FallbackEnabled?: boolean;
   FallbackPriceThresholdUsd?: number;
   FallbackKeywords?: string[];

@@ -64,6 +64,26 @@ func EffectivePriceThreshold(channelThreshold, globalThreshold float64) float64 
 	return globalThreshold
 }
 
+// MatchesKeyword reports whether bodyText contains any configured fallback keyword.
+func MatchesKeyword(bodyText string, keywords []string) bool { return containsAny(bodyText, keywords) }
+
+// MatchesModel reports whether model matches any configured fallback-model rule.
+func MatchesModel(model string, models []string) bool { return containsAny(model, models) }
+
+// DecideSoft returns ONLY soft triggers (Probe, Price); never Keyword/Model. Exhausted if PoolEmpty.
+func DecideSoft(in DecideInput) Trigger {
+	if in.ProbeEnabled && IsProbe(in.ProbeText) {
+		return Probe
+	}
+	if in.PriceThresholdUsd > 0 && in.EstCostUsd < in.PriceThresholdUsd {
+		return Price
+	}
+	if in.PoolEmpty {
+		return Exhausted
+	}
+	return None
+}
+
 // Decide returns the highest-priority fallback trigger (None = use our nodes).
 func Decide(in DecideInput) Trigger {
 	if containsAny(in.BodyText, in.Keywords) {

@@ -411,9 +411,6 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 
 	conv := session.ConvID(body)
 	nowMs := s.Now()
-	if cfg.AffinityTTLSec > 0 {
-		order = s.pinToAffinity(conv, order, nowMs)
-	}
 
 	// BodyPad (disguise-phase4): inject padding into metadata.pad before dispatch.
 	// Guard: only active when explicitly enabled AND BodyPadBytes resolves to > 0.
@@ -424,27 +421,50 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 		body = padBody(body, n, conv)
 	}
 
-	est := billing.CostUsd(model, int64(len(body)/4), 2000, 0, 0)
-	probeText := lastUserText(body)
-	var chPriceThreshold float64
-	if len(channels) > 0 {
-		chPriceThreshold = channels[0].PriceThreshold
-	}
-	trig := fallback.Decide(fallback.DecideInput{
-		Model: model, BodyText: bodyText, ProbeText: probeText, EstCostUsd: est, PoolEmpty: len(order) == 0,
-		Keywords: cfg.FallbackKeywords, FallbackModels: cfg.FallbackModels,
-		PriceThresholdUsd: fallback.EffectivePriceThreshold(chPriceThreshold, cfg.FallbackPriceThresholdUsd),
-		ProbeEnabled: cfg.FallbackProbeEnabled,
-	})
-
-	// Fallback-first when triggered (and channels exist).
-	if cfg.FallbackEnabled && trig != fallback.None && trig != fallback.Exhausted && len(channels) > 0 {
-		return s.viaChannels(ctx, ownerID, model, body, channels, string(trig), time.Since(start).Milliseconds(), cfg)
+	// TIER 1: keyword + model — highest priority, before affinity.
+	if cfg.FallbackEnabled && len(channels) > 0 {
+		if fallback.MatchesKeyword(bodyText, cfg.FallbackKeywords) {
+			return s.viaChannels(ctx, ownerID, model, body, channels, "keyword", time.Since(start).Milliseconds(), cfg)
+		}
+		if fallback.MatchesModel(model, cfg.FallbackModels) {
+			return s.viaChannels(ctx, ownerID, model, body, channels, "model", time.Since(start).Milliseconds(), cfg)
+		}
 	}
 
-	// PRE-FLIGHT: session exile check — route exiled conversations to fallback.
-	if (cfg.SessionErrorThreshold > 0 || cfg.ResponseExileEnabled) && s.sess.Exiled(conv, nowMs) && cfg.FallbackEnabled && len(channels) > 0 {
-		return s.viaChannels(ctx, ownerID, model, body, channels, "session", time.Since(start).Milliseconds(), cfg)
+	// TIER 2: affinity pinning.
+	order0 := order
+	_, pinActive := s.sess.Affinity(conv, nowMs)
+	pinned := false
+	affinityWaitKey := ""
+	if cfg.AffinityTTLSec > 0 && pinActive {
+		order = s.pinToAffinity(conv, order0, nowMs)
+		pinned = true
+		if len(order) == 1 {
+			affinityWaitKey = order[0]
+		}
+		// len(order)==0 → pinned account gone → falls through to exhausted fallback.
+	}
+
+	// TIER 3: soft rules (probe, price) + session-exile — only when NOT pinned.
+	if !pinned {
+		est := billing.CostUsd(model, int64(len(body)/4), 2000, 0, 0)
+		probeText := lastUserText(body)
+		var chPriceThreshold float64
+		if len(channels) > 0 {
+			chPriceThreshold = channels[0].PriceThreshold
+		}
+		softTrig := fallback.DecideSoft(fallback.DecideInput{
+			Model: model, BodyText: bodyText, ProbeText: probeText, EstCostUsd: est, PoolEmpty: len(order) == 0,
+			Keywords: cfg.FallbackKeywords, FallbackModels: cfg.FallbackModels,
+			PriceThresholdUsd: fallback.EffectivePriceThreshold(chPriceThreshold, cfg.FallbackPriceThresholdUsd),
+			ProbeEnabled: cfg.FallbackProbeEnabled,
+		})
+		if cfg.FallbackEnabled && softTrig != fallback.None && softTrig != fallback.Exhausted && len(channels) > 0 {
+			return s.viaChannels(ctx, ownerID, model, body, channels, string(softTrig), time.Since(start).Milliseconds(), cfg)
+		}
+		if (cfg.SessionErrorThreshold > 0 || cfg.ResponseExileEnabled) && s.sess.Exiled(conv, nowMs) && cfg.FallbackEnabled && len(channels) > 0 {
+			return s.viaChannels(ctx, ownerID, model, body, channels, "session", time.Since(start).Milliseconds(), cfg)
+		}
 	}
 
 	// Our nodes.
@@ -461,6 +481,13 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 			if ac, ok := keyCfg[k]; ok && ac.SerialQueueEnabled && ac.SerialQueueWaitMs > 0 {
 				serialWaitKeys[k] = true
 				serialWaitMs[k] = int64(ac.SerialQueueWaitMs)
+			}
+		}
+		// Affinity wait: bounded slot-wait for the pinned account before failover.
+		if affinityWaitKey != "" && cfg.AffinityWaitMs > 0 {
+			serialWaitKeys[affinityWaitKey] = true
+			if int64(cfg.AffinityWaitMs) > serialWaitMs[affinityWaitKey] {
+				serialWaitMs[affinityWaitKey] = int64(cfg.AffinityWaitMs)
 			}
 		}
 		humanDist := "uniform"
@@ -1384,9 +1411,6 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 
 	conv := session.ConvID(body)
 	nowMs := s.Now()
-	if cfg.AffinityTTLSec > 0 {
-		order = s.pinToAffinity(conv, order, nowMs)
-	}
 
 	// BodyPad (disguise-phase4): inject padding into metadata.pad before dispatch.
 	// Guard: only active when explicitly enabled AND BodyPadBytes resolves to > 0.
@@ -1397,29 +1421,57 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 		body = padBody(body, n, conv)
 	}
 
-	// Probe/keyword/model fallback decision — same logic as non-streaming Dispatch.
-	est := billing.CostUsd(model, int64(len(body)/4), 2000, 0, 0)
-	probeText := lastUserText(body)
-	var chPriceThresholdS float64
-	if len(channels) > 0 {
-		chPriceThresholdS = channels[0].PriceThreshold
-	}
-	trig := fallback.Decide(fallback.DecideInput{
-		Model: model, BodyText: string(body), ProbeText: probeText, EstCostUsd: est, PoolEmpty: len(order) == 0,
-		Keywords: cfg.FallbackKeywords, FallbackModels: cfg.FallbackModels,
-		PriceThresholdUsd: fallback.EffectivePriceThreshold(chPriceThresholdS, cfg.FallbackPriceThresholdUsd),
-		ProbeEnabled: cfg.FallbackProbeEnabled,
-	})
-	if cfg.FallbackEnabled && trig != fallback.None && trig != fallback.Exhausted && len(channels) > 0 {
-		if out, committed := s.streamChannels(ctx, w, channels, body, ownerID, model, string(trig), cfg); committed {
-			return out
+	// TIER 1: keyword + model — highest priority, before affinity.
+	if cfg.FallbackEnabled && len(channels) > 0 {
+		if fallback.MatchesKeyword(string(body), cfg.FallbackKeywords) {
+			if out, committed := s.streamChannels(ctx, w, channels, body, ownerID, model, "keyword", cfg); committed {
+				return out
+			}
+		}
+		if fallback.MatchesModel(model, cfg.FallbackModels) {
+			if out, committed := s.streamChannels(ctx, w, channels, body, ownerID, model, "model", cfg); committed {
+				return out
+			}
 		}
 	}
 
-	// PRE-FLIGHT: session exile check — route exiled conversations to fallback.
-	if (cfg.SessionErrorThreshold > 0 || cfg.ResponseExileEnabled) && s.sess.Exiled(conv, nowMs) && cfg.FallbackEnabled && len(channels) > 0 {
-		if out, committed := s.streamChannels(ctx, w, channels, body, ownerID, model, "session", cfg); committed {
-			return out
+	// TIER 2: affinity pinning.
+	order0S := order
+	_, pinActiveS := s.sess.Affinity(conv, nowMs)
+	pinnedS := false
+	affinityWaitKeyS := ""
+	if cfg.AffinityTTLSec > 0 && pinActiveS {
+		order = s.pinToAffinity(conv, order0S, nowMs)
+		pinnedS = true
+		if len(order) == 1 {
+			affinityWaitKeyS = order[0]
+		}
+		// len(order)==0 → pinned account gone → falls through to exhausted fallback.
+	}
+
+	// TIER 3: soft rules (probe, price) + session-exile — only when NOT pinned.
+	if !pinnedS {
+		est := billing.CostUsd(model, int64(len(body)/4), 2000, 0, 0)
+		probeText := lastUserText(body)
+		var chPriceThresholdS float64
+		if len(channels) > 0 {
+			chPriceThresholdS = channels[0].PriceThreshold
+		}
+		softTrigS := fallback.DecideSoft(fallback.DecideInput{
+			Model: model, BodyText: string(body), ProbeText: probeText, EstCostUsd: est, PoolEmpty: len(order) == 0,
+			Keywords: cfg.FallbackKeywords, FallbackModels: cfg.FallbackModels,
+			PriceThresholdUsd: fallback.EffectivePriceThreshold(chPriceThresholdS, cfg.FallbackPriceThresholdUsd),
+			ProbeEnabled: cfg.FallbackProbeEnabled,
+		})
+		if cfg.FallbackEnabled && softTrigS != fallback.None && softTrigS != fallback.Exhausted && len(channels) > 0 {
+			if out, committed := s.streamChannels(ctx, w, channels, body, ownerID, model, string(softTrigS), cfg); committed {
+				return out
+			}
+		}
+		if (cfg.SessionErrorThreshold > 0 || cfg.ResponseExileEnabled) && s.sess.Exiled(conv, nowMs) && cfg.FallbackEnabled && len(channels) > 0 {
+			if out, committed := s.streamChannels(ctx, w, channels, body, ownerID, model, "session", cfg); committed {
+				return out
+			}
 		}
 	}
 
@@ -1434,6 +1486,13 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 		if ac, ok := keyCfgS[k]; ok && ac.SerialQueueEnabled && ac.SerialQueueWaitMs > 0 {
 			serialWaitKeysS[k] = true
 			serialWaitMsS[k] = int64(ac.SerialQueueWaitMs)
+		}
+	}
+	// Affinity wait: bounded slot-wait for the pinned account before failover.
+	if affinityWaitKeyS != "" && cfg.AffinityWaitMs > 0 {
+		serialWaitKeysS[affinityWaitKeyS] = true
+		if int64(cfg.AffinityWaitMs) > serialWaitMsS[affinityWaitKeyS] {
+			serialWaitMsS[affinityWaitKeyS] = int64(cfg.AffinityWaitMs)
 		}
 	}
 	attempts := 0

@@ -60,6 +60,7 @@ type Config struct {
 	CooldownMaxMs             int64
 	CooldownMult              float64
 	AffinityTTLSec            int
+	AffinityWaitMs            int
 	FallbackEnabled           bool
 	FallbackPriceThresholdUsd float64
 	FallbackKeywords          []string
@@ -266,6 +267,7 @@ func Defaults() Config {
 		CooldownMaxMs:             600000,
 		CooldownMult:              2,
 		AffinityTTLSec:            300,
+		AffinityWaitMs:            2000,
 		FallbackEnabled:           false,
 		FallbackPriceThresholdUsd: 0.005,
 		FallbackKeywords:          nil,
@@ -351,6 +353,7 @@ type Patch struct {
 	CooldownMaxMs             *int64
 	CooldownMult              *float64
 	AffinityTTLSec            *int
+	AffinityWaitMs            *int
 	FallbackEnabled           *bool
 	FallbackPriceThresholdUsd *float64
 	FallbackKeywords          *[]string
@@ -442,6 +445,9 @@ func apply(c *Config, p Patch) {
 	}
 	if p.AffinityTTLSec != nil {
 		c.AffinityTTLSec = *p.AffinityTTLSec
+	}
+	if p.AffinityWaitMs != nil {
+		c.AffinityWaitMs = *p.AffinityWaitMs
 	}
 	if p.FallbackEnabled != nil {
 		c.FallbackEnabled = *p.FallbackEnabled
@@ -670,6 +676,7 @@ func DryRun(base Config, patches ...Patch) (Config, []Diff) {
 	add("CooldownMaxMs", base.CooldownMaxMs, final.CooldownMaxMs)
 	add("CooldownMult", base.CooldownMult, final.CooldownMult)
 	add("AffinityTTLSec", base.AffinityTTLSec, final.AffinityTTLSec)
+	add("AffinityWaitMs", base.AffinityWaitMs, final.AffinityWaitMs)
 	add("FallbackEnabled", base.FallbackEnabled, final.FallbackEnabled)
 	add("FallbackPriceThresholdUsd", base.FallbackPriceThresholdUsd, final.FallbackPriceThresholdUsd)
 	add("FallbackKeywords", base.FallbackKeywords, final.FallbackKeywords)

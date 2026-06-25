@@ -200,6 +200,7 @@ export default function Policies() {
   const cooldownBaseMs = useField<number>(10000);
   const cooldownMaxMs = useField<number>(600000);
   const affinityTTLSec = useField<number>(300);
+  const affinityWaitMs = useField<number>(2000);
   // Float field
   const cooldownMult = useField<number>(2);
   const fallbackPriceThresholdUsd = useField<number>(0.005);
@@ -352,6 +353,7 @@ export default function Policies() {
         setNum(cooldownMaxMs, 'CooldownMaxMs');
         setNum(cooldownMult, 'CooldownMult');
         setNum(affinityTTLSec, 'AffinityTTLSec');
+        setNum(affinityWaitMs, 'AffinityWaitMs');
         setBool(fallbackEnabled, 'FallbackEnabled');
         setNum(fallbackPriceThresholdUsd, 'FallbackPriceThresholdUsd');
         setArr(fallbackKeywords, 'FallbackKeywords');
@@ -452,6 +454,7 @@ export default function Policies() {
     if (cooldownMaxMs.enabled) patch.CooldownMaxMs = cooldownMaxMs.value;
     if (cooldownMult.enabled) patch.CooldownMult = cooldownMult.value;
     if (affinityTTLSec.enabled) patch.AffinityTTLSec = affinityTTLSec.value;
+    if (affinityWaitMs.enabled) patch.AffinityWaitMs = affinityWaitMs.value;
     if (fallbackEnabled.enabled) patch.FallbackEnabled = fallbackEnabled.value;
     if (fallbackPriceThresholdUsd.enabled) patch.FallbackPriceThresholdUsd = fallbackPriceThresholdUsd.value;
     if (fallbackKeywords.enabled) patch.FallbackKeywords = fallbackKeywords.value.split(',').map(s => s.trim()).filter(Boolean);
@@ -598,7 +601,7 @@ export default function Policies() {
 
   const anyEnabled = [
     maxConcurrent, slotCooldownMinMs, banPersistStreak, permanentBanStreak,
-    cooldownBaseMs, cooldownMaxMs, cooldownMult, affinityTTLSec,
+    cooldownBaseMs, cooldownMaxMs, cooldownMult, affinityTTLSec, affinityWaitMs,
     fallbackEnabled, fallbackPriceThresholdUsd, fallbackKeywords, fallbackModels, fallbackProbeEnabled, banSignals, banKeywords, cooldownSignals, cooldownSignalSec,
     maxFailover,
     warmupHours, warmupMaxConcurrent, warmupBlockOpus,
@@ -631,7 +634,7 @@ export default function Policies() {
     ],
     concurrency: [
       maxConcurrent, slotCooldownMinMs,
-      affinityTTLSec,
+      affinityTTLSec, affinityWaitMs,
       warmupHours, warmupMaxConcurrent, warmupBlockOpus,
     ],
     limits: [
@@ -864,6 +867,10 @@ export default function Policies() {
 
               <FieldRow label="AffinityTTLSec" desc="亲和性缓存 TTL (秒)" enabled={affinityTTLSec.enabled} onToggle={affinityTTLSec.toggle} showOnlyConfigured={so}>
                 <NumInput value={affinityTTLSec.value} onChange={affinityTTLSec.set} disabled={!affinityTTLSec.enabled} min={0} step={60} />
+              </FieldRow>
+
+              <FieldRow label="AffinityWaitMs" desc="亲和号忙时排队等位上限(ms);0=不等待直接转保底" enabled={affinityWaitMs.enabled} onToggle={affinityWaitMs.toggle} showOnlyConfigured={so}>
+                <NumInput value={affinityWaitMs.value} onChange={affinityWaitMs.set} disabled={!affinityWaitMs.enabled} min={0} step={500} />
               </FieldRow>
             </div>
 
