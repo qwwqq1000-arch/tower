@@ -748,7 +748,8 @@ function SortIcon({ active, dir }: { active: boolean; dir: 'asc' | 'desc' }) {
 // ------------------------------------------------------------------
 // Accounts page
 // ------------------------------------------------------------------
-const PAGE_SIZE = 12;
+// 10/page — consistent with the tenant 号库 and dashboard lists.
+const PAGE_SIZE = 10;
 
 export default function Accounts() {
   const { isTenant } = useAuth();

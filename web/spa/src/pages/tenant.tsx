@@ -36,7 +36,9 @@ import { StatusBadge, statusRank } from '../components/AccountStatus';
 // ------------------------------------------------------------------
 // Pagination
 // ------------------------------------------------------------------
-const PAGE_SIZE = 25;
+// 10/page so the 号库 (27 accounts) and homepage 号库列表 actually chunk into
+// pages — 25 was too coarse to be useful. Matches admin dashboard + dispatch panel.
+const PAGE_SIZE = 10;
 
 function PaginationBar({ page, total, pageSize, onPrev, onNext }: {
   page: number; total: number; pageSize: number;

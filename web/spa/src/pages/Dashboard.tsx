@@ -143,7 +143,9 @@ function HostingRow({ row }: { row: DashboardHostingRow }) {
 // ------------------------------------------------------------------
 // Shared pagination for dashboard tables
 // ------------------------------------------------------------------
-const PAGE_SIZE = 25;
+// 10/page so lists like the 节点列表 (17 nodes) actually paginate — 25 was too
+// coarse and the pager never appeared. Matches the dispatch panel's page size.
+const PAGE_SIZE = 10;
 
 function PaginationBar({ page, total, pageSize, onPrev, onNext }: {
   page: number; total: number; pageSize: number;
