@@ -1093,7 +1093,18 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 			cands = append(cands, cand{key: key, weight: int(na.Weight), reserve: na.Role == "reserve"})
 		}
 	}
-	sort.SliceStable(cands, func(i, j int) bool { return cands[i].weight > cands[j].weight })
+	// Deterministic order: weight desc, then key asc as tiebreak. Without the key
+	// tiebreak, equal-weight accounts (all weight=100 by default) kept the
+	// non-deterministic node_accounts row order, so the elastic baseline ("first N")
+	// was a DIFFERENT random N each request — reserve accounts randomly received
+	// non-affinity traffic and the 待命/活跃 status flickered. A stable tiebreak makes
+	// the baseline a fixed working set (affinity-status-fix).
+	sort.Slice(cands, func(i, j int) bool {
+		if cands[i].weight != cands[j].weight {
+			return cands[i].weight > cands[j].weight
+		}
+		return cands[i].key < cands[j].key
+	})
 
 	// Build inflight map from the store snapshot for idle-first ordering.
 	// Moved here (before the elastic branch) so both paths can use it.
@@ -1268,7 +1279,18 @@ func (s *Service) ReserveKeys(ctx context.Context, ownerID string, cfg policy.Co
 			cands = append(cands, cand{key: key, weight: int(na.Weight)})
 		}
 	}
-	sort.SliceStable(cands, func(i, j int) bool { return cands[i].weight > cands[j].weight })
+	// Deterministic order: weight desc, then key asc as tiebreak. Without the key
+	// tiebreak, equal-weight accounts (all weight=100 by default) kept the
+	// non-deterministic node_accounts row order, so the elastic baseline ("first N")
+	// was a DIFFERENT random N each request — reserve accounts randomly received
+	// non-affinity traffic and the 待命/活跃 status flickered. A stable tiebreak makes
+	// the baseline a fixed working set (affinity-status-fix).
+	sort.Slice(cands, func(i, j int) bool {
+		if cands[i].weight != cands[j].weight {
+			return cands[i].weight > cands[j].weight
+		}
+		return cands[i].key < cands[j].key
+	})
 
 	n := cfg.ElasticBaselineCount
 	if n < 1 {
