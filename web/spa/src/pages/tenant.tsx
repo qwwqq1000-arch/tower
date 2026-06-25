@@ -29,7 +29,8 @@ import type {
   DispatchKeyRecord,
 } from '../types';
 import type { BanAnalysis, BanBucket, BanAccountEntry } from '../api';
-import { EventTimeline, ConcurrencyPanel } from './Dispatch';
+import { EventTimeline, ConcurrencyPanel, useElementHeight } from './Dispatch';
+import { CpaQuotaCell } from './Accounts';
 import { copyText } from '../lib/clipboard';
 import { StatusBadge, statusRank } from '../components/AccountStatus';
 
@@ -290,6 +291,9 @@ function TenantAccountRow({ account, onChanged }: { account: MeAccountRow; onCha
       <td className="px-4 py-3 text-xs text-muted text-right tabular-nums">{fmtCost(account.todayCostUsd)}</td>
       <td className="px-4 py-3 text-xs text-muted text-right tabular-nums">{fmtCost(account.totalCostUsd)}</td>
       <td className="px-4 py-3">
+        {account.cpaQuota ? <CpaQuotaCell q={account.cpaQuota} /> : <span className="text-xs text-muted">—</span>}
+      </td>
+      <td className="px-4 py-3">
         {liveBanned ? (
           <StatusBadge status={account.status} limitedUntil={account.limitedUntil} />
         ) : (
@@ -371,6 +375,11 @@ function TenantAccountCard({ account, onChanged }: { account: MeAccountRow; onCh
         <span>今日 {fmtCost(account.todayCostUsd)}</span>
         <span>总计 {fmtCost(account.totalCostUsd)}</span>
       </div>
+      {account.cpaQuota && (
+        <div className="pt-1">
+          <CpaQuotaCell q={account.cpaQuota} />
+        </div>
+      )}
     </div>
   );
 }
@@ -444,6 +453,7 @@ export function TenantAccounts() {
                   <th className="px-4 py-3 font-medium">角色</th>
                   <th className="px-4 py-3 font-medium text-right">今日消费</th>
                   <th className="px-4 py-3 font-medium text-right">总消费</th>
+                  <th className="px-4 py-3 font-medium">额度 (5h/7d)</th>
                   <th className="px-4 py-3 font-medium">状态</th>
                   <th className="px-4 py-3 font-medium">操作</th>
                 </tr>
@@ -689,6 +699,7 @@ export function TenantDispatch() {
   const [error, setError] = useState<string | null>(null);
   const [fallbackNames, setFallbackNames] = useState<Map<string, string>>(new Map());
   const [accountNames, setAccountNames] = useState<Map<string, string>>(new Map());
+  const [concurrencyRef, concurrencyH] = useElementHeight<HTMLDivElement>();
 
   const load = useCallback(async () => {
     try {
@@ -767,13 +778,15 @@ export function TenantDispatch() {
             <StatCard label="并发中" value={inflight} sub={`成功率 ${traffic && traffic.total > 0 ? rate + '%' : '—'}`} accent />
           </div>
 
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
             {/* Concurrency — reuse the SAME admin panel so 待命/亲和/限额 status, sorting
                 and pagination are identical for tenant and admin (one code path). */}
-            <ConcurrencyPanel accounts={accounts} />
+            <div ref={concurrencyRef}>
+              <ConcurrencyPanel accounts={accounts} />
+            </div>
 
-            {/* Event timeline (reuse shared rendering) */}
-            <EventTimeline events={data.events} fallbackNames={fallbackNames} accountNames={accountNames} />
+            {/* Event timeline tracks the concurrency panel's height (scrolls if longer). */}
+            <EventTimeline events={data.events} fallbackNames={fallbackNames} accountNames={accountNames} maxHeightPx={concurrencyH > 0 ? concurrencyH : undefined} />
           </div>
 
           {/* Fallback channels */}

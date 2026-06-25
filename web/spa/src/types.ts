@@ -546,6 +546,7 @@ export interface MeAccountRow {
   subscriptionType?: string;
   todayCostUsd?: number;
   totalCostUsd?: number;
+  cpaQuota?: CpaQuota | null;   // CPA 5h/7d util + reset times (same as admin 号库)
 }
 
 export interface MeDashboard {

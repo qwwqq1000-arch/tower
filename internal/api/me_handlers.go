@@ -35,6 +35,14 @@ func meAccountsHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc 
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		// CPA per-account quota (5h/7d util + reset times), keyed by account id — so the
+		// tenant 号库 shows the same 额度/重置时间 as the admin 号库 (cpa-3 parity).
+		quotaByAccount := map[string]sqlc.CpaAccountQuotum{}
+		if qrows, qerr := q.ListCpaQuota(ctx); qerr == nil {
+			for _, qr := range qrows {
+				quotaByAccount[qr.AccountID] = qr
+			}
+		}
 		// Live status overlay (banned/half_open/permanent/cooldown + quota limit) from
 		// the store — mirrors the admin 号库 so a tenant sees the same live state.
 		liveStatus := map[string]string{}
@@ -77,11 +85,21 @@ func meAccountsHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc 
 			if limitedUntil > 0 {
 				status = "limited" // quota-rotated out — show 限额 like the admin 号库
 			}
+			var cpaQuota map[string]any
+			if qr, ok := quotaByAccount[a.AccountID]; ok {
+				cpaQuota = map[string]any{
+					"fiveHourUtil": qr.FiveHourUtil, "fiveHourResetsAt": qr.FiveHourResetsAt,
+					"sevenDayUtil": qr.SevenDayUtil, "sevenDayResetsAt": qr.SevenDayResetsAt,
+					"sevenDaySonnetUtil": qr.SevenDaySonnetUtil, "sevenDaySonnetResetsAt": qr.SevenDaySonnetResetsAt,
+					"updatedAt": qr.UpdatedAt, "fetchError": qr.QuotaFetchError,
+				}
+			}
 			out = append(out, map[string]any{
 				"accountId":        a.AccountID,
 				"nodeId":           a.NodeID,
 				"profileId":        a.ProfileID,
 				"nodeName":         a.NodeName,
+				"cpaQuota":         cpaQuota,
 				"email":            a.Email,
 				"expiresAt":        a.ExpiresAt,
 				"subscriptionType": a.SubscriptionType,

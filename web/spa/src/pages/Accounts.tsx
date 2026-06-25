@@ -165,7 +165,7 @@ function QuotaCell({
 }
 
 // CPA account quota cell — utilization is 0–100, resets_at is an ISO string.
-function CpaQuotaCell({ q }: { q: CpaQuota }) {
+export function CpaQuotaCell({ q }: { q: CpaQuota }) {
   const toMs = (s: string): number | undefined => {
     if (!s) return undefined;
     const t = Date.parse(s);

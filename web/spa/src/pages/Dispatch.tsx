@@ -3,6 +3,7 @@
 // SSE primary; polling fallback on error
 // ============================================================
 import { useEffect, useRef, useState } from 'react';
+import type { RefObject } from 'react';
 import { getDispatchStatus, listFallbackChannels, listAccounts, getServerStatus } from '../api';
 import type { DispatchStatus, DispatchAccountSnapshot, DispatchEvent, DispatchFallbackChannel, ServerStatus } from '../types';
 import { useAuth } from '../auth';
@@ -389,6 +390,23 @@ export function renderEventDetail(
   return target || '';
 }
 
+// useElementHeight measures an element's live height (offsetHeight) and keeps it
+// in sync via ResizeObserver. Used so the event timeline can cap its scroll region
+// to the concurrency panel's height (they sit side-by-side and should stay balanced).
+export function useElementHeight<T extends HTMLElement>(): [RefObject<T | null>, number] {
+  const ref = useRef<T>(null);
+  const [h, setH] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setH(el.offsetHeight));
+    ro.observe(el);
+    setH(el.offsetHeight);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, h];
+}
+
 // ------------------------------------------------------------------
 // Events timeline
 // ------------------------------------------------------------------
@@ -396,10 +414,14 @@ export function EventTimeline({
   events,
   fallbackNames,
   accountNames,
+  maxHeightPx,
 }: {
   events: DispatchEvent[];
   fallbackNames: Map<string, string>;
   accountNames: Map<string, string>;
+  // When set, the list scrolls within ~this height (minus the header) so it tracks
+  // the concurrency panel; when content is shorter the card simply hugs it (no black).
+  maxHeightPx?: number;
 }) {
   function formatTs(ts: number | undefined): string {
     if (ts == null || ts === 0) return '—';
@@ -419,7 +441,10 @@ export function EventTimeline({
       {events.length === 0 && (
         <p className="px-4 py-6 text-center text-muted text-xs">暂无事件</p>
       )}
-      <ul className="divide-y divide-line/50">
+      <ul
+        className={`divide-y divide-line/50 ${maxHeightPx ? 'overflow-y-auto' : ''}`}
+        style={maxHeightPx ? { maxHeight: Math.max(160, maxHeightPx - 49) } : undefined}
+      >
         {events.map((e, idx) => {
           const { label, cls } = getEventLabel(e.type);
           const detail = renderEventDetail(e.type, e.target, fallbackNames, accountNames, e.detail);
@@ -504,6 +529,7 @@ function AdminDispatch() {
   const [fallbackNames, setFallbackNames] = useState<Map<string, string>>(new Map());
   const [accountNames, setAccountNames] = useState<Map<string, string>>(new Map());
   const [serverStatus, setServerStatus] = useState<ServerStatus | null>(null);
+  const [leftColRef, leftColH] = useElementHeight<HTMLDivElement>();
   const esRef = useRef<EventSource | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -622,13 +648,13 @@ function AdminDispatch() {
         <>
           <ServerStatusCard status={serverStatus} />
           <StatsBar data={data} />
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-            <div>
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
+            <div ref={leftColRef}>
               <ConcurrencyPanel accounts={data.accounts} />
               <FallbackChannelsPanel channels={data.fallbackChannels ?? []} />
               <TrafficPanel data={data} />
             </div>
-            <EventTimeline events={data.events} fallbackNames={fallbackNames} accountNames={accountNames} />
+            <EventTimeline events={data.events} fallbackNames={fallbackNames} accountNames={accountNames} maxHeightPx={leftColH > 0 ? leftColH : undefined} />
           </div>
         </>
       )}
