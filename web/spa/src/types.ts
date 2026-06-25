@@ -178,8 +178,6 @@ export interface PolicyPatch {
   SpendCap5hUsd?: { Min: number; Max: number };
   SpendCap7dEnabled?: boolean;
   SpendCap7dUsd?: { Min: number; Max: number };
-  SpendWindow5hMs?: number;
-  SpendWindow7dMs?: number;
   // Phase 3: Cadence (拟人节奏)
   HumanDelayEnabled?: boolean;
   HumanDelayDist?: string;

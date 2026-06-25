@@ -195,9 +195,6 @@ func TestSpendCapDefaults(t *testing.T) {
 	if d.SpendCap5hUsd.Min != 100 || d.SpendCap5hUsd.Max != 200 {
 		t.Fatal("5h 默认区间错")
 	}
-	if d.SpendWindow7dMs != 604800000 {
-		t.Fatal("7d 窗口长错")
-	}
 }
 
 func TestSpendCapPatch(t *testing.T) {

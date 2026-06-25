@@ -154,11 +154,6 @@ type Config struct {
 	SpendCap7dEnabled bool
 	// SpendCap7dUsd is the 7-day spend cap range (per account). Default {Min: 500, Max: 1000}.
 	SpendCap7dUsd RangeF
-	// SpendWindow5hMs is the 5-hour window duration in milliseconds. Default 18000000 (5 hours).
-	SpendWindow5hMs int64
-	// SpendWindow7dMs is the 7-day window duration in milliseconds. Default 604800000 (7 days).
-	SpendWindow7dMs int64
-
 	// HumanDelayEnabled gates the human-delay feature. When false (default), the
 	// effective distribution is always "uniform" regardless of HumanDelayDist.
 	// When true, HumanDelayDist applies.
@@ -344,8 +339,6 @@ func Defaults() Config {
 		SpendCap5hUsd:     RangeF{Min: 100, Max: 200},
 		SpendCap7dEnabled: false,
 		SpendCap7dUsd:     RangeF{Min: 500, Max: 1000},
-		SpendWindow5hMs:   18000000,
-		SpendWindow7dMs:   604800000,
 		HumanDelayEnabled: false,
 		HumanDelayDist:    "uniform",
 		HumanDelayP50Ms:   RangeI{Min: 2000, Max: 2000},
@@ -427,8 +420,6 @@ type Patch struct {
 	SpendCap5hUsd             *RangeF
 	SpendCap7dEnabled         *bool
 	SpendCap7dUsd             *RangeF
-	SpendWindow5hMs           *int64
-	SpendWindow7dMs           *int64
 	HumanDelayEnabled         *bool
 	HumanDelayDist            *string
 	HumanDelayP50Ms           *RangeI
@@ -596,12 +587,6 @@ func apply(c *Config, p Patch) {
 	}
 	if p.SpendCap7dUsd != nil {
 		c.SpendCap7dUsd = *p.SpendCap7dUsd
-	}
-	if p.SpendWindow5hMs != nil {
-		c.SpendWindow5hMs = *p.SpendWindow5hMs
-	}
-	if p.SpendWindow7dMs != nil {
-		c.SpendWindow7dMs = *p.SpendWindow7dMs
 	}
 	if p.HumanDelayEnabled != nil {
 		c.HumanDelayEnabled = *p.HumanDelayEnabled
@@ -775,8 +760,6 @@ func DryRun(base Config, patches ...Patch) (Config, []Diff) {
 	add("SpendCap5hUsd", base.SpendCap5hUsd, final.SpendCap5hUsd)
 	add("SpendCap7dEnabled", base.SpendCap7dEnabled, final.SpendCap7dEnabled)
 	add("SpendCap7dUsd", base.SpendCap7dUsd, final.SpendCap7dUsd)
-	add("SpendWindow5hMs", base.SpendWindow5hMs, final.SpendWindow5hMs)
-	add("SpendWindow7dMs", base.SpendWindow7dMs, final.SpendWindow7dMs)
 	// Phase 3: HumanDelay
 	add("HumanDelayEnabled", base.HumanDelayEnabled, final.HumanDelayEnabled)
 	add("HumanDelayDist", base.HumanDelayDist, final.HumanDelayDist)

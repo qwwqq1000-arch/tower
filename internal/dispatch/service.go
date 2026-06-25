@@ -28,6 +28,11 @@ import (
 	"github.com/qwwqq1000-arch/tower/internal/state"
 )
 
+const (
+	spendWindow5hMs int64 = 18_000_000  // 5 hours
+	spendWindow7dMs int64 = 604_800_000 // 7 days
+)
+
 // Service assembles policy + selection + proxy + orchestration into one call.
 type Service struct {
 	Q     *sqlc.Queries
@@ -408,18 +413,11 @@ func (s *Service) recordSpend(ctx context.Context, ownerID, key string, cost flo
 	s.Store.AddSpend(key, cost, now)
 	// Window-dependent salts: cap re-randomises each new window (same config range)
 	// but stays stable within a window so mid-window calls see the same cap.
-	// Guard against divide-by-zero for zero/negative window sizes.
-	salt5h := "spend5h"
-	if cfg.SpendWindow5hMs > 0 {
-		salt5h = fmt.Sprintf("spend5h:%d", now/cfg.SpendWindow5hMs)
-	}
-	salt7d := "spend7d"
-	if cfg.SpendWindow7dMs > 0 {
-		salt7d = fmt.Sprintf("spend7d:%d", now/cfg.SpendWindow7dMs)
-	}
+	salt5h := fmt.Sprintf("spend5h:%d", now/spendWindow5hMs)
+	salt7d := fmt.Sprintf("spend7d:%d", now/spendWindow7dMs)
 	if cfg.SpendCap5hEnabled {
 		cap5 := cfg.SpendCap5hUsd.Resolve(key, salt5h)
-		if overCap(s.Store.SpendInWindow(key, now, cfg.SpendWindow5hMs), cap5) {
+		if overCap(s.Store.SpendInWindow(key, now, spendWindow5hMs), cap5) {
 			fetchCtx5h, cancel5h := context.WithTimeout(context.Background(), 8*time.Second)
 			reason5h, recovMs5h := s.classifyQuotaLimit(fetchCtx5h, key, cfg, now)
 			cancel5h()
@@ -431,18 +429,18 @@ func (s *Service) recordSpend(ctx context.Context, ownerID, key string, cost flo
 					Detail: map[string]any{"account": key, "resetsAt": recovMs5h, "source": reason5h},
 				})
 			} else {
-				s.Store.SetLimited(key, s.Base.MaxConcurrent, map[string]int64{"all": now + cfg.SpendWindow5hMs})
-				s.persistLimit(ctx, key, now+cfg.SpendWindow5hMs, "spend5h")
+				s.Store.SetLimited(key, s.Base.MaxConcurrent, map[string]int64{"all": now + spendWindow5hMs})
+				s.persistLimit(ctx, key, now+spendWindow5hMs, "spend5h")
 				_ = events.Record(ctx, s.Q, now, events.Event{
 					Type: "quota_limited", Target: key, OwnerID: ownerID,
-					Detail: map[string]any{"account": key, "resetsAt": now + cfg.SpendWindow5hMs, "source": "spend5h"},
+					Detail: map[string]any{"account": key, "resetsAt": now + spendWindow5hMs, "source": "spend5h"},
 				})
 			}
 		}
 	}
 	if cfg.SpendCap7dEnabled {
 		cap7 := cfg.SpendCap7dUsd.Resolve(key, salt7d)
-		if overCap(s.Store.SpendInWindow(key, now, cfg.SpendWindow7dMs), cap7) {
+		if overCap(s.Store.SpendInWindow(key, now, spendWindow7dMs), cap7) {
 			fetchCtx7d, cancel7d := context.WithTimeout(context.Background(), 8*time.Second)
 			reason7d, recovMs7d := s.classifyQuotaLimit(fetchCtx7d, key, cfg, now)
 			cancel7d()
@@ -454,11 +452,11 @@ func (s *Service) recordSpend(ctx context.Context, ownerID, key string, cost flo
 					Detail: map[string]any{"account": key, "resetsAt": recovMs7d, "source": reason7d},
 				})
 			} else {
-				s.Store.SetLimited(key, s.Base.MaxConcurrent, map[string]int64{"all": now + cfg.SpendWindow7dMs})
-				s.persistLimit(ctx, key, now+cfg.SpendWindow7dMs, "spend7d")
+				s.Store.SetLimited(key, s.Base.MaxConcurrent, map[string]int64{"all": now + spendWindow7dMs})
+				s.persistLimit(ctx, key, now+spendWindow7dMs, "spend7d")
 				_ = events.Record(ctx, s.Q, now, events.Event{
 					Type: "quota_limited", Target: key, OwnerID: ownerID,
-					Detail: map[string]any{"account": key, "resetsAt": now + cfg.SpendWindow7dMs, "source": "spend7d"},
+					Detail: map[string]any{"account": key, "resetsAt": now + spendWindow7dMs, "source": "spend7d"},
 				})
 			}
 		}

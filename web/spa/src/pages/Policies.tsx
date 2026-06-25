@@ -237,8 +237,6 @@ export default function Policies() {
   const spendCap7dEnabled = useField<boolean>(false);
   const spendCap7dMin = useField<number>(0);
   const spendCap7dMax = useField<number>(0);
-  const spendWindow5hMs = useField<number>(18000000); // 5h in ms
-  const spendWindow7dMs = useField<number>(604800000); // 7d in ms
   // Phase 3: HumanDelay (人类延迟)
   const humanDelayEnabled = useField<boolean>(false);
   const humanDelayDist = useField<string>('uniform');
@@ -381,7 +379,6 @@ export default function Policies() {
       quotaLimitKeywords, quotaLimitCodes,
       elasticEnabled, elasticScaleUpUtil, elasticScaleDownUtil, elasticMaxReserve, elasticBaselineCount,
       spendCap5hEnabled, spendCap5hMin, spendCap5hMax, spendCap7dEnabled, spendCap7dMin, spendCap7dMax,
-      spendWindow5hMs, spendWindow7dMs,
       humanDelayEnabled, humanDelayDist, humanDelayP50Min, humanDelayP50Max, humanDelayP95Min, humanDelayP95Max,
       rateGovEnabled, rateRPMMin, rateRPMMax, rateRPHMin, rateRPHMax, rateRPDMin, rateRPDMax, rateExceedAction,
       sessionSimEnabled, sessionBurstCountMin, sessionBurstCountMax, sessionPauseMsMin, sessionPauseMsMax,
@@ -451,8 +448,6 @@ export default function Policies() {
       setRange(spendCap5hMin, spendCap5hMax, p, 'SpendCap5hUsd');
       setBool(spendCap7dEnabled, p, 'SpendCap7dEnabled');
       setRange(spendCap7dMin, spendCap7dMax, p, 'SpendCap7dUsd');
-      setNum(spendWindow5hMs, p, 'SpendWindow5hMs');
-      setNum(spendWindow7dMs, p, 'SpendWindow7dMs');
       // Phase 3: HumanDelay
       setBool(humanDelayEnabled, p, 'HumanDelayEnabled');
       setStr(humanDelayDist, p, 'HumanDelayDist');
@@ -591,8 +586,6 @@ export default function Policies() {
     if (spendCap5hMin.enabled) patch.SpendCap5hUsd = { Min: spendCap5hMin.value, Max: spendCap5hMax.value };
     if (spendCap7dEnabled.enabled) patch.SpendCap7dEnabled = spendCap7dEnabled.value;
     if (spendCap7dMin.enabled) patch.SpendCap7dUsd = { Min: spendCap7dMin.value, Max: spendCap7dMax.value };
-    if (spendWindow5hMs.enabled) patch.SpendWindow5hMs = spendWindow5hMs.value;
-    if (spendWindow7dMs.enabled) patch.SpendWindow7dMs = spendWindow7dMs.value;
     // Phase 3: HumanDelay
     if (humanDelayEnabled.enabled) patch.HumanDelayEnabled = humanDelayEnabled.value;
     if (humanDelayDist.enabled) patch.HumanDelayDist = humanDelayDist.value;
@@ -699,7 +692,7 @@ export default function Policies() {
     warmupHours, warmupMaxConcurrent, warmupBlockOpus,
     sessionErrorThreshold, sessionCooldownSec, responseExileEnabled, responseExileKeywords, quotaLimitKeywords, quotaLimitCodes,
     elasticEnabled, elasticScaleUpUtil, elasticScaleDownUtil, elasticMaxReserve, elasticBaselineCount,
-    spendCap5hEnabled, spendCap5hMin, spendCap5hMax, spendCap7dEnabled, spendCap7dMin, spendCap7dMax, spendWindow5hMs, spendWindow7dMs,
+    spendCap5hEnabled, spendCap5hMin, spendCap5hMax, spendCap7dEnabled, spendCap7dMin, spendCap7dMax,
     // Phase 3
     humanDelayEnabled, humanDelayDist, humanDelayP50Min, humanDelayP95Min,
     rateGovEnabled, rateRPMMin, rateRPHMin, rateRPDMin, rateExceedAction,
@@ -731,7 +724,7 @@ export default function Policies() {
       warmupHours, warmupMaxConcurrent, warmupBlockOpus,
     ],
     limits: [
-      spendCap5hEnabled, spendCap5hMin, spendCap7dEnabled, spendCap7dMin, spendWindow5hMs, spendWindow7dMs,
+      spendCap5hEnabled, spendCap5hMin, spendCap7dEnabled, spendCap7dMin,
       quotaLimitKeywords, quotaLimitCodes,
       limitOpus48, limitOpus47, limitSonnet46, limitHaiku45,
     ],
@@ -1017,10 +1010,6 @@ export default function Policies() {
                 <RangeInput min={spendCap5hMin.value} max={spendCap5hMax.value} onChangeMin={spendCap5hMin.set} onChangeMax={spendCap5hMax.set} disabled={!spendCap5hMin.enabled} step={0.01} minLabel="min $" maxLabel="max $" />
               </FieldRow>
 
-              <FieldRow label="SpendWindow5hMs" desc="5h 窗口时长 (ms)，默认 18000000 (5h)" enabled={spendWindow5hMs.enabled} onToggle={spendWindow5hMs.toggle} showOnlyConfigured={so}>
-                <NumInput value={spendWindow5hMs.value} onChange={spendWindow5hMs.set} disabled={!spendWindow5hMs.enabled} min={0} step={60000} />
-              </FieldRow>
-
               {/* 7d window */}
               <FieldRow label="SpendCap7dEnabled" desc="启用 7d 滚动窗口花费上限检测" enabled={spendCap7dEnabled.enabled} onToggle={spendCap7dEnabled.toggle} showOnlyConfigured={so}>
                 <label className="flex items-center gap-2 cursor-pointer">
@@ -1033,9 +1022,6 @@ export default function Policies() {
                 <RangeInput min={spendCap7dMin.value} max={spendCap7dMax.value} onChangeMin={spendCap7dMin.set} onChangeMax={spendCap7dMax.set} disabled={!spendCap7dMin.enabled} step={0.1} minLabel="min $" maxLabel="max $" />
               </FieldRow>
 
-              <FieldRow label="SpendWindow7dMs" desc="7d 窗口时长 (ms)，默认 604800000 (7d)" enabled={spendWindow7dMs.enabled} onToggle={spendWindow7dMs.toggle} showOnlyConfigured={so}>
-                <NumInput value={spendWindow7dMs.value} onChange={spendWindow7dMs.set} disabled={!spendWindow7dMs.enabled} min={0} step={3600000} />
-              </FieldRow>
             </div>
 
             {/* Group: 限额检测关键词 */}
