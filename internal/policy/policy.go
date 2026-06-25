@@ -279,6 +279,11 @@ type Config struct {
 	// QuietHoursConcurrency is the effective max-concurrent cap during quiet hours.
 	// Default 1. Applied via SetCapacity; takes min with MaxConcurrent.
 	QuietHoursConcurrency int
+
+	// QuotaFullThreshold is the utilization fraction (0–100 scale matching CPA usage API)
+	// above which a window is considered exhausted for reactive quota classification.
+	// Default 99.0.
+	QuotaFullThreshold float64
 }
 
 // Defaults returns sane baseline configuration.
@@ -373,6 +378,7 @@ func Defaults() Config {
 		DirectFallbackKeywords:    []string{"rate_limit_error"},
 		RetryDelayMs:              0,
 		RetrySameAccountMax:       0,
+		QuotaFullThreshold:        99.0,
 	}
 }
 
@@ -457,6 +463,8 @@ type Patch struct {
 	DirectFallbackKeywords    *[]string
 	RetryDelayMs              *int
 	RetrySameAccountMax       *int
+
+	QuotaFullThreshold *float64
 }
 
 func apply(c *Config, p Patch) {
@@ -679,6 +687,9 @@ func apply(c *Config, p Patch) {
 	if p.RetrySameAccountMax != nil {
 		c.RetrySameAccountMax = *p.RetrySameAccountMax
 	}
+	if p.QuotaFullThreshold != nil {
+		c.QuotaFullThreshold = *p.QuotaFullThreshold
+	}
 }
 
 // MaxTokensFor returns the configured output-token ceiling for model, matching the
@@ -803,5 +814,7 @@ func DryRun(base Config, patches ...Patch) (Config, []Diff) {
 	add("DirectFallbackKeywords", base.DirectFallbackKeywords, final.DirectFallbackKeywords)
 	add("RetryDelayMs", base.RetryDelayMs, final.RetryDelayMs)
 	add("RetrySameAccountMax", base.RetrySameAccountMax, final.RetrySameAccountMax)
+	// Phase 5: reactive quota
+	add("QuotaFullThreshold", base.QuotaFullThreshold, final.QuotaFullThreshold)
 	return final, diffs
 }

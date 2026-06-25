@@ -78,6 +78,7 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 				"label":        labels[s.Key],
 				"status":       status,
 				"limitedUntil": s.LimitedUntil,
+				"limitReason":  s.LimitReason,
 				"inflight":     s.Inflight,
 				"available":    s.Available,
 				"recoverAt":    s.RecoverAt,

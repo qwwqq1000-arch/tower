@@ -475,6 +475,7 @@ export interface DispatchAccountSnapshot {
   available: number;
   recoverAt?: number; // ms; when a cooling breaker half-opens (0 if not cooling)
   limitedUntil?: number; // ms; quota-limit reset deadline when status==='limited'
+  limitReason?: string;  // "5h" | "7d" | "" — typed quota window
   todayCostUsd?: number;
   totalCostUsd?: number;
   rpm?: number; // requests in the last 60 seconds for this account

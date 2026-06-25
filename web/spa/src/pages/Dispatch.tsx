@@ -107,7 +107,7 @@ function ConcurrencyPanel({ accounts }: { accounts: DispatchAccountSnapshot[] })
                   <p className="text-sm text-ink font-medium">{a.label || '—'}</p>
                 </td>
                 <td className="px-4 py-2">
-                  <StatusBadge status={a.status} limitedUntil={a.limitedUntil} />
+                  <StatusBadge status={a.status} limitedUntil={a.limitedUntil} limitReason={a.limitReason} />
                   {(a.status === 'banned' || a.status === 'half_open' || a.status === 'cooldown') && a.recoverAt && a.recoverAt > 0 && (
                     <div className="text-[10px] text-muted mt-0.5"><RecoverCountdown recoverAt={a.recoverAt} /></div>
                   )}

@@ -366,6 +366,17 @@ func (s *Store) SetLimited(key string, capacity int, limits map[string]int64) {
 	a.LimitedUntil = limits
 }
 
+// SetLimitedReason sets a typed quota limit (reason "5h"/"7d") with the real recovery
+// time. It sets LimitedUntil={"all":untilMs} and LimitReason=reason. When the limit
+// clears (now >= untilMs), LimitReason reads as "" in the Snapshot (cleared lazily).
+func (s *Store) SetLimitedReason(key string, capacity int, untilMs int64, reason string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.ensureLocked(key, capacity)
+	a.LimitedUntil = map[string]int64{"all": untilMs}
+	a.LimitReason = reason
+}
+
 // IsLimited reports whether the account has any active rate-limit entry at now.
 func (s *Store) IsLimited(key string, now int64) bool {
 	s.mu.Lock()
@@ -504,7 +515,8 @@ type AccountSnapshot struct {
 	// "active" while Limited is true — the two are independent, so the UI must read
 	// Limited to show a quota-rotated account as "限额" instead of "活跃".
 	Limited      bool
-	LimitedUntil int64 // ms; latest active quota-limit reset deadline (0 if not limited)
+	LimitedUntil int64  // ms; latest active quota-limit reset deadline (0 if not limited)
+	LimitReason  string // "5h" / "7d" / "" — typed quota window; empty when limit cleared
 }
 
 // Snapshot returns a sorted, point-in-time view of every account's live state.
@@ -529,9 +541,14 @@ func (s *Store) Snapshot(now int64) []AccountSnapshot {
 			recoverAt = a.CoolUntil // temporary error-cooldown (429): show its remaining time
 		}
 		limited, limitUntil := a.LimitState(now)
+		limitReason := ""
+		if limited {
+			limitReason = a.LimitReason
+		}
 		out = append(out, AccountSnapshot{
 			Key: key, Status: st, Inflight: a.Slots.InUse(), Available: avail,
 			RecoverAt: recoverAt, Limited: limited, LimitedUntil: limitUntil,
+			LimitReason: limitReason,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })

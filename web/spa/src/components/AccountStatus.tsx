@@ -19,7 +19,8 @@ export function fmtCountdown(remainMs: number): string {
 
 // StatusBadge shows a quota-limited account as a live recovery countdown (timezone-
 // agnostic, from the absolute limitedUntil), and any other status as its normal label.
-export function StatusBadge({ status, limitedUntil, className = '' }: { status?: string; limitedUntil?: number; className?: string }) {
+// When limitReason is "5h" or "7d", the label reads "5h限额" / "7d限额" respectively.
+export function StatusBadge({ status, limitedUntil, limitReason, className = '' }: { status?: string; limitedUntil?: number; limitReason?: string; className?: string }) {
   const limited = status === 'limited';
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -31,7 +32,8 @@ export function StatusBadge({ status, limitedUntil, className = '' }: { status?:
   const cls = `inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-mono ${statusColor(status)} ${className}`;
   if (limited) {
     const cd = limitedUntil && limitedUntil > 0 ? fmtCountdown(limitedUntil - now) : null;
-    return <span className={cls}>限额{cd ? `(恢复倒计时 ${cd})` : '(配额)'}</span>;
+    const prefix = limitReason === '5h' ? '5h限额' : limitReason === '7d' ? '7d限额' : '限额';
+    return <span className={cls}>{prefix}{cd ? `(恢复倒计时 ${cd})` : '(配额)'}</span>;
   }
   return <span className={cls}>{statusLabel(status)}</span>;
 }

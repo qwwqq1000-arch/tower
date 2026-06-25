@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/qwwqq1000-arch/tower/internal/billing"
+	"github.com/qwwqq1000-arch/tower/internal/cpaclient"
 	"github.com/qwwqq1000-arch/tower/internal/crypto"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 	"github.com/qwwqq1000-arch/tower/internal/events"
@@ -57,6 +58,10 @@ type Service struct {
 	// reachable at points where only the key is known. key→accountId is stable, so
 	// a shared lock-free map is safe.
 	keyAccount sync.Map // key: string (nodeID:profileID) → string (accountID)
+
+	// quotaInFlight guards against multiple concurrent quota-classify goroutines for
+	// the same account key (e.g. burst of 429s). Only one goroutine runs at a time.
+	quotaInFlight sync.Map // key: string → struct{}
 }
 
 // NewService builds a dispatch Service. cipher is the runtime master-key cipher
@@ -386,21 +391,43 @@ func (s *Service) recordSpend(ctx context.Context, ownerID, key string, cost flo
 	if cfg.SpendCap5hEnabled {
 		cap5 := cfg.SpendCap5hUsd.Resolve(key, "spend5h")
 		if overCap(s.Store.SpendInWindow(key, now, cfg.SpendWindow5hMs), cap5) {
-			s.Store.SetLimited(key, s.Base.MaxConcurrent, map[string]int64{"all": now + cfg.SpendWindow5hMs})
-			_ = events.Record(ctx, s.Q, now, events.Event{
-				Type: "quota_limited", Target: key, OwnerID: ownerID,
-				Detail: map[string]any{"account": key, "resetsAt": now + cfg.SpendWindow5hMs, "source": "spend5h"},
-			})
+			fetchCtx5h, cancel5h := context.WithTimeout(ctx, 8*time.Second)
+			reason5h, recovMs5h := s.classifyQuotaLimit(fetchCtx5h, key, cfg, now)
+			cancel5h()
+			if reason5h != "" {
+				s.Store.SetLimitedReason(key, s.Base.MaxConcurrent, recovMs5h, reason5h)
+				_ = events.Record(ctx, s.Q, now, events.Event{
+					Type: "quota_limited", Target: key, OwnerID: ownerID,
+					Detail: map[string]any{"account": key, "resetsAt": recovMs5h, "source": reason5h},
+				})
+			} else {
+				s.Store.SetLimited(key, s.Base.MaxConcurrent, map[string]int64{"all": now + cfg.SpendWindow5hMs})
+				_ = events.Record(ctx, s.Q, now, events.Event{
+					Type: "quota_limited", Target: key, OwnerID: ownerID,
+					Detail: map[string]any{"account": key, "resetsAt": now + cfg.SpendWindow5hMs, "source": "spend5h"},
+				})
+			}
 		}
 	}
 	if cfg.SpendCap7dEnabled {
 		cap7 := cfg.SpendCap7dUsd.Resolve(key, "spend7d")
 		if overCap(s.Store.SpendInWindow(key, now, cfg.SpendWindow7dMs), cap7) {
-			s.Store.SetLimited(key, s.Base.MaxConcurrent, map[string]int64{"all": now + cfg.SpendWindow7dMs})
-			_ = events.Record(ctx, s.Q, now, events.Event{
-				Type: "quota_limited", Target: key, OwnerID: ownerID,
-				Detail: map[string]any{"account": key, "resetsAt": now + cfg.SpendWindow7dMs, "source": "spend7d"},
-			})
+			fetchCtx7d, cancel7d := context.WithTimeout(ctx, 8*time.Second)
+			reason7d, recovMs7d := s.classifyQuotaLimit(fetchCtx7d, key, cfg, now)
+			cancel7d()
+			if reason7d != "" {
+				s.Store.SetLimitedReason(key, s.Base.MaxConcurrent, recovMs7d, reason7d)
+				_ = events.Record(ctx, s.Q, now, events.Event{
+					Type: "quota_limited", Target: key, OwnerID: ownerID,
+					Detail: map[string]any{"account": key, "resetsAt": recovMs7d, "source": reason7d},
+				})
+			} else {
+				s.Store.SetLimited(key, s.Base.MaxConcurrent, map[string]int64{"all": now + cfg.SpendWindow7dMs})
+				_ = events.Record(ctx, s.Q, now, events.Event{
+					Type: "quota_limited", Target: key, OwnerID: ownerID,
+					Detail: map[string]any{"account": key, "resetsAt": now + cfg.SpendWindow7dMs, "source": "spend7d"},
+				})
+			}
 		}
 	}
 }
@@ -1845,16 +1872,40 @@ func isCooldownSignal(status int, cfg policy.Config) bool {
 // maybeCooldown puts an account into a temporary cooldown when the response status
 // matches a configured CooldownSignal (e.g. 429). This is NOT a ban: the account
 // auto-recovers after CooldownSignalSec and never escalates to permanent.
+// Additionally, for cpa nodes, it kicks a background goroutine to fetch live quota
+// and upgrade the transient cooldown to a typed "5h"/"7d" limit if a window is full.
 func (s *Service) maybeCooldown(ctx context.Context, ownerID, key string, status int, cfg policy.Config) {
 	if !isCooldownSignal(status, cfg) {
 		return
 	}
-	until := s.Now() + int64(cfg.CooldownSignalSec)*1000
+	now := s.Now()
+	until := now + int64(cfg.CooldownSignalSec)*1000
 	s.Store.SetCooldown(key, cfg.MaxConcurrent, until)
-	_ = events.Record(ctx, s.Q, s.Now(), events.Event{
+	_ = events.Record(ctx, s.Q, now, events.Event{
 		Type: "cooldown", Target: key, OwnerID: ownerID,
 		Detail: map[string]any{"account": key, "status": status, "seconds": cfg.CooldownSignalSec},
 	})
+	// Background goroutine: fetch live quota and upgrade to typed limit if a window is full.
+	// Uses detached context (request ctx dies after response); guarded by quotaInFlight so
+	// only one goroutine runs per key at a time (burst-429 safety).
+	if _, loaded := s.quotaInFlight.LoadOrStore(key, struct{}{}); loaded {
+		return // another goroutine already classifying this key
+	}
+	cfgSnap := cfg // capture config value before goroutine
+	go func() {
+		defer s.quotaInFlight.Delete(key)
+		fetchCtx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		reason, recoveryMs := s.classifyQuotaLimit(fetchCtx, key, cfgSnap, now)
+		if reason == "" {
+			return
+		}
+		s.Store.SetLimitedReason(key, s.Base.MaxConcurrent, recoveryMs, reason)
+		_ = events.Record(context.Background(), s.Q, s.Now(), events.Event{
+			Type: "quota_limited", Target: key, OwnerID: ownerID,
+			Detail: map[string]any{"account": key, "source": reason, "resetsAt": recoveryMs},
+		})
+	}()
 }
 
 // recordRetry records a failover event: an attempt to account `key` failed
@@ -1872,6 +1923,76 @@ func splitKey(key string) (node, profile string, ok bool) {
 		return "", "", false
 	}
 	return key[:i], key[i+1:], true
+}
+
+// parseResetsAt parses an RFC3339 timestamp string into unix milliseconds.
+// Returns 0 when s is empty or unparseable.
+func parseResetsAt(s string) int64 {
+	if s == "" {
+		return 0
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return 0
+	}
+	return t.UnixMilli()
+}
+
+// pickQuotaLimit is a pure helper (testable without network) that classifies which
+// quota window is exhausted. Checks 7d first (harder cap), then 5h.
+// Returns (reason, recoveryMs) or ("", 0) when no window is full.
+func pickQuotaLimit(u *cpaclient.Usage, threshold float64, now int64) (string, int64) {
+	if u == nil {
+		return "", 0
+	}
+	if u.SevenDay != nil && u.SevenDay.Utilization >= threshold {
+		recov := parseResetsAt(u.SevenDay.ResetsAt)
+		if recov <= 0 {
+			recov = now + 7*24*3600*1000
+		}
+		return "7d", recov
+	}
+	if u.FiveHour != nil && u.FiveHour.Utilization >= threshold {
+		recov := parseResetsAt(u.FiveHour.ResetsAt)
+		if recov <= 0 {
+			recov = now + 5*3600*1000
+		}
+		return "5h", recov
+	}
+	return "", 0
+}
+
+// classifyQuotaLimit fetches the cpa account's live quota and returns a typed limit if
+// a window is exhausted. Returns ("",0) for non-cpa nodes, missing mgmt_key, fetch
+// errors, or when no window is full. Never panics — the dispatch hot path is safe.
+func (s *Service) classifyQuotaLimit(ctx context.Context, key string, cfg policy.Config, now int64) (string, int64) {
+	if s.Q == nil {
+		return "", 0
+	}
+	nodeID, profileID, ok := splitKey(key)
+	if !ok {
+		return "", 0
+	}
+	node, err := s.Q.GetNode(ctx, nodeID)
+	if err != nil || node.Kind != "cpa" || node.MgmtKey == "" {
+		return "", 0
+	}
+	mgmtKey := node.MgmtKey
+	if s.Cipher != nil {
+		mgmtKey = s.Cipher.DecryptOrPlaintext(node.MgmtKey)
+	}
+	c := cpaclient.New(node.BaseUrl, mgmtKey)
+	fetchCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	u, err := c.Usage(fetchCtx, profileID)
+	if err != nil {
+		return "", 0
+	}
+	threshold := cfg.QuotaFullThreshold
+	if threshold <= 0 {
+		threshold = 99.0
+	}
+	return pickQuotaLimit(u, threshold, now)
 }
 
 // acctOwnerOf returns the ownerID of the account associated with the dispatch

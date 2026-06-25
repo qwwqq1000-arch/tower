@@ -32,6 +32,7 @@ type Account struct {
 	Disabled     bool
 	Offline      bool
 	LimitedUntil map[string]int64 // model class ("opus"/"sonnet"/"all") -> reset time ms
+	LimitReason  string           // "5h" / "7d" / "" — set by SetLimitedReason; clears lazily
 	WarmupCap    int              // 0 = no warmup limit; >0 = max in-flight during warmup
 	CoolUntil    int64            // ms; temporary error-cooldown (e.g. 429); 0 = none. Ephemeral.
 	spendLog     []spendEntry     // 升序时间
