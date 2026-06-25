@@ -217,7 +217,7 @@ func cpaQuotaAll(ctx context.Context, c *cpaclient.Client) (map[string]any, erro
 	out := make([]accountUsage, 0, len(accounts))
 	for _, a := range accounts {
 		au := accountUsage{ID: a.ID, Email: a.Email}
-		if u, uerr := c.Usage(ctx, a.DispatchSelector()); uerr == nil {
+		if u, uerr := c.Usage(ctx, a.AuthIndex, a.DispatchSelector()); uerr == nil {
 			au.Usage = u
 		} else {
 			au.FetchErr = uerr.Error()

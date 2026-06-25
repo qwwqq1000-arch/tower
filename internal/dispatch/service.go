@@ -2195,7 +2195,9 @@ func (s *Service) classifyQuotaLimit(ctx context.Context, key string, cfg policy
 		mgmtKey = s.Cipher.DecryptOrPlaintext(node.MgmtKey)
 	}
 	c := cpaclient.New(node.BaseUrl, mgmtKey)
-	u, err := c.Usage(ctx, profileID)
+	// authIndex is not stored in the dispatch context; pass "" so CPA falls back to
+	// the legacy account-usage endpoint using profileID as the selector.
+	u, err := c.Usage(ctx, "", profileID)
 	if err != nil {
 		return "", 0
 	}
