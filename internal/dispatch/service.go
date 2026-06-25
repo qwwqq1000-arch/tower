@@ -140,6 +140,27 @@ func matchesAny(body string, kws []string) bool {
 	return false
 }
 
+// terminalError reports whether a response is a deterministic terminal failure
+// that must be returned immediately to the client without retrying other accounts
+// or falling over to the fallback channel. Matches when status==400 AND the body
+// contains any TerminalErrorKeywords substring (case-insensitive). Empty keywords
+// → feature off → never terminal.
+func terminalError(status int, body string, cfg policy.Config) bool {
+	if status != 400 {
+		return false
+	}
+	if len(cfg.TerminalErrorKeywords) == 0 {
+		return false
+	}
+	lb := strings.ToLower(body)
+	for _, kw := range cfg.TerminalErrorKeywords {
+		if kw != "" && strings.Contains(lb, strings.ToLower(kw)) {
+			return true
+		}
+	}
+	return false
+}
+
 // directFallbackMatch reports whether a failed attempt's response should route
 // straight to fallback (skipping remaining account attempts): status is in the
 // configured codes AND the body contains a configured keyword. Empty codes or
@@ -574,7 +595,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 		BaseMs: cfg.CooldownBaseMs, MaxMs: cfg.CooldownMaxMs, Mult: cfg.CooldownMult,
 	}
 
-	order, resolver, keyOwner, keyCfg := s.buildCandidates(ctx, ownerID, model, cfg)
+	order, allKeys, resolver, keyOwner, keyCfg := s.buildCandidates(ctx, ownerID, model, cfg)
 	channels := s.enabledChannels(ctx, ownerID, model)
 
 	conv := session.ConvID(body)
@@ -600,17 +621,23 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 	}
 
 	// TIER 2: affinity pinning.
-	order0 := order
+	// Resolve affinity pin against allKeys (full candidate set) NOT just the elastic
+	// baseline — so a reserve account that was pinned in a prior turn is reachable
+	// even when elastic has it off the active working set (affinity > elastic, Fix 2).
 	_, pinActive := s.sess.Affinity(conv, nowMs)
 	pinned := false
 	affinityWaitKey := ""
 	if cfg.AffinityTTLSec > 0 && pinActive {
-		order = s.pinToAffinity(conv, order0, nowMs)
-		pinned = true
-		if len(order) == 1 {
-			affinityWaitKey = order[0]
+		pinnedOrder := s.pinToAffinity(conv, allKeys, nowMs)
+		if len(pinnedOrder) == 1 {
+			// Found the pinned account in the full set → force it as the sole candidate.
+			order = pinnedOrder
+			affinityWaitKey = pinnedOrder[0]
+		} else {
+			// Pinned account absent anywhere → empty list → falls through to exhausted fallback.
+			order = nil
 		}
-		// len(order)==0 → pinned account gone → falls through to exhausted fallback.
+		pinned = true
 	}
 
 	// TIER 3: soft rules (probe, price) + session-exile — only when NOT pinned.
@@ -667,7 +694,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 			OnRecover: func(key string) { s.recordRecover(ctx, key) },
 			OnAttempt: func(key string, res ProxyResult, ok bool) {
 				if !ok {
-					s.logAttemptErr(ctx, ownerID, model, key, res.Status)
+					s.logAttemptErr(ctx, ownerID, model, key, res.Status, false)
 					s.recordAttemptError(ctx, key, res.Status, res.Body) // keep the abandoned node's error in the detail (logs-detail-3)
 					s.recordRetry(ctx, acctOwnerOf(keyOwner, key, ownerID), model, key, res.Status, res.Banned)
 					s.maybeCooldown(ctx, acctOwnerOf(keyOwner, key, ownerID), key, res.Status, cfg)
@@ -683,6 +710,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 			SerialWaitKeys:      serialWaitKeys,
 			SerialWaitMs:        serialWaitMs,
 			DirectFallback:      func(res ProxyResult) bool { return directFallbackMatch(res.Status, res.Body, cfg) },
+			Terminal:            func(res ProxyResult) bool { return terminalError(res.Status, res.Body, cfg) },
 			RetryDelayMs:        cfg.RetryDelayMs,
 			RetrySameAccountMax: cfg.RetrySameAccountMax,
 		}
@@ -731,6 +759,12 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 			}
 			s.logOK(ctx, ownerID, model, res, winKey, time.Since(start).Milliseconds(), "", pinned)
 			return Outcome{Status: res.Status, Body: res.Body, Target: winKey, Reason: ""}
+		}
+		// Terminal 400: deterministic invalid_request_error — return immediately to client,
+		// no retry, no fallback. The error will be identical on every account and fallback.
+		if terminalError(res.Status, res.Body, cfg) {
+			s.logErr(ctx, ownerID, model, res.Status, time.Since(start).Milliseconds(), "terminal_error")
+			return Outcome{Status: res.Status, Body: res.Body, Target: "node", Reason: "terminal_error"}
 		}
 		// our pool failed → record error for session tracking
 		if justExiled := s.sess.RecordError(conv, int64(cfg.SessionErrorThreshold), int64(cfg.SessionCooldownSec)*1000, nowMs); justExiled {
@@ -881,11 +915,17 @@ func orderIdleFirst(keys []string, inflightOf map[string]int) {
 	sort.SliceStable(keys, func(i, j int) bool { return inflightOf[keys[i]] < inflightOf[keys[j]] })
 }
 
-func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cfg policy.Config) ([]string, Resolver, map[string]string, map[string]policy.Config) {
+// buildCandidates returns:
+//   - order: the elastic-filtered dispatch order (baseline only, or baseline+reserve when scaled up).
+//   - allKeys: ALL eligible candidate keys in weight-desc order, BEFORE elastic partitioning.
+//     Affinity resolution MUST use allKeys so a pinned reserve account is reachable even when
+//     elastic is active and the baseline is the working set (affinity > elastic, Fix 2).
+//   - resolver, keyOwner, keyCfg: unchanged.
+func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cfg policy.Config) (order []string, allKeys []string, resolver Resolver, keyOwner map[string]string, keyCfg map[string]policy.Config) {
 	nodes, _ := s.Q.ListNodes(ctx)
 	// keyCfg holds the per-account resolved config for each dispatch key.
 	// Used by callers to populate per-key SerialWaitKeys/SerialWaitMs on the Orchestrator.
-	keyCfg := map[string]policy.Config{}
+	keyCfg = map[string]policy.Config{}
 	// Build account-owner map for strict tenant isolation.
 	acctOwner := map[string]string{}
 	if ownerRows, aerr := s.Q.ListAccountOwners(ctx); aerr == nil {
@@ -896,7 +936,7 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 	// keyOwner maps dispatch key (nodeID:profileID) → the account's ownerID.
 	// Used to attribute ban/retry/cooldown events to the banned account's owner
 	// rather than the dispatch caller's owner (events-audit-3).
-	keyOwner := map[string]string{}
+	keyOwner = map[string]string{}
 	refs := map[string]NodeRef{}
 	type cand struct {
 		key     string
@@ -1063,17 +1103,26 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 		inflightOf[sn.Key] = sn.Inflight
 	}
 
+	// Build allKeys: every eligible candidate in weight-desc order, BEFORE elastic
+	// partitioning. Used by callers to resolve affinity pins against the full
+	// candidate set — so a pinned reserve account is reachable even when elastic
+	// is active and the baseline is the working set (affinity > elastic, Fix 2).
+	allKeysFull := make([]string, len(cands))
+	for i, c := range cands {
+		allKeysFull[i] = c.key
+	}
+
 	if !cfg.ElasticEnabled {
 		// Non-elastic path: all accounts, weight-desc (unchanged behaviour).
-		order := make([]string, len(cands))
+		ord := make([]string, len(cands))
 		for i, c := range cands {
-			order[i] = c.key
+			ord[i] = c.key
 		}
 		if cfg.IdleFirstSelection {
-			orderIdleFirst(order, inflightOf)
+			orderIdleFirst(ord, inflightOf)
 		}
-		resolver := func(key string) (NodeRef, bool) { r, ok := refs[key]; return r, ok }
-		return order, resolver, keyOwner, keyCfg
+		res := func(key string) (NodeRef, bool) { r, ok := refs[key]; return r, ok }
+		return ord, allKeysFull, res, keyOwner, keyCfg
 	}
 
 	// Elastic path: partition by count — first N (weight-desc) are baseline; the rest are reserve.
@@ -1137,7 +1186,6 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 	}
 	s.scaledUpMu.Unlock()
 
-	var order []string
 	if shouldScale && len(reserve) > 0 {
 		nRes := len(reserve)
 		if cfg.ElasticMaxReserve > 0 && nRes > cfg.ElasticMaxReserve {
@@ -1163,8 +1211,8 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 		})
 	}
 
-	resolver := func(key string) (NodeRef, bool) { r, ok := refs[key]; return r, ok }
-	return order, resolver, keyOwner, keyCfg
+	resolver = func(key string) (NodeRef, bool) { r, ok := refs[key]; return r, ok }
+	return order, allKeysFull, resolver, keyOwner, keyCfg
 }
 
 // ReserveKeys returns the set of dispatch keys that are currently RESERVE (not in
@@ -1490,12 +1538,13 @@ func (s *Service) logErr(ctx context.Context, ownerID, model string, status int,
 
 // logAttemptErr logs a single per-attempt failure (non-2xx or banned) without
 // overwriting the final-outcome row written by logOK / logErr. Latency is 0
-// because we have no settled TTFB for a failed attempt.
-func (s *Service) logAttemptErr(ctx context.Context, ownerID, model, key string, status int) {
+// because we have no settled TTFB for a failed attempt. stream must be true for
+// streaming attempts so the log row accurately reflects the request type.
+func (s *Service) logAttemptErr(ctx context.Context, ownerID, model, key string, status int, stream bool) {
 	s.insertLog(ctx, sqlc.InsertDispatchLogParams{
 		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: key, ProfileID: "",
 		Status: "error", HttpStatus: int32(status), LatencyMs: 0, FallbackReason: "",
-		Stream: false, CostUsd: 0, IsAttempt: true,
+		Stream: stream, CostUsd: 0, IsAttempt: true,
 	})
 }
 
@@ -1685,7 +1734,7 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 		PersistStreak: cfg.BanPersistStreak, PermStreak: cfg.PermanentBanStreak,
 		BaseMs: cfg.CooldownBaseMs, MaxMs: cfg.CooldownMaxMs, Mult: cfg.CooldownMult,
 	}
-	order, resolver, keyOwner, keyCfgS := s.buildCandidates(ctx, ownerID, model, cfg)
+	order, allKeysS, resolver, keyOwner, keyCfgS := s.buildCandidates(ctx, ownerID, model, cfg)
 	channels := s.enabledChannels(ctx, ownerID, model)
 
 	conv := session.ConvID(body)
@@ -1730,17 +1779,23 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 	}
 
 	// TIER 2: affinity pinning.
-	order0S := order
+	// Resolve affinity pin against allKeysS (full candidate set) NOT just the elastic
+	// baseline — so a reserve account that was pinned in a prior turn is reachable
+	// even when elastic has it off the active working set (affinity > elastic, Fix 2).
 	_, pinActiveS := s.sess.Affinity(conv, nowMs)
 	pinnedS := false
 	affinityWaitKeyS := ""
 	if cfg.AffinityTTLSec > 0 && pinActiveS {
-		order = s.pinToAffinity(conv, order0S, nowMs)
-		pinnedS = true
-		if len(order) == 1 {
-			affinityWaitKeyS = order[0]
+		pinnedOrderS := s.pinToAffinity(conv, allKeysS, nowMs)
+		if len(pinnedOrderS) == 1 {
+			// Found the pinned account in the full set → force it as the sole candidate.
+			order = pinnedOrderS
+			affinityWaitKeyS = pinnedOrderS[0]
+		} else {
+			// Pinned account absent anywhere → empty list → falls through to exhausted fallback.
+			order = nil
 		}
-		// len(order)==0 → pinned account gone → falls through to exhausted fallback.
+		pinnedS = true
 	}
 
 	// TIER 3: soft rules (probe, price) + session-exile — only when NOT pinned.
@@ -1852,13 +1907,22 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 			return out
 		}
 		// not committed → failed before first byte → log per-attempt error + failover
-		s.logAttemptErr(ctx, ownerID, model, key, out.Status)
+		s.logAttemptErr(ctx, ownerID, model, key, out.Status, true)
 		s.recordAttemptError(ctx, key, out.Status, out.Body) // keep the abandoned node's error in the detail (logs-detail-3)
 		s.recordRetry(ctx, acctOwnerOf(keyOwner, key, ownerID), model, key, out.Status, ClassifyBanned(out.Status, "", cfg.BanSignals, nil))
 		s.maybeCooldown(ctx, acctOwnerOf(keyOwner, key, ownerID), key, out.Status, cfg)
 		// Reactive quota rotation on the stream path too (account-limit-reactive).
 		if limited, resetMs := parseLimitReset(out.Status, out.Body, nowMs, cfg.QuotaLimitKeywords, cfg.QuotaLimitStatusCodes, cfg.QuotaLimitDefaultResetMs); limited {
 			s.applyReactiveLimit(ctx, acctOwnerOf(keyOwner, key, ownerID), key, resetMs)
+		}
+		// Terminal 400: deterministic invalid_request_error — return immediately to
+		// client, no further accounts tried, no fallback channel.
+		if terminalError(out.Status, out.Body, cfg) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(out.Status)
+			_, _ = w.Write([]byte(out.Body))
+			s.logErr(ctx, ownerID, model, out.Status, 0, "terminal_error")
+			return Outcome{Status: out.Status, Body: out.Body, Target: key, Reason: "terminal_error"}
 		}
 		// DirectFallback: if the response matches the configured status+keyword pattern,
 		// stop trying further accounts and fall through to exhausted fallback immediately.

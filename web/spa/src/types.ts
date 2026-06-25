@@ -156,6 +156,7 @@ export interface PolicyPatch {
   MaxFailover?: number;
   DirectFallbackStatusCodes?: number[];
   DirectFallbackKeywords?: string[];
+  TerminalErrorKeywords?: string[];
   RetryDelayMs?: number;
   RetrySameAccountMax?: number;
   ModelMaxTokens?: Record<string, number>; // per-model output (max_tokens) ceiling; over-limit → 400 no retry

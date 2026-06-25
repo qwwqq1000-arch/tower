@@ -240,6 +240,14 @@ type Config struct {
 	// Default ["rate_limit_error"]. Empty = feature off.
 	DirectFallbackKeywords []string
 
+	// TerminalErrorKeywords are case-insensitive body substrings that, when present in
+	// a 400 response, cause the request to be returned to the client immediately without
+	// retrying other accounts or going to fallback. Rationale: a deterministic
+	// invalid_request_error (bad tools, temperature, max_tokens) will fail identically
+	// on every account — retrying/falling-over is pure waste.
+	// Default ["invalid_request_error"]. Empty = feature off.
+	TerminalErrorKeywords []string
+
 	// RetryDelayMs is the delay (ms) inserted between failover attempts (both between
 	// different accounts and between same-account retries). Default 0 = no delay.
 	RetryDelayMs int
@@ -368,7 +376,11 @@ func Defaults() Config {
 		DirectFallbackKeywords:    []string{"rate_limit_error"},
 		RetryDelayMs:              0,
 		RetrySameAccountMax:       0,
-		QuotaFullThreshold:        99.0,
+		// TerminalError defaults: ON for invalid_request_error.
+		// A 400+invalid_request_error is deterministic — identical on every account.
+		// Return it immediately; never retry or fall over.
+		TerminalErrorKeywords: []string{"invalid_request_error"},
+		QuotaFullThreshold:    99.0,
 	}
 }
 
@@ -447,6 +459,7 @@ type Patch struct {
 
 	DirectFallbackStatusCodes *[]int
 	DirectFallbackKeywords    *[]string
+	TerminalErrorKeywords     *[]string
 	RetryDelayMs              *int
 	RetrySameAccountMax       *int
 
@@ -655,6 +668,9 @@ func apply(c *Config, p Patch) {
 	if p.DirectFallbackKeywords != nil {
 		c.DirectFallbackKeywords = *p.DirectFallbackKeywords
 	}
+	if p.TerminalErrorKeywords != nil {
+		c.TerminalErrorKeywords = *p.TerminalErrorKeywords
+	}
 	if p.RetryDelayMs != nil {
 		c.RetryDelayMs = *p.RetryDelayMs
 	}
@@ -782,6 +798,7 @@ func DryRun(base Config, patches ...Patch) (Config, []Diff) {
 	// Retry policy
 	add("DirectFallbackStatusCodes", base.DirectFallbackStatusCodes, final.DirectFallbackStatusCodes)
 	add("DirectFallbackKeywords", base.DirectFallbackKeywords, final.DirectFallbackKeywords)
+	add("TerminalErrorKeywords", base.TerminalErrorKeywords, final.TerminalErrorKeywords)
 	add("RetryDelayMs", base.RetryDelayMs, final.RetryDelayMs)
 	add("RetrySameAccountMax", base.RetrySameAccountMax, final.RetrySameAccountMax)
 	// Phase 5: reactive quota

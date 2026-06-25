@@ -53,6 +53,13 @@ type Orchestrator struct {
 	// ok=false (the caller routes to fallback as if the pool were exhausted).
 	DirectFallback func(res ProxyResult) bool
 
+	// Terminal: when non-nil, called after a failed dispatched attempt; if it
+	// returns true, Dispatch stops immediately and returns ok=false with the
+	// terminal result. The caller MUST return the result directly to the client
+	// without retrying or going to the fallback channel.
+	// Distinct from DirectFallback: DirectFallback → go to fallback; Terminal → no fallback.
+	Terminal func(res ProxyResult) bool
+
 	// RetryDelayMs is the delay between failover attempts (and same-account retries).
 	// 0 = no delay (default).
 	RetryDelayMs int
@@ -194,6 +201,12 @@ func (o *Orchestrator) Dispatch(ctx context.Context, model string, order []strin
 				return res, key, true
 			}
 			last = res
+			// Terminal: deterministic errors that fail identically on every account
+			// (e.g. invalid_request_error 400). Stop immediately; the caller must
+			// return this result directly to the client without fallback.
+			if o.Terminal != nil && o.Terminal(res) {
+				return last, "", false
+			}
 			// DirectFallback: if this response matches the direct-fallback pattern,
 			// stop immediately (don't try more accounts or same-account retries).
 			if o.DirectFallback != nil && o.DirectFallback(res) {

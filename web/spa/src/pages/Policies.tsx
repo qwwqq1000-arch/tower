@@ -287,6 +287,7 @@ export default function Policies() {
   // Retry policy
   const directFallbackStatusCodes = useField<string>('400');
   const directFallbackKeywords = useField<string>('rate_limit_error');
+  const terminalErrorKeywords = useField<string>('invalid_request_error');
   const retryDelayMs = useField<number>(0);
   const retrySameAccountMax = useField<number>(0);
 
@@ -369,7 +370,7 @@ export default function Policies() {
       fallbackEnabled, fallbackPriceThresholdUsd, fallbackKeywords, fallbackModels, fallbackProbeEnabled,
       banSignals, banKeywords, cooldownSignals, cooldownSignalSec,
       maxFailover,
-      directFallbackStatusCodes, directFallbackKeywords, retryDelayMs, retrySameAccountMax,
+      directFallbackStatusCodes, directFallbackKeywords, terminalErrorKeywords, retryDelayMs, retrySameAccountMax,
       limitOpus48, limitOpus47, limitSonnet46, limitHaiku45,
       warmupHours, warmupMaxConcurrent, warmupBlockOpus,
       sessionErrorThreshold, sessionCooldownSec, responseExileEnabled, responseExileKeywords,
@@ -414,6 +415,7 @@ export default function Policies() {
       setNum(maxFailover, p, 'MaxFailover');
       setArr(directFallbackStatusCodes, p, 'DirectFallbackStatusCodes');
       setArr(directFallbackKeywords, p, 'DirectFallbackKeywords');
+      setArr(terminalErrorKeywords, p, 'TerminalErrorKeywords');
       setNum(retryDelayMs, p, 'RetryDelayMs');
       setNum(retrySameAccountMax, p, 'RetrySameAccountMax');
       {
@@ -550,6 +552,7 @@ export default function Policies() {
     if (maxFailover.enabled) patch.MaxFailover = maxFailover.value;
     if (directFallbackStatusCodes.enabled) patch.DirectFallbackStatusCodes = directFallbackStatusCodes.value.split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
     if (directFallbackKeywords.enabled) patch.DirectFallbackKeywords = directFallbackKeywords.value.split(',').map(s => s.trim()).filter(Boolean);
+    if (terminalErrorKeywords.enabled) patch.TerminalErrorKeywords = terminalErrorKeywords.value.split(',').map(s => s.trim()).filter(Boolean);
     if (retryDelayMs.enabled) patch.RetryDelayMs = retryDelayMs.value;
     if (retrySameAccountMax.enabled) patch.RetrySameAccountMax = retrySameAccountMax.value;
     // ModelMaxTokens is a full-map replacement: when any override is enabled, send all
@@ -695,7 +698,7 @@ export default function Policies() {
     modelPinEnabled, modelPinMode, modelPinTarget,
     serialQueueEnabled, serialQueueWaitMs,
     bodyPadEnabled, bodyPadBytesMin,
-    directFallbackStatusCodes, directFallbackKeywords, retryDelayMs, retrySameAccountMax,
+    directFallbackStatusCodes, directFallbackKeywords, terminalErrorKeywords, retryDelayMs, retrySameAccountMax,
   ].some((f) => f.enabled);
 
   // ------------------------------------------------------------------
@@ -724,7 +727,7 @@ export default function Policies() {
     fallback: [
       fallbackEnabled, fallbackPriceThresholdUsd, fallbackKeywords, fallbackModels, fallbackProbeEnabled,
       maxFailover,
-      directFallbackStatusCodes, directFallbackKeywords, retryDelayMs, retrySameAccountMax,
+      directFallbackStatusCodes, directFallbackKeywords, terminalErrorKeywords, retryDelayMs, retrySameAccountMax,
       elasticEnabled, elasticScaleUpUtil, elasticScaleDownUtil, elasticMaxReserve, elasticBaselineCount,
     ],
     signals: [
@@ -1083,6 +1086,10 @@ export default function Policies() {
 
               <FieldRow label="DirectFallbackKeywords" desc="触发直接跳保底的错误关键词，逗号分隔（例: rate_limit_error）。需同时匹配 DirectFallbackStatusCodes 才生效" enabled={directFallbackKeywords.enabled} onToggle={directFallbackKeywords.toggle} showOnlyConfigured={so}>
                 <input type="text" value={directFallbackKeywords.value} onChange={(e) => directFallbackKeywords.set(e.target.value)} disabled={!directFallbackKeywords.enabled} placeholder="rate_limit_error" className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition disabled:cursor-not-allowed" />
+              </FieldRow>
+
+              <FieldRow label="TerminalErrorKeywords" desc="终止型 400 关键词，逗号分隔（例: invalid_request_error）。命中时立即返回 400 给客户端，不换号不走保底——此类错误每个账户结果相同，重试纯属浪费" enabled={terminalErrorKeywords.enabled} onToggle={terminalErrorKeywords.toggle} showOnlyConfigured={so}>
+                <input type="text" value={terminalErrorKeywords.value} onChange={(e) => terminalErrorKeywords.set(e.target.value)} disabled={!terminalErrorKeywords.enabled} placeholder="invalid_request_error" className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition disabled:cursor-not-allowed" />
               </FieldRow>
 
               <FieldRow label="RetryDelayMs" desc="故障转移（换号）间隔毫秒数；0=无等待（默认）" enabled={retryDelayMs.enabled} onToggle={retryDelayMs.toggle} showOnlyConfigured={so}>
