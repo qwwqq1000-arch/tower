@@ -411,12 +411,15 @@ export function EventTimeline({
   }
 
   return (
-    <div className="bg-surface border border-line rounded-xl overflow-hidden">
+    // self-start so the card hugs its content height in the 2-col grid instead of
+    // stretching to match the taller left column (which left a big black empty block).
+    // No inner max-height/scroll: the list grows downward with its (≤20) rows.
+    <div className="bg-surface border border-line rounded-xl overflow-hidden self-start">
       <div className="px-4 py-3 border-b border-line text-sm font-medium text-ink">事件时间线（最近 20）</div>
       {events.length === 0 && (
         <p className="px-4 py-6 text-center text-muted text-xs">暂无事件</p>
       )}
-      <ul className="divide-y divide-line/50 max-h-80 overflow-y-auto">
+      <ul className="divide-y divide-line/50">
         {events.map((e, idx) => {
           const { label, cls } = getEventLabel(e.type);
           const detail = renderEventDetail(e.type, e.target, fallbackNames, accountNames, e.detail);

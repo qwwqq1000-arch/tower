@@ -388,7 +388,9 @@ export function Shell({ children }: { children: ReactNode }) {
       </div>
 
       {/* ---- Mobile bottom nav (<md) ---- */}
-      <nav className="md:hidden fixed bottom-0 inset-x-0 flex overflow-x-auto bg-surface border-t border-line z-40">
+      {/* flex-1 items so the bar fills the full width evenly (no right-side gap);
+          min-w-0 keeps labels from forcing horizontal overflow on narrow phones. */}
+      <nav className="md:hidden fixed bottom-0 inset-x-0 flex bg-surface border-t border-line z-40">
         {items.map((item) => (
           <NavLink
             key={item.path}
@@ -396,7 +398,7 @@ export function Shell({ children }: { children: ReactNode }) {
             end={item.path === '/'}
             className={({ isActive }) =>
               [
-                'flex-none flex flex-col items-center gap-0.5 py-2 px-3 text-xs transition',
+                'flex-1 min-w-0 flex flex-col items-center gap-0.5 py-2 px-1 text-xs transition',
                 isActive ? 'text-accent' : 'text-muted',
               ].join(' ')
             }
