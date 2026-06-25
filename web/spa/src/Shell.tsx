@@ -264,7 +264,6 @@ export function Shell({ children }: { children: ReactNode }) {
   const items = isTenant
     ? TENANT_NAV
     : NAV_ITEMS.filter((i) => !i.adminOnly || isAdmin);
-  const mobileItems = items.slice(0, 5);
   // Palette: primary nav + settings sub-pages (so moved pages remain searchable)
   const paletteItems = isTenant
     ? items
@@ -389,21 +388,21 @@ export function Shell({ children }: { children: ReactNode }) {
       </div>
 
       {/* ---- Mobile bottom nav (<md) ---- */}
-      <nav className="md:hidden fixed bottom-0 inset-x-0 flex bg-surface border-t border-line z-40">
-        {mobileItems.map((item) => (
+      <nav className="md:hidden fixed bottom-0 inset-x-0 flex overflow-x-auto bg-surface border-t border-line z-40">
+        {items.map((item) => (
           <NavLink
             key={item.path}
             to={item.path}
             end={item.path === '/'}
             className={({ isActive }) =>
               [
-                'flex-1 flex flex-col items-center gap-0.5 py-2 text-xs transition',
+                'flex-none flex flex-col items-center gap-0.5 py-2 px-3 text-xs transition',
                 isActive ? 'text-accent' : 'text-muted',
               ].join(' ')
             }
           >
             <span className="text-lg leading-none">{item.icon}</span>
-            <span>{item.label}</span>
+            <span className="whitespace-nowrap">{item.label}</span>
           </NavLink>
         ))}
       </nav>

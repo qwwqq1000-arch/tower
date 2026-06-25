@@ -186,6 +186,8 @@ export default function Policies() {
   const [accounts, setAccounts] = useState<AccountRow[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState<string>('');
   const [loadingAccounts, setLoadingAccounts] = useState(false);
+  // Loaded policy rows (global + per-account)
+  const [policyRows, setPolicyRows] = useState<Array<{ scopeType: string; scopeId?: string; params: Record<string, unknown> }>>([]);
 
   // Category nav + filter state
   const [cat, setCat] = useState<CatId>('cadence');
@@ -312,143 +314,203 @@ export default function Policies() {
       .finally(() => setLoadingAccounts(false));
   }, [isSuperadmin]);
 
-  // Load saved global policy on mount
+  // Fetch all policy rows once on mount (stored in state so hydration effect can react)
   useEffect(() => {
-    void (async () => {
-      try {
-        const policies = await listPolicies();
-        const global = policies.find((p) => p.scopeType === 'global');
-        if (!global?.params) return;
-        const p = global.params as Record<string, unknown>;
-        const setNum = (f: FieldState<number> & { set: (v: number) => void; toggle: () => void }, key: string) => {
-          if (key in p) { f.set(Number(p[key])); if (!f.enabled) f.toggle(); }
-        };
-        const setBool = (f: FieldState<boolean> & { set: (v: boolean) => void; toggle: () => void }, key: string) => {
-          if (key in p) { f.set(Boolean(p[key])); if (!f.enabled) f.toggle(); }
-        };
-        const setStr = (f: FieldState<string> & { set: (v: string) => void; toggle: () => void }, key: string) => {
-          if (key in p) { f.set(String(p[key] ?? '')); if (!f.enabled) f.toggle(); }
-        };
-        const setRange = (
-          fMin: FieldState<number> & { set: (v: number) => void; toggle: () => void },
-          fMax: FieldState<number> & { set: (v: number) => void; toggle: () => void },
-          key: string,
-        ) => {
-          if (key in p) {
-            const r = p[key] as { Min?: number; Max?: number } | undefined;
-            if (r && typeof r === 'object') {
-              fMin.set(Number(r.Min ?? 0));
-              fMax.set(Number(r.Max ?? 0));
-              if (!fMin.enabled) fMin.toggle();
-            }
-          }
-        };
-        const setArr = (f: FieldState<string> & { set: (v: string) => void; toggle: () => void }, key: string) => {
-          if (key in p) {
-            const arr = p[key] ?? [];
-            f.set((arr as unknown[]).join(','));
-            if (!f.enabled) f.toggle();
-          }
-        };
-        setBool(idleFirstSelection, 'IdleFirstSelection');
-        setNum(maxConcurrent, 'MaxConcurrent');
-        setNum(slotCooldownMinMs, 'SlotCooldownMinMs');
-        setNum(slotCooldownMaxMs, 'SlotCooldownMaxMs');
-        setNum(banPersistStreak, 'BanPersistStreak');
-        setNum(permanentBanStreak, 'PermanentBanStreak');
-        setNum(cooldownBaseMs, 'CooldownBaseMs');
-        setNum(cooldownMaxMs, 'CooldownMaxMs');
-        setNum(cooldownMult, 'CooldownMult');
-        setNum(affinityTTLSec, 'AffinityTTLSec');
-        setNum(affinityWaitMs, 'AffinityWaitMs');
-        setBool(fallbackEnabled, 'FallbackEnabled');
-        setNum(fallbackPriceThresholdUsd, 'FallbackPriceThresholdUsd');
-        setArr(fallbackKeywords, 'FallbackKeywords');
-        setArr(fallbackModels, 'FallbackModels');
-        setBool(fallbackProbeEnabled, 'FallbackProbeEnabled');
-        setArr(banSignals, 'BanSignals');
-        setArr(banKeywords, 'BanKeywords');
-        setArr(cooldownSignals, 'CooldownSignals');
-        setNum(cooldownSignalSec, 'CooldownSignalSec');
-        setNum(maxFailover, 'MaxFailover');
-        setArr(directFallbackStatusCodes, 'DirectFallbackStatusCodes');
-        setArr(directFallbackKeywords, 'DirectFallbackKeywords');
-        setNum(retryDelayMs, 'RetryDelayMs');
-        setNum(retrySameAccountMax, 'RetrySameAccountMax');
-        {
-          const mmt = p.ModelMaxTokens as Record<string, number> | undefined;
-          const setMMT = (f: typeof limitOpus48, model: string) => {
-            if (mmt && model in mmt) { f.set(Number(mmt[model])); if (!f.enabled) f.toggle(); }
-          };
-          setMMT(limitOpus48, 'claude-opus-4-8');
-          setMMT(limitOpus47, 'claude-opus-4-7');
-          setMMT(limitSonnet46, 'claude-sonnet-4-6');
-          setMMT(limitHaiku45, 'claude-haiku-4-5');
-        }
-        setNum(warmupHours, 'WarmupHours');
-        setNum(warmupMaxConcurrent, 'WarmupMaxConcurrent');
-        setBool(warmupBlockOpus, 'WarmupBlockOpus');
-        setNum(sessionErrorThreshold, 'SessionErrorThreshold');
-        setNum(sessionCooldownSec, 'SessionCooldownSec');
-        setBool(responseExileEnabled, 'ResponseExileEnabled');
-        setArr(responseExileKeywords, 'ResponseExileKeywords');
-        setArr(quotaLimitKeywords, 'QuotaLimitKeywords');
-        setArr(quotaLimitCodes, 'QuotaLimitStatusCodes');
-        setBool(elasticEnabled, 'ElasticEnabled');
-        setNum(elasticScaleUpUtil, 'ElasticScaleUpUtil');
-        setNum(elasticScaleDownUtil, 'ElasticScaleDownUtil');
-        setNum(elasticMaxReserve, 'ElasticMaxReserve');
-        setNum(elasticBaselineCount, 'ElasticBaselineCount');
-        // Phase 2: SpendCap
-        setBool(spendCap5hEnabled, 'SpendCap5hEnabled');
-        setRange(spendCap5hMin, spendCap5hMax, 'SpendCap5hUsd');
-        setBool(spendCap7dEnabled, 'SpendCap7dEnabled');
-        setRange(spendCap7dMin, spendCap7dMax, 'SpendCap7dUsd');
-        setNum(spendWindow5hMs, 'SpendWindow5hMs');
-        setNum(spendWindow7dMs, 'SpendWindow7dMs');
-        // Phase 3: HumanDelay
-        setBool(humanDelayEnabled, 'HumanDelayEnabled');
-        setStr(humanDelayDist, 'HumanDelayDist');
-        setRange(humanDelayP50Min, humanDelayP50Max, 'HumanDelayP50Ms');
-        setRange(humanDelayP95Min, humanDelayP95Max, 'HumanDelayP95Ms');
-        // Phase 3: RateGovernor
-        setBool(rateGovEnabled, 'RateGovEnabled');
-        setRange(rateRPMMin, rateRPMMax, 'RateRPM');
-        setRange(rateRPHMin, rateRPHMax, 'RateRPH');
-        setRange(rateRPDMin, rateRPDMax, 'RateRPD');
-        setStr(rateExceedAction, 'RateExceedAction');
-        // Phase 3: SessionSim
-        setBool(sessionSimEnabled, 'SessionSimEnabled');
-        setRange(sessionBurstCountMin, sessionBurstCountMax, 'SessionBurstCount');
-        setRange(sessionPauseMsMin, sessionPauseMsMax, 'SessionPauseMs');
-        // Phase 3: QuietHours
-        setBool(quietHoursEnabled, 'QuietHoursEnabled');
-        if ('QuietHoursWindows' in p) {
-          const wins = p['QuietHoursWindows'] as Array<{ StartMin?: number; EndMin?: number }> | undefined;
-          if (Array.isArray(wins) && wins.length > 0) {
-            quietHoursStartMin.set(Number(wins[0].StartMin ?? 0));
-            quietHoursEndMin.set(Number(wins[0].EndMin ?? 0));
-            if (!quietHoursStartMin.enabled) quietHoursStartMin.toggle();
-          }
-        }
-        setRange(quietHoursRPMMin, quietHoursRPMMax, 'QuietHoursRPM');
-        setNum(quietHoursConcurrency, 'QuietHoursConcurrency');
-        // Phase 4: ModelPin
-        setBool(modelPinEnabled, 'ModelPinEnabled');
-        setStr(modelPinMode, 'ModelPinMode');
-        setStr(modelPinTarget, 'ModelPinTarget');
-        // Phase 4: SerialQueue
-        setBool(serialQueueEnabled, 'SerialQueueEnabled');
-        setNum(serialQueueWaitMs, 'SerialQueueWaitMs');
-        // Phase 4: BodyPad
-        setBool(bodyPadEnabled, 'BodyPadEnabled');
-        setRange(bodyPadBytesMin, bodyPadBytesMax, 'BodyPadBytes');
-      } catch {
-        // silently ignore — page still usable
-      }
-    })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    void listPolicies()
+      .then((rows) => {
+        setPolicyRows(rows.map((r) => ({
+          scopeType: r.scopeType,
+          scopeId: r.scopeId,
+          params: (r.params ?? {}) as Record<string, unknown>,
+        })));
+      })
+      .catch(() => { /* silently ignore — page still usable */ });
   }, []);
+
+  // Hydrate form fields whenever scope / selectedAccount / loaded rows change.
+  // Uses a stable callback reference trick: define helpers inline so they close
+  // over the current field refs without being listed as deps (the helpers only
+  // read .enabled which is stable between renders caused by these deps).
+  useEffect(() => {
+    // ---- helpers ----
+    const setNum = (f: FieldState<number> & { set: (v: number) => void; toggle: () => void }, p: Record<string, unknown>, key: string) => {
+      if (key in p) { f.set(Number(p[key])); if (!f.enabled) f.toggle(); }
+    };
+    const setBool = (f: FieldState<boolean> & { set: (v: boolean) => void; toggle: () => void }, p: Record<string, unknown>, key: string) => {
+      if (key in p) { f.set(Boolean(p[key])); if (!f.enabled) f.toggle(); }
+    };
+    const setStr = (f: FieldState<string> & { set: (v: string) => void; toggle: () => void }, p: Record<string, unknown>, key: string) => {
+      if (key in p) { f.set(String(p[key] ?? '')); if (!f.enabled) f.toggle(); }
+    };
+    const setRange = (
+      fMin: FieldState<number> & { set: (v: number) => void; toggle: () => void },
+      fMax: FieldState<number> & { set: (v: number) => void; toggle: () => void },
+      p: Record<string, unknown>,
+      key: string,
+    ) => {
+      if (key in p) {
+        const r = p[key] as { Min?: number; Max?: number } | undefined;
+        if (r && typeof r === 'object') {
+          fMin.set(Number(r.Min ?? 0));
+          fMax.set(Number(r.Max ?? 0));
+          if (!fMin.enabled) fMin.toggle();
+        }
+      }
+    };
+    const setArr = (f: FieldState<string> & { set: (v: string) => void; toggle: () => void }, p: Record<string, unknown>, key: string) => {
+      if (key in p) {
+        const arr = p[key] ?? [];
+        f.set((arr as unknown[]).join(','));
+        if (!f.enabled) f.toggle();
+      }
+    };
+
+    // ---- resetAllFields: disable every field so switching to an account
+    //      with no overrides shows all fields as "继承全局" ----
+    const allFields: Array<{ enabled: boolean; toggle: () => void }> = [
+      idleFirstSelection, maxConcurrent, slotCooldownMinMs, slotCooldownMaxMs,
+      banPersistStreak, permanentBanStreak, cooldownBaseMs, cooldownMaxMs, cooldownMult,
+      affinityTTLSec, affinityWaitMs,
+      fallbackEnabled, fallbackPriceThresholdUsd, fallbackKeywords, fallbackModels, fallbackProbeEnabled,
+      banSignals, banKeywords, cooldownSignals, cooldownSignalSec,
+      maxFailover,
+      directFallbackStatusCodes, directFallbackKeywords, retryDelayMs, retrySameAccountMax,
+      limitOpus48, limitOpus47, limitSonnet46, limitHaiku45,
+      warmupHours, warmupMaxConcurrent, warmupBlockOpus,
+      sessionErrorThreshold, sessionCooldownSec, responseExileEnabled, responseExileKeywords,
+      quotaLimitKeywords, quotaLimitCodes,
+      elasticEnabled, elasticScaleUpUtil, elasticScaleDownUtil, elasticMaxReserve, elasticBaselineCount,
+      spendCap5hEnabled, spendCap5hMin, spendCap5hMax, spendCap7dEnabled, spendCap7dMin, spendCap7dMax,
+      spendWindow5hMs, spendWindow7dMs,
+      humanDelayEnabled, humanDelayDist, humanDelayP50Min, humanDelayP50Max, humanDelayP95Min, humanDelayP95Max,
+      rateGovEnabled, rateRPMMin, rateRPMMax, rateRPHMin, rateRPHMax, rateRPDMin, rateRPDMax, rateExceedAction,
+      sessionSimEnabled, sessionBurstCountMin, sessionBurstCountMax, sessionPauseMsMin, sessionPauseMsMax,
+      quietHoursEnabled, quietHoursStartMin, quietHoursEndMin, quietHoursRPMMin, quietHoursRPMMax, quietHoursConcurrency,
+      modelPinEnabled, modelPinMode, modelPinTarget,
+      serialQueueEnabled, serialQueueWaitMs,
+      bodyPadEnabled, bodyPadBytesMin, bodyPadBytesMax,
+    ];
+    // Disable every enabled field
+    for (const f of allFields) {
+      if (f.enabled) f.toggle();
+    }
+
+    // ---- hydrateFrom: apply all key→field mappings from params object p ----
+    const hydrateFrom = (p: Record<string, unknown>) => {
+      setBool(idleFirstSelection, p, 'IdleFirstSelection');
+      setNum(maxConcurrent, p, 'MaxConcurrent');
+      setNum(slotCooldownMinMs, p, 'SlotCooldownMinMs');
+      setNum(slotCooldownMaxMs, p, 'SlotCooldownMaxMs');
+      setNum(banPersistStreak, p, 'BanPersistStreak');
+      setNum(permanentBanStreak, p, 'PermanentBanStreak');
+      setNum(cooldownBaseMs, p, 'CooldownBaseMs');
+      setNum(cooldownMaxMs, p, 'CooldownMaxMs');
+      setNum(cooldownMult, p, 'CooldownMult');
+      setNum(affinityTTLSec, p, 'AffinityTTLSec');
+      setNum(affinityWaitMs, p, 'AffinityWaitMs');
+      setBool(fallbackEnabled, p, 'FallbackEnabled');
+      setNum(fallbackPriceThresholdUsd, p, 'FallbackPriceThresholdUsd');
+      setArr(fallbackKeywords, p, 'FallbackKeywords');
+      setArr(fallbackModels, p, 'FallbackModels');
+      setBool(fallbackProbeEnabled, p, 'FallbackProbeEnabled');
+      setArr(banSignals, p, 'BanSignals');
+      setArr(banKeywords, p, 'BanKeywords');
+      setArr(cooldownSignals, p, 'CooldownSignals');
+      setNum(cooldownSignalSec, p, 'CooldownSignalSec');
+      setNum(maxFailover, p, 'MaxFailover');
+      setArr(directFallbackStatusCodes, p, 'DirectFallbackStatusCodes');
+      setArr(directFallbackKeywords, p, 'DirectFallbackKeywords');
+      setNum(retryDelayMs, p, 'RetryDelayMs');
+      setNum(retrySameAccountMax, p, 'RetrySameAccountMax');
+      {
+        const mmt = p.ModelMaxTokens as Record<string, number> | undefined;
+        const setMMT = (f: typeof limitOpus48, model: string) => {
+          if (mmt && model in mmt) { f.set(Number(mmt[model])); if (!f.enabled) f.toggle(); }
+        };
+        setMMT(limitOpus48, 'claude-opus-4-8');
+        setMMT(limitOpus47, 'claude-opus-4-7');
+        setMMT(limitSonnet46, 'claude-sonnet-4-6');
+        setMMT(limitHaiku45, 'claude-haiku-4-5');
+      }
+      setNum(warmupHours, p, 'WarmupHours');
+      setNum(warmupMaxConcurrent, p, 'WarmupMaxConcurrent');
+      setBool(warmupBlockOpus, p, 'WarmupBlockOpus');
+      setNum(sessionErrorThreshold, p, 'SessionErrorThreshold');
+      setNum(sessionCooldownSec, p, 'SessionCooldownSec');
+      setBool(responseExileEnabled, p, 'ResponseExileEnabled');
+      setArr(responseExileKeywords, p, 'ResponseExileKeywords');
+      setArr(quotaLimitKeywords, p, 'QuotaLimitKeywords');
+      setArr(quotaLimitCodes, p, 'QuotaLimitStatusCodes');
+      setBool(elasticEnabled, p, 'ElasticEnabled');
+      setNum(elasticScaleUpUtil, p, 'ElasticScaleUpUtil');
+      setNum(elasticScaleDownUtil, p, 'ElasticScaleDownUtil');
+      setNum(elasticMaxReserve, p, 'ElasticMaxReserve');
+      setNum(elasticBaselineCount, p, 'ElasticBaselineCount');
+      // Phase 2: SpendCap
+      setBool(spendCap5hEnabled, p, 'SpendCap5hEnabled');
+      setRange(spendCap5hMin, spendCap5hMax, p, 'SpendCap5hUsd');
+      setBool(spendCap7dEnabled, p, 'SpendCap7dEnabled');
+      setRange(spendCap7dMin, spendCap7dMax, p, 'SpendCap7dUsd');
+      setNum(spendWindow5hMs, p, 'SpendWindow5hMs');
+      setNum(spendWindow7dMs, p, 'SpendWindow7dMs');
+      // Phase 3: HumanDelay
+      setBool(humanDelayEnabled, p, 'HumanDelayEnabled');
+      setStr(humanDelayDist, p, 'HumanDelayDist');
+      setRange(humanDelayP50Min, humanDelayP50Max, p, 'HumanDelayP50Ms');
+      setRange(humanDelayP95Min, humanDelayP95Max, p, 'HumanDelayP95Ms');
+      // Phase 3: RateGovernor
+      setBool(rateGovEnabled, p, 'RateGovEnabled');
+      setRange(rateRPMMin, rateRPMMax, p, 'RateRPM');
+      setRange(rateRPHMin, rateRPHMax, p, 'RateRPH');
+      setRange(rateRPDMin, rateRPDMax, p, 'RateRPD');
+      setStr(rateExceedAction, p, 'RateExceedAction');
+      // Phase 3: SessionSim
+      setBool(sessionSimEnabled, p, 'SessionSimEnabled');
+      setRange(sessionBurstCountMin, sessionBurstCountMax, p, 'SessionBurstCount');
+      setRange(sessionPauseMsMin, sessionPauseMsMax, p, 'SessionPauseMs');
+      // Phase 3: QuietHours
+      setBool(quietHoursEnabled, p, 'QuietHoursEnabled');
+      if ('QuietHoursWindows' in p) {
+        const wins = p['QuietHoursWindows'] as Array<{ StartMin?: number; EndMin?: number }> | undefined;
+        if (Array.isArray(wins) && wins.length > 0) {
+          quietHoursStartMin.set(Number(wins[0].StartMin ?? 0));
+          quietHoursEndMin.set(Number(wins[0].EndMin ?? 0));
+          if (!quietHoursStartMin.enabled) quietHoursStartMin.toggle();
+        }
+      }
+      setRange(quietHoursRPMMin, quietHoursRPMMax, p, 'QuietHoursRPM');
+      setNum(quietHoursConcurrency, p, 'QuietHoursConcurrency');
+      // Phase 4: ModelPin
+      setBool(modelPinEnabled, p, 'ModelPinEnabled');
+      setStr(modelPinMode, p, 'ModelPinMode');
+      setStr(modelPinTarget, p, 'ModelPinTarget');
+      // Phase 4: SerialQueue
+      setBool(serialQueueEnabled, p, 'SerialQueueEnabled');
+      setNum(serialQueueWaitMs, p, 'SerialQueueWaitMs');
+      // Phase 4: BodyPad
+      setBool(bodyPadEnabled, p, 'BodyPadEnabled');
+      setRange(bodyPadBytesMin, bodyPadBytesMax, p, 'BodyPadBytes');
+    };
+
+    // ---- Pick the right row to hydrate from ----
+    if (policyRows.length === 0) return; // rows not loaded yet — wait
+
+    const globalRow = policyRows.find((r) => r.scopeType === 'global');
+
+    if (scope === 'global') {
+      if (globalRow?.params) hydrateFrom(globalRow.params);
+    } else {
+      // scope === 'account'
+      const accountRow = policyRows.find(
+        (r) => r.scopeType === 'account' && r.scopeId === selectedAccountId,
+      );
+      if (accountRow?.params) {
+        hydrateFrom(accountRow.params);
+      }
+      // else: all fields left as disabled (inherit global) — no-op needed
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope, selectedAccountId, policyRows]);
 
   // Build patch — only include enabled fields
   function buildPatch(): PolicyPatch {
