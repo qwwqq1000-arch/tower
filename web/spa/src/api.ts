@@ -361,10 +361,12 @@ export const getNodeQuota = (id: string) =>
 // Ban analysis (封号分析)
 // ------------------------------------------------------------------
 export interface BanBucket { bucket: number; count: number }
+export interface BanAccountEntry { email: string; count: number }
 export interface BanAnalysis {
   total: number;
   byWeekday: BanBucket[];
   byHour: BanBucket[];
+  byAccount?: BanAccountEntry[];
 }
 export const getBanAnalysis = () =>
   api<BanAnalysis>('GET', '/api/admin/ban-analysis');

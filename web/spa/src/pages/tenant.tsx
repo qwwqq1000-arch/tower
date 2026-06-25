@@ -2,7 +2,7 @@
 // Tower SPA — Tenant-mode views (role === 'tenant')
 // Own-data only, via /api/me/* endpoints.
 // ============================================================
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   getMeDashboard,
   getMeAccounts,
@@ -17,6 +17,7 @@ import {
   createMeDispatchKey,
   deleteMeDispatchKey,
   getMeBanAnalysis,
+  listMeFallback,
 } from '../api';
 import type {
   MeAccountRow,
@@ -27,11 +28,36 @@ import type {
   Slot,
   DispatchKeyRecord,
 } from '../types';
-import type { BanAnalysis, BanBucket } from '../api';
+import type { BanAnalysis, BanBucket, BanAccountEntry } from '../api';
 import { EventTimeline } from './Dispatch';
 import { copyText } from '../lib/clipboard';
 import { statusColor, statusLabel } from '../lib/status';
 import { StatusBadge, statusRank } from '../components/AccountStatus';
+
+// ------------------------------------------------------------------
+// Pagination
+// ------------------------------------------------------------------
+const PAGE_SIZE = 25;
+
+function PaginationBar({ page, total, pageSize, onPrev, onNext }: {
+  page: number; total: number; pageSize: number;
+  onPrev: () => void; onNext: () => void;
+}) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  return (
+    <div className="flex items-center justify-between text-xs text-muted">
+      <button
+        onClick={onPrev} disabled={page === 0}
+        className="px-3 py-1.5 border border-line rounded-lg hover:text-ink hover:border-accent transition disabled:opacity-40"
+      >上一页</button>
+      <span>第 {page + 1} / {totalPages} 页 · 共 {total} 条</span>
+      <button
+        onClick={onNext} disabled={(page + 1) * pageSize >= total}
+        className="px-3 py-1.5 border border-line rounded-lg hover:text-ink hover:border-accent transition disabled:opacity-40"
+      >下一页</button>
+    </div>
+  );
+}
 
 // ------------------------------------------------------------------
 // Shared formatters
@@ -325,6 +351,7 @@ export function TenantAccounts() {
   const [accounts, setAccounts] = useState<MeAccountRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -340,6 +367,12 @@ export function TenantAccounts() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  const sorted = useMemo(
+    () => [...accounts].sort((x, y) => statusRank(x.status) - statusRank(y.status)),
+    [accounts],
+  );
+  const paged = sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   return (
     <div className="p-4 md:p-6 space-y-6">
@@ -388,17 +421,24 @@ export function TenantAccounts() {
                 </tr>
               </thead>
               <tbody>
-                {[...accounts].sort((x, y) => statusRank(x.status) - statusRank(y.status)).map((a) => (
+                {paged.map((a) => (
                   <TenantAccountRow key={a.accountId} account={a} onChanged={() => { void load(); }} />
                 ))}
               </tbody>
             </table>
           </div>
           <div className="md:hidden space-y-3">
-            {[...accounts].sort((x, y) => statusRank(x.status) - statusRank(y.status)).map((a) => (
+            {paged.map((a) => (
               <TenantAccountCard key={a.accountId} account={a} onChanged={() => { void load(); }} />
             ))}
           </div>
+          {sorted.length > PAGE_SIZE && (
+            <PaginationBar
+              page={page} total={sorted.length} pageSize={PAGE_SIZE}
+              onPrev={() => setPage((p) => Math.max(0, p - 1))}
+              onNext={() => setPage((p) => p + 1)}
+            />
+          )}
         </>
       )}
     </div>
@@ -613,6 +653,8 @@ const DISPATCH_REFRESH_MS = 5_000;
 export function TenantDispatch() {
   const [data, setData] = useState<DispatchStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [fallbackNames, setFallbackNames] = useState<Map<string, string>>(new Map());
+  const [accountNames, setAccountNames] = useState<Map<string, string>>(new Map());
 
   const load = useCallback(async () => {
     try {
@@ -622,6 +664,29 @@ export function TenantDispatch() {
     } catch (e) {
       setError(e instanceof Error ? e.message : '加载失败');
     }
+  }, []);
+
+  useEffect(() => {
+    // Fetch resolver maps once on mount (best-effort).
+    listMeFallback()
+      .then((channels) => {
+        const m = new Map<string, string>();
+        for (const ch of channels) m.set(ch.id, ch.name);
+        setFallbackNames(m);
+      })
+      .catch(() => {});
+    getMeAccounts()
+      .then((accounts) => {
+        const m = new Map<string, string>();
+        for (const a of accounts) {
+          if (a.email) {
+            m.set(a.accountId, a.email);
+            if (a.profileId) m.set(a.profileId, a.email);
+          }
+        }
+        setAccountNames(m);
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -704,7 +769,7 @@ export function TenantDispatch() {
             </div>
 
             {/* Event timeline (reuse shared rendering) */}
-            <EventTimeline events={data.events} fallbackNames={new Map()} accountNames={new Map()} />
+            <EventTimeline events={data.events} fallbackNames={fallbackNames} accountNames={accountNames} />
           </div>
 
           {/* Fallback channels */}
@@ -1056,6 +1121,46 @@ function fillHour(data: BanBucket[]): BanBucket[] {
   return Array.from({ length: 24 }, (_, i) => ({ bucket: i, count: map.get(i) ?? 0 }));
 }
 
+function TenantAccountBanTable({ rows }: { rows: BanAccountEntry[] }) {
+  const [page, setPage] = useState(0);
+  const paged = rows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  return (
+    <div className="space-y-3">
+      <div className="bg-surface border border-line rounded-xl overflow-x-auto">
+        <table className="w-full text-left">
+          <thead>
+            <tr className="text-xs text-muted uppercase tracking-wide border-b border-line">
+              <th className="px-4 py-3 font-medium">#</th>
+              <th className="px-4 py-3 font-medium">邮箱</th>
+              <th className="px-4 py-3 font-medium text-right">封号次数</th>
+            </tr>
+          </thead>
+          <tbody>
+            {paged.map((row, i) => (
+              <tr key={row.email} className="border-t border-line hover:bg-line/20 transition text-sm">
+                <td className="px-4 py-2 text-xs text-muted tabular-nums">{page * PAGE_SIZE + i + 1}</td>
+                <td className="px-4 py-2 text-ink font-mono text-xs truncate max-w-[240px]" title={row.email}>{row.email}</td>
+                <td className="px-4 py-2 text-right">
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold tabular-nums ${
+                    row.count >= 5 ? 'bg-err/20 text-err' : row.count >= 2 ? 'bg-warn/20 text-warn' : 'bg-surface text-muted border border-line'
+                  }`}>{row.count}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {rows.length > PAGE_SIZE && (
+        <PaginationBar
+          page={page} total={rows.length} pageSize={PAGE_SIZE}
+          onPrev={() => setPage((p) => Math.max(0, p - 1))}
+          onNext={() => setPage((p) => p + 1)}
+        />
+      )}
+    </div>
+  );
+}
+
 function TenantBanSection() {
   const [data, setData] = useState<BanAnalysis | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1112,6 +1217,15 @@ function TenantBanSection() {
             </div>
             <TenantBarChart data={hourData} labelFn={(b) => String(b).padStart(2, '0')} color="bg-warn" />
           </div>
+          {data.byAccount && data.byAccount.length > 0 && (
+            <div className="bg-surface border border-line rounded-xl p-5 space-y-3">
+              <div>
+                <h3 className="text-sm font-semibold text-ink">各账户封号次数</h3>
+                <p className="text-xs text-muted">同一邮箱多次封号均计入，按封号次数降序</p>
+              </div>
+              <TenantAccountBanTable rows={data.byAccount} />
+            </div>
+          )}
         </>
       )}
     </div>

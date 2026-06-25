@@ -2,9 +2,31 @@
 // Tower SPA — Events page (系统事件)
 // GET /api/admin/events → timeline (time / type / target)
 // ============================================================
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { getEvents, listAccounts, listFallbackChannels } from '../api';
 import type { EventRecord } from '../types';
+
+const PAGE_SIZE = 25;
+
+function PaginationBar({ page, total, pageSize, onPrev, onNext }: {
+  page: number; total: number; pageSize: number;
+  onPrev: () => void; onNext: () => void;
+}) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  return (
+    <div className="flex items-center justify-between text-xs text-muted">
+      <button
+        onClick={onPrev} disabled={page === 0}
+        className="px-3 py-1.5 border border-line rounded-lg hover:text-ink hover:border-accent transition disabled:opacity-40"
+      >上一页</button>
+      <span>第 {page + 1} / {totalPages} 页 · 共 {total} 条</span>
+      <button
+        onClick={onNext} disabled={(page + 1) * pageSize >= total}
+        className="px-3 py-1.5 border border-line rounded-lg hover:text-ink hover:border-accent transition disabled:opacity-40"
+      >下一页</button>
+    </div>
+  );
+}
 
 // ---- helpers ----
 function fmtTime(ms: number): string {
@@ -196,11 +218,12 @@ export default function Events() {
   const [query, setQuery] = useState('');
   const [accountMap, setAccountMap] = useState<Map<string, string>>(new Map());
   const [channelMap, setChannelMap] = useState<Map<string, string>>(new Map());
+  const [page, setPage] = useState(0);
 
   const fetchEvents = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await getEvents({ limit: '200' });
+      const data = await getEvents({ limit: '500' });
       setRows(Array.isArray(data) ? data : []);
       setError(null);
     } catch (e) {
@@ -213,7 +236,6 @@ export default function Events() {
   useEffect(() => { void fetchEvents(); }, [fetchEvents]);
 
   useEffect(() => {
-    // Fetch resolver maps once on mount (best-effort, resilient to failure)
     listAccounts()
       .then((accounts) => {
         const m = new Map<string, string>();
@@ -223,24 +245,28 @@ export default function Events() {
         }
         setAccountMap(m);
       })
-      .catch(() => { /* non-fatal */ });
+      .catch(() => {});
     listFallbackChannels()
       .then((channels) => {
         const m = new Map<string, string>();
         for (const ch of channels) m.set(ch.id, ch.name);
         setChannelMap(m);
       })
-      .catch(() => { /* non-fatal */ });
+      .catch(() => {});
   }, []);
 
   const q = query.trim().toLowerCase();
-  const filtered = q
+  const filtered = useMemo(() => q
     ? rows.filter(
         (r) =>
           r.type?.toLowerCase().includes(q) ||
           r.target?.toLowerCase().includes(q),
       )
-    : rows;
+    : rows, [rows, q]);
+
+  useEffect(() => { setPage(0); }, [q]);
+
+  const paged = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   return (
     <div className="p-4 md:p-6 space-y-4">
@@ -248,7 +274,7 @@ export default function Events() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-ink">系统事件</h1>
-          <p className="text-xs text-muted mt-1">最近 200 条系统事件时间线</p>
+          <p className="text-xs text-muted mt-1">最近 500 条系统事件时间线</p>
         </div>
         <button
           onClick={() => { void fetchEvents(); }}
@@ -294,17 +320,18 @@ export default function Events() {
 
       {/* Timeline */}
       {!loading && !error && filtered.length > 0 && (
-        <div className="bg-surface border border-line rounded-xl px-5 pt-5 pb-0">
-          {filtered.map((row, i) => (
-            <EventItem key={i} row={row} accountMap={accountMap} channelMap={channelMap} />
-          ))}
-        </div>
-      )}
-
-      {!loading && !error && filtered.length > 0 && (
-        <p className="text-xs text-muted text-right">
-          显示 {filtered.length} / {rows.length} 条
-        </p>
+        <>
+          <div className="bg-surface border border-line rounded-xl px-5 pt-5 pb-0">
+            {paged.map((row, i) => (
+              <EventItem key={i} row={row} accountMap={accountMap} channelMap={channelMap} />
+            ))}
+          </div>
+          <PaginationBar
+            page={page} total={filtered.length} pageSize={PAGE_SIZE}
+            onPrev={() => setPage((p) => Math.max(0, p - 1))}
+            onNext={() => setPage((p) => p + 1)}
+          />
+        </>
       )}
     </div>
   );

@@ -208,12 +208,14 @@ func meLogsHandler(q *sqlc.Queries) http.HandlerFunc {
 		}
 		rows, err := q.ListLogsByOwner(r.Context(), sqlc.ListLogsByOwnerParams{
 			OwnerID: owner,
-			Limit:   limitParam(r, 100),
+			Limit:   limitParam(r, 500),
 		})
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		// Build target→email map scoped to owner (mirrors admin listLogsHandler).
+		emailMap := buildAccountEmailMap(r.Context(), q)
 		out := make([]map[string]any, 0, len(rows))
 		for _, l := range rows {
 			out = append(out, map[string]any{
@@ -222,7 +224,8 @@ func meLogsHandler(q *sqlc.Queries) http.HandlerFunc {
 				"latencyMs": l.LatencyMs, "tokensIn": l.TokensIn,
 				"tokensOut": l.TokensOut, "fallbackReason": l.FallbackReason,
 				"ttfbMs": l.TtfbMs, "stream": l.Stream, "costUsd": l.CostUsd,
-				"requestId": l.RequestID,
+				"requestId":   l.RequestID,
+				"targetEmail": resolveAccountKey(l.Target, emailMap),
 			})
 		}
 		writeJSON(w, 200, out)
@@ -262,17 +265,37 @@ func meEventsHandler(q *sqlc.Queries) http.HandlerFunc {
 		}
 		rows, err := q.ListEventsByOwner(r.Context(), sqlc.ListEventsByOwnerParams{
 			OwnerID: owner,
-			Limit:   limitParam(r, 100),
+			Limit:   limitParam(r, 500),
 		})
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		// Resolve target→email and channel→name (mirrors admin listEventsHandler).
+		emailMap := buildAccountEmailMap(r.Context(), q)
+		channelMap := buildChannelNameMap(r.Context(), q)
 		out := make([]map[string]any, 0, len(rows))
 		for _, e := range rows {
+			targetName := resolveEventTarget(e.Target, emailMap, channelMap)
+			detailAccount := ""
+			var d map[string]any
+			if len(e.Detail) > 0 {
+				if jerr := json.Unmarshal(e.Detail, &d); jerr == nil {
+					if acct, ok := d["account"].(string); ok && acct != "" {
+						resolved := resolveAccountKey(acct, emailMap)
+						if resolved != "" {
+							detailAccount = resolved
+						} else {
+							detailAccount = acct
+						}
+					}
+				}
+			}
 			out = append(out, map[string]any{
 				"ts": e.Ts, "type": e.Type, "target": e.Target,
-				"detail": json.RawMessage(e.Detail),
+				"detail":        json.RawMessage(e.Detail),
+				"targetName":    targetName,
+				"detailAccount": detailAccount,
 			})
 		}
 		writeJSON(w, 200, out)
@@ -811,12 +834,31 @@ func meDispatchStatusHandler(q *sqlc.Queries, svc *dispatch.Service) http.Handle
 			"total": total, "rpm": rpm, "ok": okc, "error": errc,
 			"tokensIn": in, "tokensOut": out,
 		}
+		// Build resolution maps for event timeline (mirrors admin dispatch status handler).
+		evEmailMap := buildAccountEmailMap(ctx, q)
+		evChannelMap := buildChannelNameMap(ctx, q)
 		events := []map[string]any{}
 		if evs, err := q.ListEventsByOwner(ctx, sqlc.ListEventsByOwnerParams{OwnerID: owner, Limit: 20}); err == nil {
 			for _, e := range evs {
+				targetName := resolveEventTarget(e.Target, evEmailMap, evChannelMap)
+				detailAccount := ""
+				var d map[string]any
+				if len(e.Detail) > 0 {
+					if jerr := json.Unmarshal(e.Detail, &d); jerr == nil {
+						if acct, ok2 := d["account"].(string); ok2 && acct != "" {
+							if resolved := resolveAccountKey(acct, evEmailMap); resolved != "" {
+								detailAccount = resolved
+							} else {
+								detailAccount = acct
+							}
+						}
+					}
+				}
 				events = append(events, map[string]any{
 					"ts": e.Ts, "type": e.Type, "target": e.Target,
-					"detail": json.RawMessage(e.Detail),
+					"detail":        json.RawMessage(e.Detail),
+					"targetName":    targetName,
+					"detailAccount": detailAccount,
 				})
 			}
 		}
@@ -877,6 +919,7 @@ func meBanAnalysisHandler(q *sqlc.Queries) http.HandlerFunc {
 		total, _ := q.BanTotalByOwner(ctx, owner)
 		wd, _ := q.BanCountsByWeekdayForOwner(ctx, owner)
 		hr, _ := q.BanCountsByHourForOwner(ctx, owner)
+		ac, _ := q.BanCountsPerAccountForOwner(ctx, owner)
 		byWeekday := make([]map[string]any, 0, len(wd))
 		for _, x := range wd {
 			byWeekday = append(byWeekday, map[string]any{"bucket": x.Bucket, "count": x.N})
@@ -885,6 +928,10 @@ func meBanAnalysisHandler(q *sqlc.Queries) http.HandlerFunc {
 		for _, x := range hr {
 			byHour = append(byHour, map[string]any{"bucket": x.Bucket, "count": x.N})
 		}
-		writeJSON(w, 200, map[string]any{"total": total, "byWeekday": byWeekday, "byHour": byHour})
+		byAccount := make([]map[string]any, 0, len(ac))
+		for _, x := range ac {
+			byAccount = append(byAccount, map[string]any{"email": x.Email, "count": x.N})
+		}
+		writeJSON(w, 200, map[string]any{"total": total, "byWeekday": byWeekday, "byHour": byHour, "byAccount": byAccount})
 	}
 }
