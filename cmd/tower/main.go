@@ -58,7 +58,20 @@ func main() {
 	}
 	store := state.NewStore(nowMs, rng)
 	base := policy.Defaults()
-	if err := state.LoadStates(ctx, q, store, base.MaxConcurrent); err != nil {
+	// Warm-start the per-account slot capacity from the LIVE global MaxConcurrent
+	// override (not the compiled default), so after a restart idle accounts show the
+	// configured concurrency (e.g. 5) instead of reverting to the default 3 until a
+	// dispatch re-caps them. Mirrors telemetry.Poller.maxConcurrent / discovery.Refresh.
+	warmCap := base.MaxConcurrent
+	if rows, perr := q.ListPolicies(ctx); perr == nil {
+		for _, row := range rows {
+			if row.ScopeType == "global" {
+				warmCap = policy.PickMaxConcurrent(row.Params, base.MaxConcurrent)
+				break
+			}
+		}
+	}
+	if err := state.LoadStates(ctx, q, store, warmCap); err != nil {
 		log.Printf("warm-start: %v", err)
 	}
 	svc := dispatch.NewService(q, store, base, nowMs, cipher)

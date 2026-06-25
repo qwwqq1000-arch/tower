@@ -400,8 +400,8 @@ func dashboardHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
 		// It does not drive dispatch, scaling, or rate-limit decisions (those use
 		// per-account quotas and account-level limits instead).
 		var a5h, a7d float64
-		if all && svc != nil && svc.Store != nil {
-			a5h, a7d = svc.Store.QuotaAvg()
+		if all {
+			a5h, a7d = cpaQuotaAvg(r.Context(), q, svc)
 		}
 
 		writeJSON(w, http.StatusOK, map[string]any{"nodes": nodes, "accounts": map[string]any{"total": accTotal}, "today": today, "hosting": hosting, "totalCostUsd": totalCost, "quota5hAvg": a5h, "quota7dAvg": a7d})

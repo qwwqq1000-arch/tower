@@ -11,6 +11,57 @@ import (
 	"github.com/qwwqq1000-arch/tower/internal/dispatch"
 )
 
+// cpaQuotaAvg computes the average 5h/7d utilization (0..1 fractions) across CPA
+// accounts that have usable quota data, EXCLUDING banned accounts and failed fetches.
+// It is read-only: it reflects whatever cpa_account_quota currently holds (populated
+// by the manual 刷新 button and reactive limit pulls) and never triggers a fetch — so
+// the homepage cards update whenever a refresh writes the table, but the page itself
+// does not actively poll. Utilization is stored 0..100, so we divide by 100 here to
+// match the 0..1 fraction convention the dashboard cards render with (*100 → %).
+func cpaQuotaAvg(ctx context.Context, q *sqlc.Queries, svc *dispatch.Service) (float64, float64) {
+	rows, err := q.ListCpaQuota(ctx)
+	if err != nil || len(rows) == 0 {
+		return 0, 0
+	}
+	// Banned accounts (封号的不计入): map account_id → banned via the live store status.
+	banned := map[string]bool{}
+	if svc != nil && svc.Store != nil {
+		nowMs := int64(0)
+		if svc.Now != nil {
+			nowMs = svc.Now()
+		}
+		statusByKey := map[string]string{}
+		for _, snap := range svc.Store.Snapshot(nowMs) {
+			statusByKey[snap.Key] = snap.Status
+		}
+		if nas, nerr := q.ListNodeAccountsAll(ctx); nerr == nil {
+			for _, na := range nas {
+				switch statusByKey[na.NodeID+":"+na.ProfileID] {
+				case "banned", "permanent", "half_open", "cooldown":
+					banned[na.AccountID] = true
+				}
+			}
+		}
+	}
+	var sum5, sum7 float64
+	var n int
+	for _, r := range rows {
+		if r.QuotaFetchError != "" || r.UpdatedAt == 0 { // 无数据/拉取失败 → 跳过
+			continue
+		}
+		if banned[r.AccountID] {
+			continue
+		}
+		sum5 += r.FiveHourUtil
+		sum7 += r.SevenDayUtil
+		n++
+	}
+	if n == 0 {
+		return 0, 0
+	}
+	return (sum5 / float64(n)) / 100, (sum7 / float64(n)) / 100
+}
+
 func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Service, now int64, owner string, all bool) map[string]any {
 	// account labels + owner map (owner scoping: non-superadmin sees only own)
 	labels := map[string]string{}
@@ -237,8 +288,8 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 	// global average across all accounts → superadmin only (no cross-owner leak).
 	// Display-only metric (nodeclient-telemetry-3); does not drive dispatch or scaling.
 	var a5h, a7d float64
-	if all && svc != nil && svc.Store != nil {
-		a5h, a7d = svc.Store.QuotaAvg()
+	if all {
+		a5h, a7d = cpaQuotaAvg(ctx, q, svc)
 	}
 	return map[string]any{
 		"accounts": accounts, "traffic": traffic, "events": events,
