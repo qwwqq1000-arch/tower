@@ -194,7 +194,10 @@ function LogRow({ row, channelMap, accountMap, onOpen }: { row: LogEntry; channe
             <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border bg-green-500/20 text-green-400 border-green-500/40">亲和</span>
           )}
           {row.isAttempt && (
-            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border bg-amber-500/20 text-amber-400 border-amber-500/40">重试</span>
+            <span
+              title={`失败尝试 · ${row.targetEmail || row.target} · HTTP ${row.httpStatus || '—'} · 已自动重试到其他账户（这是被放弃的那次尝试，不是最终结果）`}
+              className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border bg-amber-500/20 text-amber-400 border-amber-500/40 cursor-help"
+            >重试</span>
           )}
         </div>
       </td>

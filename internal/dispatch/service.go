@@ -405,16 +405,6 @@ func (s *Service) UpdateRequestDetailResponse(ctx context.Context, status int, b
 	s.appendDetailResponse(ctx, status, fmt.Sprintf("── 响应 → HTTP %d ──\n%s", status, body))
 }
 
-// recordAttemptError appends one failed dispatch attempt's error to the request detail,
-// so a request that failed over still shows WHY each node was abandoned — clicking the
-// 429 row reveals the node's rate-limit body even though the request later succeeded on
-// fallback (logs-detail-3). Empty bodies are skipped.
-func (s *Service) recordAttemptError(ctx context.Context, key string, status int, body string) {
-	if strings.TrimSpace(body) == "" {
-		return
-	}
-	s.appendDetailResponse(ctx, status, fmt.Sprintf("── 失败尝试 %s → HTTP %d ──\n%s\n\n", key, status, body))
-}
 
 // applyReactiveLimit rotates an account out of dispatch until the reset time parsed
 // from a usage-limit RESPONSE (account-limit-reactive), and records the event. The
@@ -694,8 +684,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 			OnRecover: func(key string) { s.recordRecover(ctx, key) },
 			OnAttempt: func(key string, res ProxyResult, ok bool) {
 				if !ok {
-					s.logAttemptErr(ctx, ownerID, model, key, res.Status, false)
-					s.recordAttemptError(ctx, key, res.Status, res.Body) // keep the abandoned node's error in the detail (logs-detail-3)
+					s.logAttempt(ctx, ownerID, model, key, res.Status, false, res.Body) // own row + own detail (retry-log-clarity)
 					s.recordRetry(ctx, acctOwnerOf(keyOwner, key, ownerID), model, key, res.Status, res.Banned)
 					s.maybeCooldown(ctx, acctOwnerOf(keyOwner, key, ownerID), key, res.Status, cfg)
 					// Reactive quota rotation: if the response is a usage-limit error,
@@ -1630,15 +1619,39 @@ func (s *Service) logErr(ctx context.Context, ownerID, model string, status int,
 	})
 }
 
-// logAttemptErr logs a single per-attempt failure (non-2xx or banned) without
-// overwriting the final-outcome row written by logOK / logErr. Latency is 0
-// because we have no settled TTFB for a failed attempt. stream must be true for
-// streaming attempts so the log row accurately reflects the request type.
-func (s *Service) logAttemptErr(ctx context.Context, ownerID, model, key string, status int, stream bool) {
-	s.insertLog(ctx, sqlc.InsertDispatchLogParams{
+// logAttempt logs ONE failed dispatch attempt as its OWN self-consistent log row:
+// a fresh request_id and its OWN detail (this attempt's request body + this attempt's
+// failure response). It deliberately does NOT reuse the parent request's id/detail —
+// so a "error 400 重试" row shows ITS 400, never the eventual 200 of the request that
+// later succeeded on another account (retry-log-clarity). IsAttempt=true drives the
+// 「重试」 badge. Latency is 0 (no settled TTFB for a failed attempt); stream marks
+// the row's request type. The winning/final outcome is logged separately by
+// logOK/logErr against the ctx request_id, whose detail is the request + final
+// response only (no failed-attempt segments — those live on their own rows now).
+func (s *Service) logAttempt(ctx context.Context, ownerID, model, key string, status int, stream bool, respBody string) {
+	aid := NewRequestID()
+	_ = s.Q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{
 		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: key, ProfileID: "",
 		Status: "error", HttpStatus: int32(status), LatencyMs: 0, FallbackReason: "",
-		Stream: stream, CostUsd: 0, IsAttempt: true,
+		Stream: stream, CostUsd: 0, IsAttempt: true, RequestID: aid,
+	})
+	// Own detail = THIS attempt's failure response only. The request body is not
+	// duplicated per attempt (it lives on the parent request row) — duplicating it
+	// across every failover would bloat the detail store (nexaxis-disk-wal-bloat).
+	seg := strings.TrimSpace(respBody)
+	if seg == "" {
+		seg = "(无响应体 / 首字节前失败)"
+	}
+	if len(seg) > maxDetailBodyBytes {
+		seg = seg[:maxDetailBodyBytes] + "\n…[truncated]"
+	}
+	_ = s.Q.UpsertDispatchLogDetail(ctx, sqlc.UpsertDispatchLogDetailParams{
+		RequestID: aid, OwnerID: ownerID, Ts: s.Now(),
+		ReqBody: "(失败尝试 — 请求体见主请求行)", ReqHeaders: "{}",
+	})
+	_ = s.Q.UpdateDispatchLogDetailResponse(ctx, sqlc.UpdateDispatchLogDetailResponseParams{
+		RequestID: aid, RespStatus: int32(status),
+		RespBody:  fmt.Sprintf("── 本次失败尝试 %s → HTTP %d ──\n%s", key, status, seg),
 	})
 }
 
@@ -2001,8 +2014,7 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 			return out
 		}
 		// not committed → failed before first byte → log per-attempt error + failover
-		s.logAttemptErr(ctx, ownerID, model, key, out.Status, true)
-		s.recordAttemptError(ctx, key, out.Status, out.Body) // keep the abandoned node's error in the detail (logs-detail-3)
+		s.logAttempt(ctx, ownerID, model, key, out.Status, true, out.Body) // own row + own detail (retry-log-clarity)
 		s.recordRetry(ctx, acctOwnerOf(keyOwner, key, ownerID), model, key, out.Status, ClassifyBanned(out.Status, "", cfg.BanSignals, nil))
 		s.maybeCooldown(ctx, acctOwnerOf(keyOwner, key, ownerID), key, out.Status, cfg)
 		// Reactive quota rotation on the stream path too (account-limit-reactive).
