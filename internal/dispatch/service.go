@@ -1240,6 +1240,13 @@ func weightedShuffle(chs []sqlc.FallbackChannel) []sqlc.FallbackChannel {
 	return result
 }
 
+// HasActiveAffinity reports whether any conversation currently has an active
+// (non-expired) affinity pin to the given dispatch key. Delegates to the session
+// store; used by the status handler to show a reserve account as 亲和 instead of 待命.
+func (s *Service) HasActiveAffinity(key string, now int64) bool {
+	return s.sess.HasActiveAffinity(key, now)
+}
+
 func (s *Service) enabledChannels(ctx context.Context, ownerID string, model string) []sqlc.FallbackChannel {
 	chs, err := s.Q.ListEnabledFallbackChannels(ctx)
 	if err != nil {

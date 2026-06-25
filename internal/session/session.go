@@ -175,6 +175,20 @@ func (s *Store) Affinity(conv string, now int64) (string, bool) {
 	return st.affinityKey, true
 }
 
+// HasActiveAffinity reports whether any conversation currently has an active
+// (non-expired) affinity pin to the given dispatch key. Used by the status UI to
+// show a reserve (待命) account as 亲和 when affinity is actively routing to it.
+func (s *Store) HasActiveAffinity(key string, now int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, st := range s.m {
+		if st.affinityKey == key && st.affinityUntil > now {
+			return true
+		}
+	}
+	return false
+}
+
 // ForceExile immediately exiles the conversation for cooldownMs milliseconds.
 // Returns justExiled=true only when the conversation was not already exiled.
 func (s *Store) ForceExile(conv string, cooldownMs, now int64) (justExiled bool) {

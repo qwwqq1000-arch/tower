@@ -103,6 +103,12 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 			isReserve := reserveKeys[s.Key]
 			if isReserve && status == "active" {
 				status = "reserve"
+				// Affinity override: if a conversation is currently pinned to this reserve
+				// account (affinity > elastic), show 亲和 so the operator can see it is
+				// actively routing — not truly idle.
+				if svc.HasActiveAffinity(s.Key, now) {
+					status = "affinity"
+				}
 			}
 			accounts = append(accounts, map[string]any{
 				"key":          s.Key,

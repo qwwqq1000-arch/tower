@@ -38,9 +38,10 @@ export function StatusBadge({ status, limitedUntil, limitReason, className = '' 
   return <span className={cls}>{statusLabel(status)}</span>;
 }
 
-// statusRank orders accounts: 活跃 (0) → 待命/reserve (1) → cooldown/half_open (2)
+// statusRank orders accounts: 活跃/亲和 (0) → 待命/reserve (1) → cooldown/half_open (2)
 // → limited (3) → banned/permanent/disabled LAST (4).
 // Lower rank = higher in the list.
+// affinity ranks with active (0): a reserve account serving via affinity is actively routing.
 export function statusRank(status?: string): number {
   switch (status) {
     case 'banned':
@@ -53,7 +54,9 @@ export function statusRank(status?: string): number {
     case 'half_open':
       return 2;
     case 'reserve':
-      return 1; // 待命: after active, before limited/banned
+      return 1; // 待命: after active/affinity, before limited/banned
+    case 'affinity':
+      return 0; // 亲和: actively serving via pin — same tier as active
     default:
       return 0; // active / unknown → first
   }
