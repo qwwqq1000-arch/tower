@@ -81,7 +81,9 @@ func main() {
 		log.Printf("restore limit state: %v", err)
 	} else {
 		for _, r := range rows {
-			store.SetLimitedReason(r.Key, base.MaxConcurrent, r.LimitedUntil, r.LimitReason)
+			// warmCap (live global MaxConcurrent), not the compiled default, so a
+			// restored-limited account's slot capacity matches the configured value.
+			store.SetLimitedReason(r.Key, warmCap, r.LimitedUntil, r.LimitReason)
 		}
 		if len(rows) > 0 {
 			log.Printf("restored %d active limit(s) from DB", len(rows))
