@@ -2259,9 +2259,19 @@ func (s *Service) classifyQuotaLimit(ctx context.Context, key string, cfg policy
 		mgmtKey = s.Cipher.DecryptOrPlaintext(node.MgmtKey)
 	}
 	c := cpaclient.New(node.BaseUrl, mgmtKey)
-	// authIndex is not stored in the dispatch context; pass "" so CPA falls back to
-	// the legacy account-usage endpoint using profileID as the selector.
-	u, err := c.Usage(ctx, "", profileID)
+	// Resolve the account's auth_index (the CPA v7.x api-call selector). The dispatch
+	// context only carries profileID (the .json filename), so list the node's accounts
+	// and match. Falls back to "" (legacy account-usage endpoint) if listing fails.
+	authIndex := ""
+	if accts, lerr := c.ListAccounts(ctx); lerr == nil {
+		for _, a := range accts {
+			if a.AuthIndex != "" && (a.ID == profileID || a.DispatchSelector() == profileID) {
+				authIndex = a.AuthIndex
+				break
+			}
+		}
+	}
+	u, err := c.Usage(ctx, authIndex, profileID)
 	if err != nil {
 		return "", 0
 	}
