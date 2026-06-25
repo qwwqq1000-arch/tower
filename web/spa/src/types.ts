@@ -198,6 +198,7 @@ export interface PolicyPatch {
   ModelPinEnabled?: boolean;
   ModelPinMode?: string;
   ModelPinTarget?: string;
+  ModelElasticEnabled?: boolean;
   SerialQueueEnabled?: boolean;
   SerialQueueWaitMs?: number;
   BodyPadEnabled?: boolean;
@@ -480,6 +481,8 @@ export interface DispatchAccountSnapshot {
   todayCostUsd?: number;
   totalCostUsd?: number;
   rpm?: number; // requests in the last 60 seconds for this account
+  reserve?: boolean;     // in the elastic reserve set (vs baseline)
+  pinnedModel?: string;  // model this account is currently sticky-pinned to ("" if none)
 }
 
 export interface DispatchTraffic {

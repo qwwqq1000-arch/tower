@@ -477,12 +477,16 @@ func (s *Store) BurstReset(key string) {
 
 // RecordModel pins the account to model for ttl milliseconds (sticky model-pin).
 // Creates the account with capacity=1 if absent (same safe default as AddSpend).
-// No-op when the account is already pinned to an unexpired model.
-func (s *Store) RecordModel(key string, model string, ttl int64) {
+// No-op when the account is already pinned to an unexpired model. Returns wasNew=true
+// when this call established a fresh pin (the account had no active pin before), so the
+// caller can emit a "号X 首次钉定模型M" event (model-aware-elastic visibility).
+func (s *Store) RecordModel(key string, model string, ttl int64) (wasNew bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	a := s.ensureLocked(key, 1)
+	_, had := a.PinnedModel(s.now(), ttl)
 	a.RecordModel(model, s.now(), ttl)
+	return !had
 }
 
 // PinnedModel returns the model the account is currently pinned to and whether

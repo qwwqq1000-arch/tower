@@ -731,7 +731,9 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 				s.sess.SetAffinity(conv, winKey, int64(cfg.AffinityTTLSec)*1000, nowMs)
 			}
 			if cfg.ModelPinEnabled && cfg.ModelPinMode == "sticky" {
-				s.Store.RecordModel(winKey, model, int64(cfg.AffinityTTLSec)*1000)
+				if wasNew := s.Store.RecordModel(winKey, model, int64(cfg.AffinityTTLSec)*1000); wasNew && cfg.ModelElasticEnabled {
+					s.recordModelPin(ctx, acctOwnerOf(keyOwner, winKey, ownerID), winKey, model)
+				}
 			}
 			if cfg.RateGovEnabled {
 				s.Store.RecordReq(winKey)
@@ -1064,8 +1066,11 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 					}
 				}
 			}
-			// ModelPin filter: skip accounts that are pinned to a different model
-			// (per-account model-pin override resolves from acfg).
+			// ModelPin filter. "fixed" is a hard per-account restriction — always applied.
+			// "sticky" is applied here in LEGACY mode, but DEFERRED to the model-aware
+			// elastic selection below when ModelElasticEnabled+ElasticEnabled are on, so the
+			// elastic baseline stays model-agnostic (model-aware-elastic) instead of being
+			// shrunk by the model filter (which used to pull reserve accounts into rotation).
 			if acfg.ModelPinEnabled {
 				switch acfg.ModelPinMode {
 				case "fixed":
@@ -1073,9 +1078,11 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 						continue
 					}
 				case "sticky":
-					ttl := int64(acfg.AffinityTTLSec) * 1000
-					if pm, ok := s.Store.PinnedModel(key, ttl); ok && !strings.Contains(strings.ToLower(model), strings.ToLower(pm)) {
-						continue
+					if !(cfg.ModelElasticEnabled && cfg.ElasticEnabled) {
+						ttl := int64(acfg.AffinityTTLSec) * 1000
+						if pm, ok := s.Store.PinnedModel(key, ttl); ok && !strings.Contains(strings.ToLower(model), strings.ToLower(pm)) {
+							continue
+						}
 					}
 				}
 			}
@@ -1209,6 +1216,61 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 			Target:  "",
 			OwnerID: ownerID,
 		})
+	}
+
+	// ── Model-aware elastic (ModelElasticEnabled) ───────────────────────────────
+	// `order` above is the model-AGNOSTIC active set (baseline, + reserve if scaled by
+	// util). Now restrict it to accounts that can serve THIS request's model (pinned to
+	// it, or unpinned). If the active set has none, activate reserve accounts FOR this
+	// model — preferring reserves already pinned to it, else one fresh reserve (emitting
+	// model_scale_up). This keeps model-pin from silently pulling reserve in via the
+	// candidate filter, and keeps reserve idle until a model genuinely needs it.
+	if cfg.ModelElasticEnabled && cfg.ModelPinEnabled {
+		ttl := int64(cfg.AffinityTTLSec) * 1000
+		eligible := func(key string) bool {
+			pm, ok := s.Store.PinnedModel(key, ttl)
+			return !ok || strings.Contains(strings.ToLower(model), strings.ToLower(pm))
+		}
+		var activeEligible []string
+		for _, k := range order {
+			if eligible(k) {
+				activeEligible = append(activeEligible, k)
+			}
+		}
+		if len(activeEligible) > 0 {
+			order = activeEligible
+		} else {
+			inActive := make(map[string]bool, len(order))
+			for _, k := range order {
+				inActive[k] = true
+			}
+			var reservePinned, reserveFresh []string
+			for _, k := range reserve {
+				if inActive[k] {
+					continue
+				}
+				if pm, ok := s.Store.PinnedModel(k, ttl); !ok {
+					reserveFresh = append(reserveFresh, k) // unpinned → can take this model
+				} else if strings.Contains(strings.ToLower(model), strings.ToLower(pm)) {
+					reservePinned = append(reservePinned, k) // already serving this model
+				}
+			}
+			switch {
+			case len(reservePinned) > 0:
+				// Reserve(s) already pinned to this model — use them (+ fresh as failover).
+				order = append(reservePinned, reserveFresh...)
+			case len(reserveFresh) > 0:
+				// No account serves this model yet → activate fresh reserve(s) for it; the
+				// first to succeed pins to the model. Event fires once per fresh activation
+				// (next request finds reservePinned, so it won't re-fire).
+				order = reserveFresh
+				s.recordModelScaleUp(ctx, acctOwnerOf(keyOwner, reserveFresh[0], ownerID), reserveFresh[0], model)
+			default:
+				// Every account is pinned to OTHER models — surface "not enough accounts for
+				// this model" and fall back to the active set so the request still attempts.
+				s.recordModelExhausted(ctx, ownerID, model)
+			}
+		}
 	}
 
 	resolver = func(key string) (NodeRef, bool) { r, ok := refs[key]; return r, ok }
@@ -1990,7 +2052,9 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 					s.sess.SetAffinity(conv, key, int64(cfg.AffinityTTLSec)*1000, nowMs)
 				}
 				if cfg.ModelPinEnabled && cfg.ModelPinMode == "sticky" {
-					s.Store.RecordModel(key, model, int64(cfg.AffinityTTLSec)*1000)
+					if wasNew := s.Store.RecordModel(key, model, int64(cfg.AffinityTTLSec)*1000); wasNew && cfg.ModelElasticEnabled {
+						s.recordModelPin(ctx, acctOwnerOf(keyOwner, key, ownerID), key, model)
+					}
 				}
 			}
 			// Expose the captured SSE stream as the outcome body so the log-detail
@@ -2297,6 +2361,33 @@ func (s *Service) recordRetry(ctx context.Context, ownerID, model, key string, s
 	_ = events.Record(ctx, s.Q, s.Now(), events.Event{
 		Type: "retry", Target: key, OwnerID: ownerID,
 		Detail: map[string]any{"account": key, "model": model, "status": status, "banned": banned},
+	})
+}
+
+// recordModelPin records that an account got pinned to a model for the FIRST time
+// (model-aware-elastic visibility — "号X 首次钉定模型M").
+func (s *Service) recordModelPin(ctx context.Context, ownerID, key, model string) {
+	_ = events.Record(ctx, s.Q, s.Now(), events.Event{
+		Type: "model_pin", Target: key, OwnerID: ownerID,
+		Detail: map[string]any{"account": key, "model": model},
+	})
+}
+
+// recordModelScaleUp records that a reserve account was activated for a model because
+// the elastic active set had no account able to serve it ("模型不够用,弹性扩容一个号").
+func (s *Service) recordModelScaleUp(ctx context.Context, ownerID, key, model string) {
+	_ = events.Record(ctx, s.Q, s.Now(), events.Event{
+		Type: "model_scale_up", Target: key, OwnerID: ownerID,
+		Detail: map[string]any{"account": key, "model": model},
+	})
+}
+
+// recordModelExhausted records that NO account anywhere could serve a model (all are
+// pinned to other models) — the operator needs more accounts for this model.
+func (s *Service) recordModelExhausted(ctx context.Context, ownerID, model string) {
+	_ = events.Record(ctx, s.Q, s.Now(), events.Event{
+		Type: "model_exhausted", Target: "model:" + model, OwnerID: ownerID,
+		Detail: map[string]any{"model": model},
 	})
 }
 

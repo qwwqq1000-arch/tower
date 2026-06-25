@@ -62,6 +62,18 @@ func cpaQuotaAvg(ctx context.Context, q *sqlc.Queries, svc *dispatch.Service) (f
 	return (sum5 / float64(n)) / 100, (sum7 / float64(n)) / 100
 }
 
+// pinnedModelOf returns the model an account is currently pinned to (sticky model-pin),
+// or "" when unpinned/expired. Surfaced in the status so the UI shows each号's模型.
+func pinnedModelOf(svc *dispatch.Service, key string, ttl int64) string {
+	if svc == nil || svc.Store == nil || ttl <= 0 {
+		return ""
+	}
+	if pm, ok := svc.Store.PinnedModel(key, ttl); ok {
+		return pm
+	}
+	return ""
+}
+
 func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Service, now int64, owner string, all bool) map[string]any {
 	// account labels + owner map (owner scoping: non-superadmin sees only own)
 	labels := map[string]string{}
@@ -127,6 +139,12 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 			rpmMap[r.Target] = r.N
 		}
 	}
+	// Model-pin TTL for surfacing each account's currently-pinned model (model-aware-
+	// elastic visibility). Resolved once from the owner's (or global) config.
+	pinTTL := int64(0)
+	if svc != nil {
+		pinTTL = int64(svc.ResolveConfigForOwner(ctx, owner).AffinityTTLSec) * 1000
+	}
 	accounts := []map[string]any{}
 	if svc != nil && svc.Store != nil {
 		for _, s := range svc.Store.Snapshot(now) {
@@ -174,6 +192,7 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 				"todayCostUsd": todayCostMap[s.Key],
 				"totalCostUsd": totalCostMap[s.Key],
 				"rpm":          rpmMap[s.Key],
+				"pinnedModel":  pinnedModelOf(svc, s.Key, pinTTL),
 			})
 		}
 	}

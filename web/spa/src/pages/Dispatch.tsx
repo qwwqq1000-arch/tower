@@ -90,6 +90,7 @@ export function ConcurrencyPanel({ accounts }: { accounts: DispatchAccountSnapsh
             <tr className="border-b border-line text-left text-xs text-muted">
               <th className="px-4 py-2 font-medium">邮箱 / 账户</th>
               <th className="px-4 py-2 font-medium">状态</th>
+              <th className="px-4 py-2 font-medium">模型</th>
               <th className="px-4 py-2 font-medium text-right">并发中</th>
               <th className="px-4 py-2 font-medium text-right">可用</th>
               <th className="px-4 py-2 font-medium text-right">今日消费</th>
@@ -99,7 +100,7 @@ export function ConcurrencyPanel({ accounts }: { accounts: DispatchAccountSnapsh
           <tbody>
             {accounts.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-muted text-xs">无数据</td>
+                <td colSpan={7} className="px-4 py-6 text-center text-muted text-xs">无数据</td>
               </tr>
             )}
             {pageRows.map((a) => (
@@ -113,6 +114,7 @@ export function ConcurrencyPanel({ accounts }: { accounts: DispatchAccountSnapsh
                     <div className="text-[10px] text-muted mt-0.5"><RecoverCountdown recoverAt={a.recoverAt} /></div>
                   )}
                 </td>
+                <td className="px-4 py-2 text-xs text-muted font-mono">{a.pinnedModel ? a.pinnedModel.replace('claude-', '') : '—'}</td>
                 <td className="px-4 py-2 text-right tabular-nums">{a.inflight}</td>
                 <td className="px-4 py-2 text-right tabular-nums">{a.available}</td>
                 <td className="px-4 py-2 text-right tabular-nums text-xs text-muted">{fmtCost(a.todayCostUsd)}</td>
@@ -279,6 +281,9 @@ export function getEventLabel(type: string): EventLabel {
     case 'session_exile': return { label: '会话连错放逐', cls: 'bg-orange-500/20 text-orange-400 border-orange-500/40' };
     case 'scale_up':      return { label: '弹性扩容',    cls: 'bg-blue-500/20 text-blue-400 border-blue-500/40' };
     case 'scale_down':    return { label: '弹性缩容',    cls: 'bg-gray-500/20 text-gray-400 border-gray-500/40' };
+    case 'model_pin':     return { label: '钉定模型',    cls: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40' };
+    case 'model_scale_up':return { label: '模型扩容',    cls: 'bg-blue-500/20 text-blue-400 border-blue-500/40' };
+    case 'model_exhausted':return { label: '模型不足',   cls: 'bg-orange-500/20 text-orange-400 border-orange-500/40' };
     case 'balance_low':   return { label: '余额不足',    cls: 'bg-red-500/20 text-red-400 border-red-500/40' };
     default:
       if (type === 'dispatch_err' || type.endsWith('_err') || type === 'error') {
@@ -380,6 +385,21 @@ export function renderEventDetail(
   }
   if (type === 'scale_up' || type === 'scale_down') {
     return target || '';
+  }
+  if (type === 'model_pin' || type === 'model_scale_up') {
+    let model = ''; let acct = '';
+    try {
+      const d: any = typeof detail === 'string' ? JSON.parse(detail) : detail;
+      if (d) { if (typeof d.model === 'string') model = d.model; if (typeof d.account === 'string') acct = d.account; }
+    } catch { /* ignore */ }
+    const email = accountNames?.get(target) ?? (acct ? accountNames?.get(acct) : undefined) ?? acct ?? target;
+    const head = type === 'model_scale_up' ? '模型扩容' : '钉定模型';
+    return [head, email, model].filter(Boolean).join(' · ');
+  }
+  if (type === 'model_exhausted') {
+    let model = '';
+    try { const d: any = typeof detail === 'string' ? JSON.parse(detail) : detail; if (d && typeof d.model === 'string') model = d.model; } catch { /* ignore */ }
+    return model ? `模型不足 · ${model}` : '模型不足';
   }
   if (target.startsWith('fallback:')) {
     const id = target.slice('fallback:'.length);

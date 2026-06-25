@@ -267,6 +267,7 @@ export default function Policies() {
   const modelPinEnabled = useField<boolean>(false);
   const modelPinMode = useField<string>('sticky');
   const modelPinTarget = useField<string>('');
+  const modelElasticEnabled = useField<boolean>(false);
   // Phase 4: SerialQueue (串行队列)
   const serialQueueEnabled = useField<boolean>(false);
   const serialQueueWaitMs = useField<number>(30000);
@@ -381,7 +382,7 @@ export default function Policies() {
       rateGovEnabled, rateRPMMin, rateRPMMax, rateRPHMin, rateRPHMax, rateRPDMin, rateRPDMax, rateExceedAction,
       sessionSimEnabled, sessionBurstCountMin, sessionBurstCountMax, sessionPauseMsMin, sessionPauseMsMax,
       quietHoursEnabled, quietHoursStartMin, quietHoursEndMin, quietHoursRPMMin, quietHoursRPMMax, quietHoursConcurrency,
-      modelPinEnabled, modelPinMode, modelPinTarget,
+      modelPinEnabled, modelPinMode, modelPinTarget, modelElasticEnabled,
       serialQueueEnabled, serialQueueWaitMs,
       bodyPadEnabled, bodyPadBytesMin, bodyPadBytesMax,
     ];
@@ -476,6 +477,7 @@ export default function Policies() {
       setBool(modelPinEnabled, p, 'ModelPinEnabled');
       setStr(modelPinMode, p, 'ModelPinMode');
       setStr(modelPinTarget, p, 'ModelPinTarget');
+      setBool(modelElasticEnabled, p, 'ModelElasticEnabled');
       // Phase 4: SerialQueue
       setBool(serialQueueEnabled, p, 'SerialQueueEnabled');
       setNum(serialQueueWaitMs, p, 'SerialQueueWaitMs');
@@ -606,6 +608,7 @@ export default function Policies() {
     if (modelPinEnabled.enabled) patch.ModelPinEnabled = modelPinEnabled.value;
     if (modelPinMode.enabled) patch.ModelPinMode = modelPinMode.value;
     if (modelPinTarget.enabled) patch.ModelPinTarget = modelPinTarget.value;
+    if (modelElasticEnabled.enabled) patch.ModelElasticEnabled = modelElasticEnabled.value;
     // Phase 4: SerialQueue
     if (serialQueueEnabled.enabled) patch.SerialQueueEnabled = serialQueueEnabled.value;
     if (serialQueueWaitMs.enabled) patch.SerialQueueWaitMs = serialQueueWaitMs.value;
@@ -711,7 +714,7 @@ export default function Policies() {
       sessionSimEnabled, sessionBurstCountMin, sessionPauseMsMin,
       quietHoursEnabled, quietHoursStartMin, quietHoursRPMMin, quietHoursConcurrency,
       serialQueueEnabled, serialQueueWaitMs,
-      modelPinEnabled, modelPinMode, modelPinTarget,
+      modelPinEnabled, modelPinMode, modelPinTarget, modelElasticEnabled,
       bodyPadEnabled, bodyPadBytesMin,
     ],
     concurrency: [
@@ -899,6 +902,12 @@ export default function Policies() {
 
                 <FieldRow label="ModelPinTarget" desc="固定模式下锁定的目标模型名（仅 fixed 模式生效）" enabled={modelPinTarget.enabled} onToggle={modelPinTarget.toggle} showOnlyConfigured={so}>
                   <input type="text" value={modelPinTarget.value} onChange={(e) => modelPinTarget.set(e.target.value)} disabled={!modelPinTarget.enabled} placeholder="claude-sonnet-4-6" className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition disabled:cursor-not-allowed" />
+                </FieldRow>
+                <FieldRow label="ModelElasticEnabled" desc="模型感知弹性:开启后弹性基准不受模型钉影响,模型钉只在活跃集内选号;某模型活跃集覆盖不了才为它弹性激活一个待命号(发模型扩容事件)。需同时开 ModelPin + Elastic。关=旧行为(模型钉可能把待命号拉进轮换)。" enabled={modelElasticEnabled.enabled} onToggle={modelElasticEnabled.toggle} showOnlyConfigured={so}>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={modelElasticEnabled.value} onChange={(e) => modelElasticEnabled.set(e.target.checked)} disabled={!modelElasticEnabled.enabled} className="accent-accent w-4 h-4" />
+                    <span className="text-sm text-muted">{modelElasticEnabled.value ? '模型感知弹性(开)' : '旧行为(关)'}</span>
+                  </label>
                 </FieldRow>
               </div>
             </div>

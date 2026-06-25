@@ -211,6 +211,13 @@ type Config struct {
 	// candidate pool when the request model matches this target (case-insensitive substring).
 	// Empty string = no restriction (effectively disables fixed-mode filtering).
 	ModelPinTarget string
+	// ModelElasticEnabled makes model-pin cooperate with elastic (model-aware-elastic):
+	// the elastic baseline stays model-agnostic, model-pin selects WITHIN the active set,
+	// and a reserve account is activated for a model only when the active set genuinely
+	// can't serve it (emitting a model_scale_up event). Default false (= legacy behavior
+	// where the model-pin filter could shrink the baseline and pull in reserve). Only
+	// effective when ModelPinEnabled && ElasticEnabled are also on.
+	ModelElasticEnabled bool
 
 	// SerialQueueEnabled forces each account to serve at most 1 request at a time
 	// (concurrency=1). Default false (zero overhead when disabled).
@@ -364,6 +371,7 @@ func Defaults() Config {
 		ModelPinEnabled:       false,
 		ModelPinMode:          "sticky",
 		ModelPinTarget:        "",
+		ModelElasticEnabled:   false,
 		SerialQueueEnabled:    false,
 		SerialQueueWaitMs:     2000,
 		BodyPadEnabled:        false,
@@ -445,9 +453,10 @@ type Patch struct {
 	QuietHoursRPM         *RangeI
 	QuietHoursConcurrency *int
 
-	ModelPinEnabled *bool
-	ModelPinMode    *string
-	ModelPinTarget  *string
+	ModelPinEnabled     *bool
+	ModelPinMode        *string
+	ModelPinTarget      *string
+	ModelElasticEnabled *bool
 
 	SerialQueueEnabled *bool
 	SerialQueueWaitMs  *int
@@ -647,6 +656,9 @@ func apply(c *Config, p Patch) {
 	if p.ModelPinTarget != nil {
 		c.ModelPinTarget = *p.ModelPinTarget
 	}
+	if p.ModelElasticEnabled != nil {
+		c.ModelElasticEnabled = *p.ModelElasticEnabled
+	}
 	if p.SerialQueueEnabled != nil {
 		c.SerialQueueEnabled = *p.SerialQueueEnabled
 	}
@@ -787,6 +799,7 @@ func DryRun(base Config, patches ...Patch) (Config, []Diff) {
 	add("ModelPinEnabled", base.ModelPinEnabled, final.ModelPinEnabled)
 	add("ModelPinMode", base.ModelPinMode, final.ModelPinMode)
 	add("ModelPinTarget", base.ModelPinTarget, final.ModelPinTarget)
+	add("ModelElasticEnabled", base.ModelElasticEnabled, final.ModelElasticEnabled)
 	// Phase 4: SerialQueue
 	add("SerialQueueEnabled", base.SerialQueueEnabled, final.SerialQueueEnabled)
 	add("SerialQueueWaitMs", base.SerialQueueWaitMs, final.SerialQueueWaitMs)
