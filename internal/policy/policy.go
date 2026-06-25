@@ -158,6 +158,10 @@ type Config struct {
 	// SpendWindow7dMs is the 7-day window duration in milliseconds. Default 604800000 (7 days).
 	SpendWindow7dMs int64
 
+	// HumanDelayEnabled gates the human-delay feature. When false (default), the
+	// effective distribution is always "uniform" regardless of HumanDelayDist.
+	// When true, HumanDelayDist applies.
+	HumanDelayEnabled bool
 	// HumanDelayDist selects the inter-slot cooldown distribution.
 	// "uniform" (default) uses SlotCooldownMinMs/MaxMs for a uniform random delay.
 	// "lognormal" uses HumanDelayP50Ms/HumanDelayP95Ms to parameterize a log-normal
@@ -309,6 +313,7 @@ func Defaults() Config {
 		SpendCap7dUsd:     RangeF{Min: 500, Max: 1000},
 		SpendWindow5hMs:   18000000,
 		SpendWindow7dMs:   604800000,
+		HumanDelayEnabled: false,
 		HumanDelayDist:    "uniform",
 		HumanDelayP50Ms:   RangeI{Min: 2000, Max: 2000},
 		HumanDelayP95Ms:   RangeI{Min: 5000, Max: 5000},
@@ -381,6 +386,7 @@ type Patch struct {
 	SpendCap7dUsd             *RangeF
 	SpendWindow5hMs           *int64
 	SpendWindow7dMs           *int64
+	HumanDelayEnabled         *bool
 	HumanDelayDist            *string
 	HumanDelayP50Ms           *RangeI
 	HumanDelayP95Ms           *RangeI
@@ -542,6 +548,9 @@ func apply(c *Config, p Patch) {
 	if p.SpendWindow7dMs != nil {
 		c.SpendWindow7dMs = *p.SpendWindow7dMs
 	}
+	if p.HumanDelayEnabled != nil {
+		c.HumanDelayEnabled = *p.HumanDelayEnabled
+	}
 	if p.HumanDelayDist != nil {
 		c.HumanDelayDist = *p.HumanDelayDist
 	}
@@ -695,6 +704,7 @@ func DryRun(base Config, patches ...Patch) (Config, []Diff) {
 	add("SpendWindow5hMs", base.SpendWindow5hMs, final.SpendWindow5hMs)
 	add("SpendWindow7dMs", base.SpendWindow7dMs, final.SpendWindow7dMs)
 	// Phase 3: HumanDelay
+	add("HumanDelayEnabled", base.HumanDelayEnabled, final.HumanDelayEnabled)
 	add("HumanDelayDist", base.HumanDelayDist, final.HumanDelayDist)
 	add("HumanDelayP50Ms", base.HumanDelayP50Ms, final.HumanDelayP50Ms)
 	add("HumanDelayP95Ms", base.HumanDelayP95Ms, final.HumanDelayP95Ms)

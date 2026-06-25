@@ -463,7 +463,11 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 				serialWaitMs[k] = int64(ac.SerialQueueWaitMs)
 			}
 		}
-		orch := &Orchestrator{Store: s.Store, Cfg: breaker, CooldownMin: cfg.SlotCooldownMinMs, CooldownMax: cfg.SlotCooldownMaxMs, CooldownDist: cfg.HumanDelayDist, CooldownP50: cfg.HumanDelayP50Ms, CooldownP95: cfg.HumanDelayP95Ms, MaxAttempts: maxFailover,
+		humanDist := "uniform"
+		if cfg.HumanDelayEnabled {
+			humanDist = cfg.HumanDelayDist
+		}
+		orch := &Orchestrator{Store: s.Store, Cfg: breaker, CooldownMin: cfg.SlotCooldownMinMs, CooldownMax: cfg.SlotCooldownMaxMs, CooldownDist: humanDist, CooldownP50: cfg.HumanDelayP50Ms, CooldownP95: cfg.HumanDelayP95Ms, MaxAttempts: maxFailover,
 			OnBan:     func(key string, status int) { s.recordBan(ctx, acctOwnerOf(keyOwner, key, ownerID), key, status) },
 			OnRecover: func(key string) { s.recordRecover(ctx, key) },
 			OnAttempt: func(key string, res ProxyResult, ok bool) {
@@ -1543,7 +1547,11 @@ func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, 
 			return
 		}
 		settled = true
-		s.Store.CompleteDelay(key, cfg.HumanDelayDist,
+		humanDist := "uniform"
+		if cfg.HumanDelayEnabled {
+			humanDist = cfg.HumanDelayDist
+		}
+		s.Store.CompleteDelay(key, humanDist,
 				cfg.HumanDelayP50Ms.Resolve(key, "p50"), cfg.HumanDelayP95Ms.Resolve(key, "p95"),
 				cfg.SlotCooldownMinMs, cfg.SlotCooldownMaxMs)
 		if !success && !sendReturned {

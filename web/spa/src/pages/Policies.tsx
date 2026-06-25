@@ -74,6 +74,20 @@ function FieldRow({ label, desc, enabled, onToggle, children, showOnlyConfigured
 }
 
 // ------------------------------------------------------------------
+// Group master switch (总开关)
+// ------------------------------------------------------------------
+function GroupMaster({ field, label = '总开关' }: { field: { value: boolean; enabled: boolean; set: (v: boolean) => void; toggle: () => void }; label?: string }) {
+  return (
+    <label className="flex items-center gap-2 cursor-pointer shrink-0">
+      <span className="text-xs text-muted">{label}</span>
+      <input type="checkbox" checked={field.value}
+        onChange={(e) => { field.set(e.target.checked); if (!field.enabled) field.toggle(); }}
+        className="accent-accent w-4 h-4 cursor-pointer" />
+    </label>
+  );
+}
+
+// ------------------------------------------------------------------
 // Number input
 // ------------------------------------------------------------------
 interface NumInputProps {
@@ -222,6 +236,7 @@ export default function Policies() {
   const spendWindow5hMs = useField<number>(18000000); // 5h in ms
   const spendWindow7dMs = useField<number>(604800000); // 7d in ms
   // Phase 3: HumanDelay (人类延迟)
+  const humanDelayEnabled = useField<boolean>(false);
   const humanDelayDist = useField<string>('uniform');
   const humanDelayP50Min = useField<number>(500);
   const humanDelayP50Max = useField<number>(2000);
@@ -379,6 +394,7 @@ export default function Policies() {
         setNum(spendWindow5hMs, 'SpendWindow5hMs');
         setNum(spendWindow7dMs, 'SpendWindow7dMs');
         // Phase 3: HumanDelay
+        setBool(humanDelayEnabled, 'HumanDelayEnabled');
         setStr(humanDelayDist, 'HumanDelayDist');
         setRange(humanDelayP50Min, humanDelayP50Max, 'HumanDelayP50Ms');
         setRange(humanDelayP95Min, humanDelayP95Max, 'HumanDelayP95Ms');
@@ -497,6 +513,7 @@ export default function Policies() {
     if (spendWindow5hMs.enabled) patch.SpendWindow5hMs = spendWindow5hMs.value;
     if (spendWindow7dMs.enabled) patch.SpendWindow7dMs = spendWindow7dMs.value;
     // Phase 3: HumanDelay
+    if (humanDelayEnabled.enabled) patch.HumanDelayEnabled = humanDelayEnabled.value;
     if (humanDelayDist.enabled) patch.HumanDelayDist = humanDelayDist.value;
     if (humanDelayP50Min.enabled) patch.HumanDelayP50Ms = { Min: humanDelayP50Min.value, Max: humanDelayP50Max.value };
     if (humanDelayP95Min.enabled) patch.HumanDelayP95Ms = { Min: humanDelayP95Min.value, Max: humanDelayP95Max.value };
@@ -589,7 +606,7 @@ export default function Policies() {
     elasticEnabled, elasticScaleUpUtil, elasticScaleDownUtil, elasticMaxReserve, elasticBaselineCount,
     spendCap5hEnabled, spendCap5hMin, spendCap5hMax, spendCap7dEnabled, spendCap7dMin, spendCap7dMax, spendWindow5hMs, spendWindow7dMs,
     // Phase 3
-    humanDelayDist, humanDelayP50Min, humanDelayP95Min,
+    humanDelayEnabled, humanDelayDist, humanDelayP50Min, humanDelayP95Min,
     rateGovEnabled, rateRPMMin, rateRPHMin, rateRPDMin, rateExceedAction,
     sessionSimEnabled, sessionBurstCountMin, sessionPauseMsMin,
     quietHoursEnabled, quietHoursStartMin, quietHoursRPMMin, quietHoursConcurrency,
@@ -604,7 +621,7 @@ export default function Policies() {
   // ------------------------------------------------------------------
   const catFields: Record<CatId, Array<{ enabled: boolean }>> = {
     cadence: [
-      humanDelayDist, humanDelayP50Min, humanDelayP95Min,
+      humanDelayEnabled, humanDelayDist, humanDelayP50Min, humanDelayP95Min,
       rateGovEnabled, rateRPMMin, rateRPHMin, rateRPDMin, rateExceedAction,
       sessionSimEnabled, sessionBurstCountMin, sessionPauseMsMin,
       quietHoursEnabled, quietHoursStartMin, quietHoursRPMMin, quietHoursConcurrency,
@@ -652,171 +669,171 @@ export default function Policies() {
           <>
             {/* Group 1: HumanDelay (人类延迟) */}
             <div className="bg-surface border border-line rounded-xl px-4 py-2 mb-4">
-              <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2">人类延迟（HumanDelay）</h2>
-              <p className="text-xs text-muted/70 -mt-1 mb-1">在每次请求前注入仿人类延迟。uniform = 均匀随机；lognormal = 对数正态（更真实）。</p>
+              <div className="flex items-center justify-between py-2">
+                <div>
+                  <h2 className="text-xs font-medium text-muted uppercase tracking-wide">人类延迟（HumanDelay）</h2>
+                  <p className="text-xs text-muted/70 mt-0.5">在每次请求前注入仿人类延迟。uniform = 均匀随机；lognormal = 对数正态（更真实）。</p>
+                </div>
+                <GroupMaster field={humanDelayEnabled} />
+              </div>
+              <div className={humanDelayEnabled.value ? '' : 'opacity-40 pointer-events-none'}>
+                <FieldRow label="HumanDelayDist" desc="延迟分布类型：uniform（均匀）或 lognormal（对数正态，需设置 P50/P95）" enabled={humanDelayDist.enabled} onToggle={humanDelayDist.toggle} showOnlyConfigured={so}>
+                  <select value={humanDelayDist.value} onChange={(e) => humanDelayDist.set(e.target.value)} disabled={!humanDelayDist.enabled} className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink focus:outline-none focus:border-accent transition disabled:cursor-not-allowed">
+                    <option value="uniform">uniform（均匀随机）</option>
+                    <option value="lognormal">lognormal（对数正态）</option>
+                  </select>
+                </FieldRow>
 
-              <FieldRow label="HumanDelayDist" desc="延迟分布类型：uniform（均匀）或 lognormal（对数正态，需设置 P50/P95）" enabled={humanDelayDist.enabled} onToggle={humanDelayDist.toggle} showOnlyConfigured={so}>
-                <select value={humanDelayDist.value} onChange={(e) => humanDelayDist.set(e.target.value)} disabled={!humanDelayDist.enabled} className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink focus:outline-none focus:border-accent transition disabled:cursor-not-allowed">
-                  <option value="uniform">uniform（均匀随机）</option>
-                  <option value="lognormal">lognormal（对数正态）</option>
-                </select>
-              </FieldRow>
+                <FieldRow label="HumanDelayP50Ms (min ~ max)" desc="P50 延迟随机区间 (ms)，仅 lognormal 模式生效" enabled={humanDelayP50Min.enabled} onToggle={humanDelayP50Min.toggle} showOnlyConfigured={so}>
+                  <RangeInput min={humanDelayP50Min.value} max={humanDelayP50Max.value} onChangeMin={humanDelayP50Min.set} onChangeMax={humanDelayP50Max.set} disabled={!humanDelayP50Min.enabled} step={100} minLabel="min ms" maxLabel="max ms" />
+                </FieldRow>
 
-              <FieldRow label="HumanDelayP50Ms (min ~ max)" desc="P50 延迟随机区间 (ms)，仅 lognormal 模式生效" enabled={humanDelayP50Min.enabled} onToggle={humanDelayP50Min.toggle} showOnlyConfigured={so}>
-                <RangeInput min={humanDelayP50Min.value} max={humanDelayP50Max.value} onChangeMin={humanDelayP50Min.set} onChangeMax={humanDelayP50Max.set} disabled={!humanDelayP50Min.enabled} step={100} minLabel="min ms" maxLabel="max ms" />
-              </FieldRow>
-
-              <FieldRow label="HumanDelayP95Ms (min ~ max)" desc="P95 延迟随机区间 (ms)，仅 lognormal 模式生效" enabled={humanDelayP95Min.enabled} onToggle={humanDelayP95Min.toggle} showOnlyConfigured={so}>
-                <RangeInput min={humanDelayP95Min.value} max={humanDelayP95Max.value} onChangeMin={humanDelayP95Min.set} onChangeMax={humanDelayP95Max.set} disabled={!humanDelayP95Min.enabled} step={100} minLabel="min ms" maxLabel="max ms" />
-              </FieldRow>
+                <FieldRow label="HumanDelayP95Ms (min ~ max)" desc="P95 延迟随机区间 (ms)，仅 lognormal 模式生效" enabled={humanDelayP95Min.enabled} onToggle={humanDelayP95Min.toggle} showOnlyConfigured={so}>
+                  <RangeInput min={humanDelayP95Min.value} max={humanDelayP95Max.value} onChangeMin={humanDelayP95Min.set} onChangeMax={humanDelayP95Max.set} disabled={!humanDelayP95Min.enabled} step={100} minLabel="min ms" maxLabel="max ms" />
+                </FieldRow>
+              </div>
             </div>
 
             {/* Group 2: RateGovernor (利率治理) */}
             <div className="bg-surface border border-line rounded-xl px-4 py-2 mb-4">
-              <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2">利率治理（RateGovernor）</h2>
-              <p className="text-xs text-muted/70 -mt-1 mb-1">按请求频率（RPM/RPH/RPD）限速，超出时执行 rotate（换号）。0 = 不限。</p>
+              <div className="flex items-center justify-between py-2">
+                <div>
+                  <h2 className="text-xs font-medium text-muted uppercase tracking-wide">利率治理（RateGovernor）</h2>
+                  <p className="text-xs text-muted/70 mt-0.5">按请求频率（RPM/RPH/RPD）限速，超出时执行 rotate（换号）。0 = 不限。</p>
+                </div>
+                <GroupMaster field={rateGovEnabled} />
+              </div>
+              <div className={rateGovEnabled.value ? '' : 'opacity-40 pointer-events-none'}>
+                <FieldRow label="RateRPM (min ~ max)" desc="每分钟请求数限制随机区间；0 = 不限" enabled={rateRPMMin.enabled} onToggle={rateRPMMin.toggle} showOnlyConfigured={so}>
+                  <RangeInput min={rateRPMMin.value} max={rateRPMMax.value} onChangeMin={rateRPMMin.set} onChangeMax={rateRPMMax.set} disabled={!rateRPMMin.enabled} step={1} minLabel="min rpm" maxLabel="max rpm" />
+                </FieldRow>
 
-              <FieldRow label="RateGovEnabled" desc="启用利率治理" enabled={rateGovEnabled.enabled} onToggle={rateGovEnabled.toggle} showOnlyConfigured={so}>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={rateGovEnabled.value} onChange={(e) => rateGovEnabled.set(e.target.checked)} disabled={!rateGovEnabled.enabled} className="accent-accent w-4 h-4" />
-                  <span className="text-sm text-ink">{rateGovEnabled.value ? '已启用' : '已禁用'}</span>
-                </label>
-              </FieldRow>
+                <FieldRow label="RateRPH (min ~ max)" desc="每小时请求数限制随机区间；0 = 不限" enabled={rateRPHMin.enabled} onToggle={rateRPHMin.toggle} showOnlyConfigured={so}>
+                  <RangeInput min={rateRPHMin.value} max={rateRPHMax.value} onChangeMin={rateRPHMin.set} onChangeMax={rateRPHMax.set} disabled={!rateRPHMin.enabled} step={10} minLabel="min rph" maxLabel="max rph" />
+                </FieldRow>
 
-              <FieldRow label="RateRPM (min ~ max)" desc="每分钟请求数限制随机区间；0 = 不限" enabled={rateRPMMin.enabled} onToggle={rateRPMMin.toggle} showOnlyConfigured={so}>
-                <RangeInput min={rateRPMMin.value} max={rateRPMMax.value} onChangeMin={rateRPMMin.set} onChangeMax={rateRPMMax.set} disabled={!rateRPMMin.enabled} step={1} minLabel="min rpm" maxLabel="max rpm" />
-              </FieldRow>
+                <FieldRow label="RateRPD (min ~ max)" desc="每天请求数限制随机区间；0 = 不限" enabled={rateRPDMin.enabled} onToggle={rateRPDMin.toggle} showOnlyConfigured={so}>
+                  <RangeInput min={rateRPDMin.value} max={rateRPDMax.value} onChangeMin={rateRPDMin.set} onChangeMax={rateRPDMax.set} disabled={!rateRPDMin.enabled} step={100} minLabel="min rpd" maxLabel="max rpd" />
+                </FieldRow>
 
-              <FieldRow label="RateRPH (min ~ max)" desc="每小时请求数限制随机区间；0 = 不限" enabled={rateRPHMin.enabled} onToggle={rateRPHMin.toggle} showOnlyConfigured={so}>
-                <RangeInput min={rateRPHMin.value} max={rateRPHMax.value} onChangeMin={rateRPHMin.set} onChangeMax={rateRPHMax.set} disabled={!rateRPHMin.enabled} step={10} minLabel="min rph" maxLabel="max rph" />
-              </FieldRow>
-
-              <FieldRow label="RateRPD (min ~ max)" desc="每天请求数限制随机区间；0 = 不限" enabled={rateRPDMin.enabled} onToggle={rateRPDMin.toggle} showOnlyConfigured={so}>
-                <RangeInput min={rateRPDMin.value} max={rateRPDMax.value} onChangeMin={rateRPDMin.set} onChangeMax={rateRPDMax.set} disabled={!rateRPDMin.enabled} step={100} minLabel="min rpd" maxLabel="max rpd" />
-              </FieldRow>
-
-              <FieldRow label="RateExceedAction" desc="超出频率限制时的动作：rotate（切换到下一个账号）。仅支持 rotate。" enabled={rateExceedAction.enabled} onToggle={rateExceedAction.toggle} showOnlyConfigured={so}>
-                <select value={rateExceedAction.value} onChange={(e) => rateExceedAction.set(e.target.value)} disabled={!rateExceedAction.enabled} className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink focus:outline-none focus:border-accent transition disabled:cursor-not-allowed">
-                  <option value="rotate">rotate（换号）</option>
-                </select>
-              </FieldRow>
+                <FieldRow label="RateExceedAction" desc="超出频率限制时的动作：rotate（切换到下一个账号）。仅支持 rotate。" enabled={rateExceedAction.enabled} onToggle={rateExceedAction.toggle} showOnlyConfigured={so}>
+                  <select value={rateExceedAction.value} onChange={(e) => rateExceedAction.set(e.target.value)} disabled={!rateExceedAction.enabled} className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink focus:outline-none focus:border-accent transition disabled:cursor-not-allowed">
+                    <option value="rotate">rotate（换号）</option>
+                  </select>
+                </FieldRow>
+              </div>
             </div>
 
             {/* Group 3: SessionSim (会话模拟) */}
             <div className="bg-surface border border-line rounded-xl px-4 py-2 mb-4">
-              <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2">会话模拟（SessionSim）</h2>
-              <p className="text-xs text-muted/70 -mt-1 mb-1">模拟真实用户会话节奏：连发 N 条后暂停一段时间，避免持续高并发。</p>
+              <div className="flex items-center justify-between py-2">
+                <div>
+                  <h2 className="text-xs font-medium text-muted uppercase tracking-wide">会话模拟（SessionSim）</h2>
+                  <p className="text-xs text-muted/70 mt-0.5">模拟真实用户会话节奏：连发 N 条后暂停一段时间，避免持续高并发。</p>
+                </div>
+                <GroupMaster field={sessionSimEnabled} />
+              </div>
+              <div className={sessionSimEnabled.value ? '' : 'opacity-40 pointer-events-none'}>
+                <FieldRow label="SessionBurstCount (min ~ max)" desc="每个会话突发请求数随机区间（连发 N 条后进入暂停）" enabled={sessionBurstCountMin.enabled} onToggle={sessionBurstCountMin.toggle} showOnlyConfigured={so}>
+                  <RangeInput min={sessionBurstCountMin.value} max={sessionBurstCountMax.value} onChangeMin={sessionBurstCountMin.set} onChangeMax={sessionBurstCountMax.set} disabled={!sessionBurstCountMin.enabled} step={1} minLabel="min 条" maxLabel="max 条" />
+                </FieldRow>
 
-              <FieldRow label="SessionSimEnabled" desc="启用会话节奏模拟" enabled={sessionSimEnabled.enabled} onToggle={sessionSimEnabled.toggle} showOnlyConfigured={so}>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={sessionSimEnabled.value} onChange={(e) => sessionSimEnabled.set(e.target.checked)} disabled={!sessionSimEnabled.enabled} className="accent-accent w-4 h-4" />
-                  <span className="text-sm text-ink">{sessionSimEnabled.value ? '已启用' : '已禁用'}</span>
-                </label>
-              </FieldRow>
-
-              <FieldRow label="SessionBurstCount (min ~ max)" desc="每个会话突发请求数随机区间（连发 N 条后进入暂停）" enabled={sessionBurstCountMin.enabled} onToggle={sessionBurstCountMin.toggle} showOnlyConfigured={so}>
-                <RangeInput min={sessionBurstCountMin.value} max={sessionBurstCountMax.value} onChangeMin={sessionBurstCountMin.set} onChangeMax={sessionBurstCountMax.set} disabled={!sessionBurstCountMin.enabled} step={1} minLabel="min 条" maxLabel="max 条" />
-              </FieldRow>
-
-              <FieldRow label="SessionPauseMs (min ~ max)" desc="突发后暂停时长随机区间 (ms)" enabled={sessionPauseMsMin.enabled} onToggle={sessionPauseMsMin.toggle} showOnlyConfigured={so}>
-                <RangeInput min={sessionPauseMsMin.value} max={sessionPauseMsMax.value} onChangeMin={sessionPauseMsMin.set} onChangeMax={sessionPauseMsMax.set} disabled={!sessionPauseMsMin.enabled} step={1000} minLabel="min ms" maxLabel="max ms" />
-              </FieldRow>
+                <FieldRow label="SessionPauseMs (min ~ max)" desc="突发后暂停时长随机区间 (ms)" enabled={sessionPauseMsMin.enabled} onToggle={sessionPauseMsMin.toggle} showOnlyConfigured={so}>
+                  <RangeInput min={sessionPauseMsMin.value} max={sessionPauseMsMax.value} onChangeMin={sessionPauseMsMin.set} onChangeMax={sessionPauseMsMax.set} disabled={!sessionPauseMsMin.enabled} step={1000} minLabel="min ms" maxLabel="max ms" />
+                </FieldRow>
+              </div>
             </div>
 
             {/* Group 4: QuietHours (安静时段) */}
             <div className="bg-surface border border-line rounded-xl px-4 py-2 mb-4">
-              <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2">安静时段（QuietHours）</h2>
-              <p className="text-xs text-muted/70 -mt-1 mb-1">在指定时段内自动降速（低 RPM + 低并发），模拟人类夜间休息行为。时间以本地分钟数（0=00:00, 360=06:00）表示。</p>
-
-              <FieldRow label="QuietHoursEnabled" desc="启用安静时段" enabled={quietHoursEnabled.enabled} onToggle={quietHoursEnabled.toggle} showOnlyConfigured={so}>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={quietHoursEnabled.value} onChange={(e) => quietHoursEnabled.set(e.target.checked)} disabled={!quietHoursEnabled.enabled} className="accent-accent w-4 h-4" />
-                  <span className="text-sm text-ink">{quietHoursEnabled.value ? '已启用' : '已禁用'}</span>
-                </label>
-              </FieldRow>
-
-              <FieldRow label="安静时段窗口（开始 ~ 结束）" desc="以分钟数表示（0=00:00, 360=06:00, 1380=23:00）" enabled={quietHoursStartMin.enabled} onToggle={quietHoursStartMin.toggle} showOnlyConfigured={so}>
-                <div className="flex items-center gap-2">
-                  <div className="flex flex-col flex-1 min-w-0">
-                    <span className="text-xs text-muted mb-0.5">开始 (min)</span>
-                    <NumInput value={quietHoursStartMin.value} onChange={quietHoursStartMin.set} disabled={!quietHoursStartMin.enabled} min={0} max={1439} step={30} placeholder="0" />
-                  </div>
-                  <span className="text-muted text-sm mt-4">~</span>
-                  <div className="flex flex-col flex-1 min-w-0">
-                    <span className="text-xs text-muted mb-0.5">结束 (min)</span>
-                    <NumInput value={quietHoursEndMin.value} onChange={quietHoursEndMin.set} disabled={!quietHoursStartMin.enabled} min={0} max={1439} step={30} placeholder="360" />
-                  </div>
+              <div className="flex items-center justify-between py-2">
+                <div>
+                  <h2 className="text-xs font-medium text-muted uppercase tracking-wide">安静时段（QuietHours）</h2>
+                  <p className="text-xs text-muted/70 mt-0.5">在指定时段内自动降速（低 RPM + 低并发），模拟人类夜间休息行为。时间以本地分钟数（0=00:00, 360=06:00）表示。</p>
                 </div>
-              </FieldRow>
+                <GroupMaster field={quietHoursEnabled} />
+              </div>
+              <div className={quietHoursEnabled.value ? '' : 'opacity-40 pointer-events-none'}>
+                <FieldRow label="安静时段窗口（开始 ~ 结束）" desc="以分钟数表示（0=00:00, 360=06:00, 1380=23:00）" enabled={quietHoursStartMin.enabled} onToggle={quietHoursStartMin.toggle} showOnlyConfigured={so}>
+                  <div className="flex items-center gap-2">
+                    <div className="flex flex-col flex-1 min-w-0">
+                      <span className="text-xs text-muted mb-0.5">开始 (min)</span>
+                      <NumInput value={quietHoursStartMin.value} onChange={quietHoursStartMin.set} disabled={!quietHoursStartMin.enabled} min={0} max={1439} step={30} placeholder="0" />
+                    </div>
+                    <span className="text-muted text-sm mt-4">~</span>
+                    <div className="flex flex-col flex-1 min-w-0">
+                      <span className="text-xs text-muted mb-0.5">结束 (min)</span>
+                      <NumInput value={quietHoursEndMin.value} onChange={quietHoursEndMin.set} disabled={!quietHoursStartMin.enabled} min={0} max={1439} step={30} placeholder="360" />
+                    </div>
+                  </div>
+                </FieldRow>
 
-              <FieldRow label="QuietHoursRPM (min ~ max)" desc="安静时段允许的每分钟请求数随机区间" enabled={quietHoursRPMMin.enabled} onToggle={quietHoursRPMMin.toggle} showOnlyConfigured={so}>
-                <RangeInput min={quietHoursRPMMin.value} max={quietHoursRPMMax.value} onChangeMin={quietHoursRPMMin.set} onChangeMax={quietHoursRPMMax.set} disabled={!quietHoursRPMMin.enabled} step={1} minLabel="min rpm" maxLabel="max rpm" />
-              </FieldRow>
+                <FieldRow label="QuietHoursRPM (min ~ max)" desc="安静时段允许的每分钟请求数随机区间" enabled={quietHoursRPMMin.enabled} onToggle={quietHoursRPMMin.toggle} showOnlyConfigured={so}>
+                  <RangeInput min={quietHoursRPMMin.value} max={quietHoursRPMMax.value} onChangeMin={quietHoursRPMMin.set} onChangeMax={quietHoursRPMMax.set} disabled={!quietHoursRPMMin.enabled} step={1} minLabel="min rpm" maxLabel="max rpm" />
+                </FieldRow>
 
-              <FieldRow label="QuietHoursConcurrency" desc="安静时段最大并发数" enabled={quietHoursConcurrency.enabled} onToggle={quietHoursConcurrency.toggle} showOnlyConfigured={so}>
-                <NumInput value={quietHoursConcurrency.value} onChange={quietHoursConcurrency.set} disabled={!quietHoursConcurrency.enabled} min={1} />
-              </FieldRow>
+                <FieldRow label="QuietHoursConcurrency" desc="安静时段最大并发数" enabled={quietHoursConcurrency.enabled} onToggle={quietHoursConcurrency.toggle} showOnlyConfigured={so}>
+                  <NumInput value={quietHoursConcurrency.value} onChange={quietHoursConcurrency.set} disabled={!quietHoursConcurrency.enabled} min={1} />
+                </FieldRow>
+              </div>
             </div>
 
             {/* Group 5: SerialQueue (串行队列) */}
             <div className="bg-surface border border-line rounded-xl px-4 py-2 mb-4">
-              <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2">串行队列（SerialQueue）</h2>
-              <p className="text-xs text-muted/70 -mt-1 mb-1">强制账号内请求串行执行（同一账号同时只跑一个请求），模拟单用户行为。超时后自动放弃等位。</p>
-
-              <FieldRow label="SerialQueueEnabled" desc="启用串行队列" enabled={serialQueueEnabled.enabled} onToggle={serialQueueEnabled.toggle} showOnlyConfigured={so}>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={serialQueueEnabled.value} onChange={(e) => serialQueueEnabled.set(e.target.checked)} disabled={!serialQueueEnabled.enabled} className="accent-accent w-4 h-4" />
-                  <span className="text-sm text-ink">{serialQueueEnabled.value ? '已启用' : '已禁用'}</span>
-                </label>
-              </FieldRow>
-
-              <FieldRow label="SerialQueueWaitMs" desc="等位超时 (ms)：超时后放弃排队，换号或返回 503" enabled={serialQueueWaitMs.enabled} onToggle={serialQueueWaitMs.toggle} showOnlyConfigured={so}>
-                <NumInput value={serialQueueWaitMs.value} onChange={serialQueueWaitMs.set} disabled={!serialQueueWaitMs.enabled} min={0} step={1000} />
-              </FieldRow>
+              <div className="flex items-center justify-between py-2">
+                <div>
+                  <h2 className="text-xs font-medium text-muted uppercase tracking-wide">串行队列（SerialQueue）</h2>
+                  <p className="text-xs text-muted/70 mt-0.5">强制账号内请求串行执行（同一账号同时只跑一个请求），模拟单用户行为。超时后自动放弃等位。</p>
+                </div>
+                <GroupMaster field={serialQueueEnabled} />
+              </div>
+              <div className={serialQueueEnabled.value ? '' : 'opacity-40 pointer-events-none'}>
+                <FieldRow label="SerialQueueWaitMs" desc="等位超时 (ms)：超时后放弃排队，换号或返回 503" enabled={serialQueueWaitMs.enabled} onToggle={serialQueueWaitMs.toggle} showOnlyConfigured={so}>
+                  <NumInput value={serialQueueWaitMs.value} onChange={serialQueueWaitMs.set} disabled={!serialQueueWaitMs.enabled} min={0} step={1000} />
+                </FieldRow>
+              </div>
             </div>
 
             {/* Group 6: ModelPin (模型锁定) */}
             <div className="bg-surface border border-line rounded-xl px-4 py-2 mb-4">
-              <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2">模型锁定（ModelPin）</h2>
-              <p className="text-xs text-muted/70 -mt-1 mb-1">将账号绑定到特定模型或按首次请求粘性锁定，避免不同模型混用暴露多账号特征。</p>
+              <div className="flex items-center justify-between py-2">
+                <div>
+                  <h2 className="text-xs font-medium text-muted uppercase tracking-wide">模型锁定（ModelPin）</h2>
+                  <p className="text-xs text-muted/70 mt-0.5">将账号绑定到特定模型或按首次请求粘性锁定，避免不同模型混用暴露多账号特征。</p>
+                </div>
+                <GroupMaster field={modelPinEnabled} />
+              </div>
+              <div className={modelPinEnabled.value ? '' : 'opacity-40 pointer-events-none'}>
+                <FieldRow label="ModelPinMode" desc="锁定模式：sticky = 按首次请求模型粘性绑定；fixed = 始终锁定到 Target 模型" enabled={modelPinMode.enabled} onToggle={modelPinMode.toggle} showOnlyConfigured={so}>
+                  <select value={modelPinMode.value} onChange={(e) => modelPinMode.set(e.target.value)} disabled={!modelPinMode.enabled} className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink focus:outline-none focus:border-accent transition disabled:cursor-not-allowed">
+                    <option value="sticky">sticky（粘性，按首次请求锁定）</option>
+                    <option value="fixed">fixed（固定，始终用 Target）</option>
+                  </select>
+                </FieldRow>
 
-              <FieldRow label="ModelPinEnabled" desc="启用模型锁定" enabled={modelPinEnabled.enabled} onToggle={modelPinEnabled.toggle} showOnlyConfigured={so}>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={modelPinEnabled.value} onChange={(e) => modelPinEnabled.set(e.target.checked)} disabled={!modelPinEnabled.enabled} className="accent-accent w-4 h-4" />
-                  <span className="text-sm text-ink">{modelPinEnabled.value ? '已启用' : '已禁用'}</span>
-                </label>
-              </FieldRow>
-
-              <FieldRow label="ModelPinMode" desc="锁定模式：sticky = 按首次请求模型粘性绑定；fixed = 始终锁定到 Target 模型" enabled={modelPinMode.enabled} onToggle={modelPinMode.toggle} showOnlyConfigured={so}>
-                <select value={modelPinMode.value} onChange={(e) => modelPinMode.set(e.target.value)} disabled={!modelPinMode.enabled} className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink focus:outline-none focus:border-accent transition disabled:cursor-not-allowed">
-                  <option value="sticky">sticky（粘性，按首次请求锁定）</option>
-                  <option value="fixed">fixed（固定，始终用 Target）</option>
-                </select>
-              </FieldRow>
-
-              <FieldRow label="ModelPinTarget" desc="固定模式下锁定的目标模型名（仅 fixed 模式生效）" enabled={modelPinTarget.enabled} onToggle={modelPinTarget.toggle} showOnlyConfigured={so}>
-                <input type="text" value={modelPinTarget.value} onChange={(e) => modelPinTarget.set(e.target.value)} disabled={!modelPinTarget.enabled} placeholder="claude-sonnet-4-6" className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition disabled:cursor-not-allowed" />
-              </FieldRow>
+                <FieldRow label="ModelPinTarget" desc="固定模式下锁定的目标模型名（仅 fixed 模式生效）" enabled={modelPinTarget.enabled} onToggle={modelPinTarget.toggle} showOnlyConfigured={so}>
+                  <input type="text" value={modelPinTarget.value} onChange={(e) => modelPinTarget.set(e.target.value)} disabled={!modelPinTarget.enabled} placeholder="claude-sonnet-4-6" className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition disabled:cursor-not-allowed" />
+                </FieldRow>
+              </div>
             </div>
 
             {/* Group 7: BodyPad (请求体填充) */}
             <div className="bg-surface border border-line rounded-xl px-4 py-2 mb-4">
-              <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2">
-                请求体填充（BodyPad）
-                <span className="ml-2 text-xs font-normal text-muted normal-case">(需上游验证)</span>
-              </h2>
-              <p className="text-xs text-muted/70 -mt-1 mb-1">在请求体末尾追加随机填充字节，使每次请求大小不完全相同，混淆流量指纹。</p>
-
-              <FieldRow label="BodyPadEnabled" desc="启用请求体填充" enabled={bodyPadEnabled.enabled} onToggle={bodyPadEnabled.toggle} showOnlyConfigured={so}>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={bodyPadEnabled.value} onChange={(e) => bodyPadEnabled.set(e.target.checked)} disabled={!bodyPadEnabled.enabled} className="accent-accent w-4 h-4" />
-                  <span className="text-sm text-ink">{bodyPadEnabled.value ? '已启用' : '已禁用'}</span>
-                </label>
-              </FieldRow>
-
-              <FieldRow label="BodyPadBytes (min ~ max)" desc="每次请求随机填充字节数区间；0 ~ 0 = 不填充" enabled={bodyPadBytesMin.enabled} onToggle={bodyPadBytesMin.toggle} showOnlyConfigured={so}>
-                <RangeInput min={bodyPadBytesMin.value} max={bodyPadBytesMax.value} onChangeMin={bodyPadBytesMin.set} onChangeMax={bodyPadBytesMax.set} disabled={!bodyPadBytesMin.enabled} step={64} minLabel="min B" maxLabel="max B" />
-              </FieldRow>
+              <div className="flex items-center justify-between py-2">
+                <div>
+                  <h2 className="text-xs font-medium text-muted uppercase tracking-wide">
+                    请求体填充（BodyPad）
+                    <span className="ml-2 text-xs font-normal text-muted normal-case">(需上游验证)</span>
+                  </h2>
+                  <p className="text-xs text-muted/70 mt-0.5">在请求体末尾追加随机填充字节，使每次请求大小不完全相同，混淆流量指纹。</p>
+                </div>
+                <GroupMaster field={bodyPadEnabled} />
+              </div>
+              <div className={bodyPadEnabled.value ? '' : 'opacity-40 pointer-events-none'}>
+                <FieldRow label="BodyPadBytes (min ~ max)" desc="每次请求随机填充字节数区间；0 ~ 0 = 不填充" enabled={bodyPadBytesMin.enabled} onToggle={bodyPadBytesMin.toggle} showOnlyConfigured={so}>
+                  <RangeInput min={bodyPadBytesMin.value} max={bodyPadBytesMax.value} onChangeMin={bodyPadBytesMin.set} onChangeMax={bodyPadBytesMax.set} disabled={!bodyPadBytesMin.enabled} step={64} minLabel="min B" maxLabel="max B" />
+                </FieldRow>
+              </div>
             </div>
           </>
         );
@@ -949,33 +966,32 @@ export default function Policies() {
           <>
             {/* Group: 保底触发 */}
             <div className="bg-surface border border-line rounded-xl px-4 py-2 mb-4">
-              <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2">保底触发（兜底通道触发条件）</h2>
+              <div className="flex items-center justify-between py-2">
+                <div>
+                  <h2 className="text-xs font-medium text-muted uppercase tracking-wide">保底触发（兜底通道触发条件）</h2>
+                </div>
+                <GroupMaster field={fallbackEnabled} />
+              </div>
+              <div className={fallbackEnabled.value ? '' : 'opacity-40 pointer-events-none'}>
+                <FieldRow label="FallbackPriceThresholdUsd" desc="兜底通道价格阈值（美元/请求）" enabled={fallbackPriceThresholdUsd.enabled} onToggle={fallbackPriceThresholdUsd.toggle} showOnlyConfigured={so}>
+                  <NumInput value={fallbackPriceThresholdUsd.value} onChange={fallbackPriceThresholdUsd.set} disabled={!fallbackPriceThresholdUsd.enabled} min={0} step={0.001} />
+                </FieldRow>
 
-              <FieldRow label="FallbackEnabled" desc="是否启用兜底通道（直连 Anthropic API）" enabled={fallbackEnabled.enabled} onToggle={fallbackEnabled.toggle} showOnlyConfigured={so}>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={fallbackEnabled.value} onChange={(e) => fallbackEnabled.set(e.target.checked)} disabled={!fallbackEnabled.enabled} className="accent-accent w-4 h-4" />
-                  <span className="text-sm text-ink">{fallbackEnabled.value ? '已启用' : '已禁用'}</span>
-                </label>
-              </FieldRow>
+                <FieldRow label="保底关键词(逗号分隔,命中即走保底)" desc="响应内容命中任一关键词时强制走兜底通道" enabled={fallbackKeywords.enabled} onToggle={fallbackKeywords.toggle} showOnlyConfigured={so}>
+                  <input type="text" value={fallbackKeywords.value} onChange={(e) => fallbackKeywords.set(e.target.value)} disabled={!fallbackKeywords.enabled} placeholder="keyword1,keyword2" className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition disabled:cursor-not-allowed" />
+                </FieldRow>
 
-              <FieldRow label="FallbackPriceThresholdUsd" desc="兜底通道价格阈值（美元/请求）" enabled={fallbackPriceThresholdUsd.enabled} onToggle={fallbackPriceThresholdUsd.toggle} showOnlyConfigured={so}>
-                <NumInput value={fallbackPriceThresholdUsd.value} onChange={fallbackPriceThresholdUsd.set} disabled={!fallbackPriceThresholdUsd.enabled} min={0} step={0.001} />
-              </FieldRow>
+                <FieldRow label="指定模型走保底(逗号分隔,子串匹配)" desc="请求模型名含子串时强制走兜底通道" enabled={fallbackModels.enabled} onToggle={fallbackModels.toggle} showOnlyConfigured={so}>
+                  <input type="text" value={fallbackModels.value} onChange={(e) => fallbackModels.set(e.target.value)} disabled={!fallbackModels.enabled} placeholder="claude-3-opus,claude-3-5" className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition disabled:cursor-not-allowed" />
+                </FieldRow>
 
-              <FieldRow label="保底关键词(逗号分隔,命中即走保底)" desc="响应内容命中任一关键词时强制走兜底通道" enabled={fallbackKeywords.enabled} onToggle={fallbackKeywords.toggle} showOnlyConfigured={so}>
-                <input type="text" value={fallbackKeywords.value} onChange={(e) => fallbackKeywords.set(e.target.value)} disabled={!fallbackKeywords.enabled} placeholder="keyword1,keyword2" className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition disabled:cursor-not-allowed" />
-              </FieldRow>
-
-              <FieldRow label="指定模型走保底(逗号分隔,子串匹配)" desc="请求模型名含子串时强制走兜底通道" enabled={fallbackModels.enabled} onToggle={fallbackModels.toggle} showOnlyConfigured={so}>
-                <input type="text" value={fallbackModels.value} onChange={(e) => fallbackModels.set(e.target.value)} disabled={!fallbackModels.enabled} placeholder="claude-3-opus,claude-3-5" className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition disabled:cursor-not-allowed" />
-              </FieldRow>
-
-              <FieldRow label="探活/hi 走保底" desc="探活心跳请求（hi 消息）强制走兜底通道" enabled={fallbackProbeEnabled.enabled} onToggle={fallbackProbeEnabled.toggle} showOnlyConfigured={so}>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={fallbackProbeEnabled.value} onChange={(e) => fallbackProbeEnabled.set(e.target.checked)} disabled={!fallbackProbeEnabled.enabled} className="accent-accent w-4 h-4" />
-                  <span className="text-sm text-ink">{fallbackProbeEnabled.value ? '已启用' : '已禁用'}</span>
-                </label>
-              </FieldRow>
+                <FieldRow label="探活/hi 走保底" desc="探活心跳请求（hi 消息）强制走兜底通道" enabled={fallbackProbeEnabled.enabled} onToggle={fallbackProbeEnabled.toggle} showOnlyConfigured={so}>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={fallbackProbeEnabled.value} onChange={(e) => fallbackProbeEnabled.set(e.target.checked)} disabled={!fallbackProbeEnabled.enabled} className="accent-accent w-4 h-4" />
+                    <span className="text-sm text-ink">{fallbackProbeEnabled.value ? '已启用' : '已禁用'}</span>
+                  </label>
+                </FieldRow>
+              </div>
             </div>
 
             {/* Group: 故障转移 */}
@@ -989,30 +1005,29 @@ export default function Policies() {
 
             {/* Group: 弹性伸缩 */}
             <div className="bg-surface border border-line rounded-xl px-4 py-2 mb-4">
-              <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2">弹性伸缩</h2>
+              <div className="flex items-center justify-between py-2">
+                <div>
+                  <h2 className="text-xs font-medium text-muted uppercase tracking-wide">弹性伸缩</h2>
+                </div>
+                <GroupMaster field={elasticEnabled} />
+              </div>
+              <div className={elasticEnabled.value ? '' : 'opacity-40 pointer-events-none'}>
+                <FieldRow label="ElasticScaleUpUtil" desc="扩容利用率阈值" enabled={elasticScaleUpUtil.enabled} onToggle={elasticScaleUpUtil.toggle} showOnlyConfigured={so}>
+                  <NumInput value={elasticScaleUpUtil.value} onChange={elasticScaleUpUtil.set} disabled={!elasticScaleUpUtil.enabled} min={0} max={1} step={0.05} />
+                </FieldRow>
 
-              <FieldRow label="ElasticEnabled" desc="启用弹性" enabled={elasticEnabled.enabled} onToggle={elasticEnabled.toggle} showOnlyConfigured={so}>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={elasticEnabled.value} onChange={(e) => elasticEnabled.set(e.target.checked)} disabled={!elasticEnabled.enabled} className="accent-accent w-4 h-4" />
-                  <span className="text-sm text-ink">{elasticEnabled.value ? '已启用' : '已禁用'}</span>
-                </label>
-              </FieldRow>
+                <FieldRow label="缩容利用率阈值(利用率≤此值才释放备用号)" desc="利用率持续低于此阈值时才释放备用号（与扩容阈值形成迟滞区间）" enabled={elasticScaleDownUtil.enabled} onToggle={elasticScaleDownUtil.toggle} showOnlyConfigured={so}>
+                  <NumInput value={elasticScaleDownUtil.value} onChange={elasticScaleDownUtil.set} disabled={!elasticScaleDownUtil.enabled} min={0} max={1} step={0.05} />
+                </FieldRow>
 
-              <FieldRow label="ElasticScaleUpUtil" desc="扩容利用率阈值" enabled={elasticScaleUpUtil.enabled} onToggle={elasticScaleUpUtil.toggle} showOnlyConfigured={so}>
-                <NumInput value={elasticScaleUpUtil.value} onChange={elasticScaleUpUtil.set} disabled={!elasticScaleUpUtil.enabled} min={0} max={1} step={0.05} />
-              </FieldRow>
+                <FieldRow label="ElasticMaxReserve" desc="最大备用数" enabled={elasticMaxReserve.enabled} onToggle={elasticMaxReserve.toggle} showOnlyConfigured={so}>
+                  <NumInput value={elasticMaxReserve.value} onChange={elasticMaxReserve.set} disabled={!elasticMaxReserve.enabled} min={0} />
+                </FieldRow>
 
-              <FieldRow label="缩容利用率阈值(利用率≤此值才释放备用号)" desc="利用率持续低于此阈值时才释放备用号（与扩容阈值形成迟滞区间）" enabled={elasticScaleDownUtil.enabled} onToggle={elasticScaleDownUtil.toggle} showOnlyConfigured={so}>
-                <NumInput value={elasticScaleDownUtil.value} onChange={elasticScaleDownUtil.set} disabled={!elasticScaleDownUtil.enabled} min={0} max={1} step={0.05} />
-              </FieldRow>
-
-              <FieldRow label="ElasticMaxReserve" desc="最大备用数" enabled={elasticMaxReserve.enabled} onToggle={elasticMaxReserve.toggle} showOnlyConfigured={so}>
-                <NumInput value={elasticMaxReserve.value} onChange={elasticMaxReserve.set} disabled={!elasticMaxReserve.enabled} min={0} />
-              </FieldRow>
-
-              <FieldRow label="默认活跃账户数(打满后才按弹性扩容)" desc="弹性扩容触发前默认保持活跃的账户数量" enabled={elasticBaselineCount.enabled} onToggle={elasticBaselineCount.toggle} showOnlyConfigured={so}>
-                <NumInput value={elasticBaselineCount.value} onChange={elasticBaselineCount.set} disabled={!elasticBaselineCount.enabled} min={1} />
-              </FieldRow>
+                <FieldRow label="默认活跃账户数(打满后才按弹性扩容)" desc="弹性扩容触发前默认保持活跃的账户数量" enabled={elasticBaselineCount.enabled} onToggle={elasticBaselineCount.toggle} showOnlyConfigured={so}>
+                  <NumInput value={elasticBaselineCount.value} onChange={elasticBaselineCount.set} disabled={!elasticBaselineCount.enabled} min={1} />
+                </FieldRow>
+              </div>
             </div>
           </>
         );
@@ -1073,26 +1088,25 @@ export default function Policies() {
 
             {/* Group: 响应 / 会话放逐 */}
             <div className="bg-surface border border-line rounded-xl px-4 py-2 mb-4">
-              <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2">响应 / 会话放逐</h2>
+              <div className="flex items-center justify-between py-2">
+                <div>
+                  <h2 className="text-xs font-medium text-muted uppercase tracking-wide">响应 / 会话放逐</h2>
+                </div>
+                <GroupMaster field={responseExileEnabled} />
+              </div>
+              <div className={responseExileEnabled.value ? '' : 'opacity-40 pointer-events-none'}>
+                <FieldRow label="SessionErrorThreshold" desc="会话连错阈值(0=关)" enabled={sessionErrorThreshold.enabled} onToggle={sessionErrorThreshold.toggle} showOnlyConfigured={so}>
+                  <NumInput value={sessionErrorThreshold.value} onChange={sessionErrorThreshold.set} disabled={!sessionErrorThreshold.enabled} min={0} />
+                </FieldRow>
 
-              <FieldRow label="SessionErrorThreshold" desc="会话连错阈值(0=关)" enabled={sessionErrorThreshold.enabled} onToggle={sessionErrorThreshold.toggle} showOnlyConfigured={so}>
-                <NumInput value={sessionErrorThreshold.value} onChange={sessionErrorThreshold.set} disabled={!sessionErrorThreshold.enabled} min={0} />
-              </FieldRow>
+                <FieldRow label="SessionCooldownSec" desc="会话放逐冷却(秒)" enabled={sessionCooldownSec.enabled} onToggle={sessionCooldownSec.toggle} showOnlyConfigured={so}>
+                  <NumInput value={sessionCooldownSec.value} onChange={sessionCooldownSec.set} disabled={!sessionCooldownSec.enabled} min={0} />
+                </FieldRow>
 
-              <FieldRow label="SessionCooldownSec" desc="会话放逐冷却(秒)" enabled={sessionCooldownSec.enabled} onToggle={sessionCooldownSec.toggle} showOnlyConfigured={so}>
-                <NumInput value={sessionCooldownSec.value} onChange={sessionCooldownSec.set} disabled={!sessionCooldownSec.enabled} min={0} />
-              </FieldRow>
-
-              <FieldRow label="ResponseExileEnabled" desc="安全拒答放逐(cyber)" enabled={responseExileEnabled.enabled} onToggle={responseExileEnabled.toggle} showOnlyConfigured={so}>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={responseExileEnabled.value} onChange={(e) => responseExileEnabled.set(e.target.checked)} disabled={!responseExileEnabled.enabled} className="accent-accent w-4 h-4" />
-                  <span className="text-sm text-ink">{responseExileEnabled.value ? '已启用' : '已禁用'}</span>
-                </label>
-              </FieldRow>
-
-              <FieldRow label="拒答关键词(逗号分隔)" desc="拒答关键词(逗号分隔)" enabled={responseExileKeywords.enabled} onToggle={responseExileKeywords.toggle} showOnlyConfigured={so}>
-                <input type="text" value={responseExileKeywords.value} onChange={(e) => responseExileKeywords.set(e.target.value)} disabled={!responseExileKeywords.enabled} placeholder="keyword1,keyword2" className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition disabled:cursor-not-allowed" />
-              </FieldRow>
+                <FieldRow label="拒答关键词(逗号分隔)" desc="拒答关键词(逗号分隔)" enabled={responseExileKeywords.enabled} onToggle={responseExileKeywords.toggle} showOnlyConfigured={so}>
+                  <input type="text" value={responseExileKeywords.value} onChange={(e) => responseExileKeywords.set(e.target.value)} disabled={!responseExileKeywords.enabled} placeholder="keyword1,keyword2" className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition disabled:cursor-not-allowed" />
+                </FieldRow>
+              </div>
             </div>
           </>
         );
@@ -1258,7 +1272,7 @@ export default function Policies() {
 
         {/* Right content pane */}
         <fieldset disabled={!isSuperadmin} className="flex-1 min-w-0">
-          <CatContent />
+          {CatContent()}
         </fieldset>
       </div>
 

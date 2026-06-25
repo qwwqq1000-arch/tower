@@ -174,6 +174,7 @@ export interface PolicyPatch {
   SpendWindow5hMs?: number;
   SpendWindow7dMs?: number;
   // Phase 3: Cadence (拟人节奏)
+  HumanDelayEnabled?: boolean;
   HumanDelayDist?: string;
   HumanDelayP50Ms?: { Min: number; Max: number };
   HumanDelayP95Ms?: { Min: number; Max: number };
