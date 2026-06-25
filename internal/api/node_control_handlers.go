@@ -151,6 +151,25 @@ func nodeEnableHandler(q *sqlc.Queries) http.HandlerFunc {
 	}
 }
 
+func nodePassthroughHandler(q *sqlc.Queries) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !ownsNodeID(r, q, r.PathValue("id")) {
+			writeJSON(w, 403, map[string]string{"error": "forbidden"})
+			return
+		}
+		var body struct{ Passthrough bool }
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "bad body"})
+			return
+		}
+		if err := q.SetNodePassthrough(r.Context(), sqlc.SetNodePassthroughParams{ID: r.PathValue("id"), Passthrough: body.Passthrough}); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, 200, map[string]string{"ok": "true"})
+	}
+}
+
 // isCPAKind reports whether a node kind string identifies a CLIProxyAPI node.
 // Extracted as a pure helper so it can be unit-tested independently of the DB.
 func isCPAKind(kind string) bool { return strings.EqualFold(kind, "cpa") }

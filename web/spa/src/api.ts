@@ -260,6 +260,9 @@ export const getNodeConsoleUrl = (id: string) =>
 export const setNodeEnabled = (id: string, enabled: boolean) =>
   api<void>('PATCH', `/api/admin/nodes/${id}/enabled`, { enabled });
 
+export const setNodePassthrough = (id: string, passthrough: boolean) =>
+  api<void>('PATCH', `/api/admin/nodes/${id}/passthrough`, { passthrough });
+
 // ------------------------------------------------------------------
 // Fallback Channels (保底渠道)
 // ------------------------------------------------------------------

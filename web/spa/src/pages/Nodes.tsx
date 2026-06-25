@@ -10,6 +10,7 @@ import {
   createNode,
   deleteNode,
   setNodeEnabled,
+  setNodePassthrough,
   refreshNode,
   getNodeConsoleUrl,
   startProvision,
@@ -819,6 +820,7 @@ function NodeRow({
   onSelect,
   onDelete,
   onToggleEnabled,
+  onTogglePassthrough,
   onOpenOAuth,
 }: {
   node: NodeRecord;
@@ -826,6 +828,7 @@ function NodeRow({
   onSelect: (id: string, checked: boolean) => void;
   onDelete: (id: string) => void;
   onToggleEnabled: (node: NodeRecord) => void;
+  onTogglePassthrough: (node: NodeRecord) => void;
   onOpenOAuth: (node: NodeRecord) => void;
 }) {
   const [deleting, setDeleting] = useState(false);
@@ -895,6 +898,19 @@ function NodeRow({
             详情
           </Link>
           <button type="button" onClick={() => openConsole(node)} className="text-xs text-muted hover:text-ink transition">控制台</button>
+          {node.kind?.toLowerCase() === 'cpa' && (
+            <button
+              onClick={() => onTogglePassthrough(node)}
+              className={`text-xs transition ${
+                node.passthrough
+                  ? 'text-ok hover:text-ok/70'
+                  : 'text-muted hover:text-ink'
+              }`}
+              title={node.passthrough ? '透传已开' : '透传已关'}
+            >
+              透传
+            </button>
+          )}
           <button
             onClick={() => { void handleToggle(); }}
             disabled={toggling}
@@ -928,6 +944,7 @@ function NodeMobileCard({
   onSelect,
   onDelete,
   onToggleEnabled,
+  onTogglePassthrough,
   onOpenOAuth,
 }: {
   node: NodeRecord;
@@ -935,6 +952,7 @@ function NodeMobileCard({
   onSelect: (id: string, checked: boolean) => void;
   onDelete: (id: string) => void;
   onToggleEnabled: (node: NodeRecord) => void;
+  onTogglePassthrough: (node: NodeRecord) => void;
   onOpenOAuth: (node: NodeRecord) => void;
 }) {
   const [deleting, setDeleting] = useState(false);
@@ -999,6 +1017,19 @@ function NodeMobileCard({
         >
           加号
         </button>
+        {node.kind?.toLowerCase() === 'cpa' && (
+          <button
+            onClick={() => onTogglePassthrough(node)}
+            className={`text-xs transition ${
+              node.passthrough
+                ? 'text-ok hover:text-ok/70'
+                : 'text-muted hover:text-ink'
+            }`}
+            title={node.passthrough ? '透传已开' : '透传已关'}
+          >
+            透传
+          </button>
+        )}
         <button
           onClick={() => onToggleEnabled(node)}
           className={`text-xs transition ${node.enabled ? 'text-err hover:text-err/70' : 'text-ok hover:text-ok/70'}`}
@@ -1158,6 +1189,12 @@ export default function Nodes() {
     });
   }
 
+  function handleTogglePassthrough(node: NodeRecord) {
+    void setNodePassthrough(node.id, !node.passthrough).then(() => {
+      setNodes(prev => prev.map(n => n.id === node.id ? { ...n, passthrough: !node.passthrough } : n));
+    });
+  }
+
   return (
     <div className="p-4 md:p-6 space-y-6">
       {/* Page header */}
@@ -1269,6 +1306,7 @@ export default function Nodes() {
                     onSelect={handleSelect}
                     onDelete={handleDelete}
                     onToggleEnabled={handleToggleEnabled}
+                    onTogglePassthrough={handleTogglePassthrough}
                     onOpenOAuth={(n) => setOauthNode(n)}
                   />
                 ))}
@@ -1298,6 +1336,7 @@ export default function Nodes() {
                 onSelect={handleSelect}
                 onDelete={handleDelete}
                 onToggleEnabled={handleToggleEnabled}
+                onTogglePassthrough={handleTogglePassthrough}
                 onOpenOAuth={(n) => setOauthNode(n)}
               />
             ))}

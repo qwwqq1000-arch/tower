@@ -275,6 +275,14 @@ func TestNodeControl(t *testing.T) {
 	if n.Enabled {
 		t.Fatal("node should be disabled")
 	}
+	// passthrough toggle
+	if rec := do("PATCH", "/api/admin/nodes/"+nodeID+"/passthrough", `{"passthrough":true}`); rec.Code != 200 {
+		t.Fatalf("passthrough=%d", rec.Code)
+	}
+	nPT, _ := q.GetNode(ctx, nodeID)
+	if !nPT.Passthrough {
+		t.Fatal("node should have passthrough=true")
+	}
 }
 
 func randReadR(b []byte) (int, error) { return cryptoRandReadR(b) }
