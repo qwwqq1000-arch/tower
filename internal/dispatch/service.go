@@ -694,6 +694,15 @@ func slotActiveNow(startMin, endMin int, nowMs int64, tzName string) bool {
 	return cur >= startMin || cur < endMin
 }
 
+// orderIdleFirst sorts keys by current inflight ascending (least-busy first) with
+// a random tiebreak so equally-idle accounts share new requests evenly, preventing
+// the deterministic-order concentration where order[0] gets all traffic. Stable
+// fallback to weight via the caller's pre-sort.
+func orderIdleFirst(keys []string, inflightOf map[string]int) {
+	rand.Shuffle(len(keys), func(i, j int) { keys[i], keys[j] = keys[j], keys[i] })
+	sort.SliceStable(keys, func(i, j int) bool { return inflightOf[keys[i]] < inflightOf[keys[j]] })
+}
+
 func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cfg policy.Config) ([]string, Resolver, map[string]string, map[string]policy.Config) {
 	nodes, _ := s.Q.ListNodes(ctx)
 	// keyCfg holds the per-account resolved config for each dispatch key.
@@ -868,11 +877,22 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 	}
 	sort.SliceStable(cands, func(i, j int) bool { return cands[i].weight > cands[j].weight })
 
+	// Build inflight map from the store snapshot for idle-first ordering.
+	// Moved here (before the elastic branch) so both paths can use it.
+	snap := s.Store.Snapshot(nowMs)
+	inflightOf := make(map[string]int, len(snap))
+	for _, sn := range snap {
+		inflightOf[sn.Key] = sn.Inflight
+	}
+
 	if !cfg.ElasticEnabled {
 		// Non-elastic path: all accounts, weight-desc (unchanged behaviour).
 		order := make([]string, len(cands))
 		for i, c := range cands {
 			order[i] = c.key
+		}
+		if cfg.IdleFirstSelection {
+			orderIdleFirst(order, inflightOf)
 		}
 		resolver := func(key string) (NodeRef, bool) { r, ok := refs[key]; return r, ok }
 		return order, resolver, keyOwner, keyCfg
@@ -894,9 +914,12 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 	for i := n; i < len(cands); i++ {
 		reserve = append(reserve, cands[i].key)
 	}
+	if cfg.IdleFirstSelection {
+		orderIdleFirst(baseline, inflightOf)
+		orderIdleFirst(reserve, inflightOf)
+	}
 
-	// Compute baseline utilisation from the store snapshot.
-	snap := s.Store.Snapshot(nowMs)
+	// Compute baseline utilisation from the store snapshot (reuse snap already taken above).
 	baselineSet := make(map[string]bool, len(baseline))
 	for _, k := range baseline {
 		baselineSet[k] = true

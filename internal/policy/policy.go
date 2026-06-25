@@ -228,6 +228,12 @@ type Config struct {
 	// the wait-for-slot logic is not yet implemented; only the capacity cap (=1) is active.
 	SerialQueueWaitMs int
 
+	// IdleFirstSelection orders candidates by current inflight (least-busy first) with
+	// a random tiebreak so equally-idle accounts share load evenly. Without this, the
+	// stable weight-desc sort causes order[0] to receive all traffic when weights are
+	// equal and MaxFailover=1. Default true (fixes the deterministic-concentration bug).
+	IdleFirstSelection bool
+
 	// BodyPadEnabled enables request-body padding (disguise-phase4). Default false.
 	// When true and BodyPadBytes resolves to > 0, a deterministic pad string is
 	// injected into the metadata.pad field of each request before dispatch.
@@ -339,6 +345,7 @@ func Defaults() Config {
 		SerialQueueWaitMs:     2000,
 		BodyPadEnabled:        false,
 		BodyPadBytes:          RangeI{Min: 0, Max: 0},
+		IdleFirstSelection:    true,
 	}
 }
 
@@ -416,6 +423,8 @@ type Patch struct {
 
 	BodyPadEnabled *bool
 	BodyPadBytes   *RangeI
+
+	IdleFirstSelection *bool
 }
 
 func apply(c *Config, p Patch) {
@@ -623,6 +632,9 @@ func apply(c *Config, p Patch) {
 	if p.BodyPadBytes != nil {
 		c.BodyPadBytes = *p.BodyPadBytes
 	}
+	if p.IdleFirstSelection != nil {
+		c.IdleFirstSelection = *p.IdleFirstSelection
+	}
 }
 
 // MaxTokensFor returns the configured output-token ceiling for model, matching the
@@ -740,5 +752,7 @@ func DryRun(base Config, patches ...Patch) (Config, []Diff) {
 	// Phase 4: BodyPad
 	add("BodyPadEnabled", base.BodyPadEnabled, final.BodyPadEnabled)
 	add("BodyPadBytes", base.BodyPadBytes, final.BodyPadBytes)
+	// Idle-first selection
+	add("IdleFirstSelection", base.IdleFirstSelection, final.IdleFirstSelection)
 	return final, diffs
 }
