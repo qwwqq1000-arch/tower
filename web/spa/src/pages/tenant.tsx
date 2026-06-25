@@ -9,10 +9,6 @@ import {
   pauseMeAccount,
   getMeLedger,
   getMeDispatchStatus,
-  getMeSlots,
-  createMeSlot,
-  deleteMeSlot,
-  setMeSlotEnabled,
   getMeDispatchKeys,
   createMeDispatchKey,
   deleteMeDispatchKey,
@@ -25,7 +21,6 @@ import type {
   LedgerEntry,
   DispatchStatus,
   DispatchFallbackChannel,
-  Slot,
   DispatchKeyRecord,
 } from '../types';
 import type { BanAnalysis, BanBucket, BanAccountEntry } from '../api';
@@ -798,170 +793,13 @@ export function TenantDispatch() {
 }
 
 // ============================================================
-// TenantSettings (/settings) — slots + dispatch keys + ban analysis
+// TenantSettings (/settings) — dispatch keys + ban analysis
+// (时段槽位 removed from the tenant surface per product decision — slots are an
+//  admin-managed concept; tenants no longer create/see them.)
 // ============================================================
-function minsToHHMM(mins: number): string {
-  const h = Math.floor(mins / 60).toString().padStart(2, '0');
-  const m = (mins % 60).toString().padStart(2, '0');
-  return `${h}:${m}`;
-}
-
-function hhmmToMins(hhmm: string): number {
-  const [h, m] = hhmm.split(':').map(Number);
-  return (h || 0) * 60 + (m || 0);
-}
-
 const tenantInputCls =
   'w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink ' +
   'placeholder:text-muted focus:outline-none focus:border-accent transition';
-
-// ---- Slot enable toggle ----
-function MeSlotToggle({ slot, onChanged }: { slot: Slot; onChanged: (id: string, enabled: boolean) => void }) {
-  const [busy, setBusy] = useState(false);
-  async function toggle() {
-    setBusy(true);
-    try {
-      await setMeSlotEnabled(slot.id, !slot.enabled);
-      onChanged(slot.id, !slot.enabled);
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <button
-      onClick={() => { void toggle(); }}
-      disabled={busy}
-      title={slot.enabled ? '点击禁用' : '点击启用'}
-      className={[
-        'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition',
-        slot.enabled ? 'bg-ok' : 'bg-line',
-        busy ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
-      ].join(' ')}
-    >
-      <span className={[
-        'inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform',
-        slot.enabled ? 'translate-x-4' : 'translate-x-1',
-      ].join(' ')} />
-    </button>
-  );
-}
-
-// ---- Slots section ----
-function TenantSlotsSection() {
-  const [slots, setSlots] = useState<Slot[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
-  const [name, setName] = useState('');
-  const [startTime, setStartTime] = useState('00:00');
-  const [endTime, setEndTime] = useState('08:00');
-  const [creating, setCreating] = useState(false);
-  const [createErr, setCreateErr] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      setSlots(await getMeSlots());
-      setErr(null);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : '加载失败');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { void load(); }, [load]);
-
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault();
-    setCreating(true);
-    setCreateErr(null);
-    try {
-      await createMeSlot({ name, startMin: hhmmToMins(startTime), endMin: hhmmToMins(endTime) });
-      setName(''); setStartTime('00:00'); setEndTime('08:00');
-      await load();
-    } catch (e) {
-      setCreateErr(e instanceof Error ? e.message : '创建失败');
-    } finally {
-      setCreating(false);
-    }
-  }
-
-  async function handleDelete(id: string) {
-    try {
-      await deleteMeSlot(id);
-      setSlots((prev) => prev.filter((s) => s.id !== id));
-    } catch { /* ignore */ }
-  }
-
-  function handleEnabledChanged(id: string, enabled: boolean) {
-    setSlots((prev) => prev.map((s) => s.id === id ? { ...s, enabled } : s));
-  }
-
-  return (
-    <div className="space-y-4">
-      {loading && <p className="text-muted text-sm animate-pulse">加载中…</p>}
-      {!loading && err && (
-        <div className="bg-err/10 border border-err/30 rounded-xl p-4 text-err text-sm">{err}</div>
-      )}
-      {!loading && !err && (
-        <>
-          {slots.length === 0 ? (
-            <p className="text-sm text-muted">暂无时段槽位，在下方新建。</p>
-          ) : (
-            <div className="bg-surface border border-line rounded-xl overflow-hidden">
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="text-xs text-muted uppercase tracking-wide border-b border-line bg-bg/50">
-                    <th className="px-4 py-3 font-medium">名称</th>
-                    <th className="px-4 py-3 font-medium">时间窗</th>
-                    <th className="px-4 py-3 font-medium">状态</th>
-                    <th className="px-4 py-3 font-medium">操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {slots.map((slot) => (
-                    <tr key={slot.id} className="border-t border-line/50 hover:bg-line/30 transition">
-                      <td className="px-4 py-3 font-medium text-ink">{slot.name}</td>
-                      <td className="px-4 py-3 font-mono text-sm text-muted">
-                        {minsToHHMM(slot.startMin)}–{minsToHHMM(slot.endMin)}
-                      </td>
-                      <td className="px-4 py-3"><MeSlotToggle slot={slot} onChanged={handleEnabledChanged} /></td>
-                      <td className="px-4 py-3">
-                        <button onClick={() => { void handleDelete(slot.id); }} className="text-xs text-muted hover:text-err transition">删除</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          <form onSubmit={(e) => { void handleCreate(e); }} className="bg-surface border border-line rounded-xl p-5 space-y-3">
-            <h3 className="text-sm font-semibold text-ink">新建时段槽位</h3>
-            {createErr && <div className="bg-err/10 border border-err/30 rounded-lg p-3 text-err text-sm">{createErr}</div>}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div>
-                <label className="block text-xs text-muted mb-1">名称 *</label>
-                <input required value={name} onChange={(e) => setName(e.target.value)} placeholder="早高峰" autoComplete="off" className={tenantInputCls} />
-              </div>
-              <div>
-                <label className="block text-xs text-muted mb-1">开始时间</label>
-                <input type="time" required value={startTime} onChange={(e) => setStartTime(e.target.value)} className={tenantInputCls} />
-              </div>
-              <div>
-                <label className="block text-xs text-muted mb-1">结束时间</label>
-                <input type="time" required value={endTime} onChange={(e) => setEndTime(e.target.value)} className={tenantInputCls} />
-              </div>
-            </div>
-            <button type="submit" disabled={creating} className="px-4 py-2 text-sm font-medium bg-accent text-white rounded-lg hover:bg-accent/80 disabled:opacity-50 transition">
-              {creating ? '创建中…' : '创建槽位'}
-            </button>
-          </form>
-        </>
-      )}
-    </div>
-  );
-}
 
 // ---- Copy button ----
 function CopyBtn({ text }: { text: string }) {
@@ -1249,13 +1087,12 @@ function TenantBanSection() {
   );
 }
 
-type SettingsTab = 'slots' | 'keys' | 'ban';
+type SettingsTab = 'keys' | 'ban';
 
 export function TenantSettings() {
-  const [tab, setTab] = useState<SettingsTab>('slots');
+  const [tab, setTab] = useState<SettingsTab>('keys');
 
   const tabs: { id: SettingsTab; label: string }[] = [
-    { id: 'slots', label: '时段槽位' },
     { id: 'keys', label: '调度密钥' },
     { id: 'ban', label: '封号分析' },
   ];
@@ -1264,7 +1101,7 @@ export function TenantSettings() {
     <div className="p-4 md:p-6 space-y-6 max-w-4xl mx-auto">
       <div>
         <h1 className="text-2xl font-semibold text-ink">设置</h1>
-        <p className="text-xs text-muted mt-1">管理我的时段槽位、调度密钥与封号分析</p>
+        <p className="text-xs text-muted mt-1">管理我的调度密钥与封号分析</p>
       </div>
 
       <div className="flex gap-2 border-b border-line">
@@ -1282,7 +1119,6 @@ export function TenantSettings() {
         ))}
       </div>
 
-      {tab === 'slots' && <TenantSlotsSection />}
       {tab === 'keys' && <TenantKeysSection />}
       {tab === 'ban' && <TenantBanSection />}
     </div>

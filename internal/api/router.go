@@ -130,10 +130,7 @@ func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc
 		mux.HandleFunc("PATCH /api/me/fallback-channels/{id}", requireSession(secret, q, meUpdateFallbackHandler(q, cipher)))
 		mux.HandleFunc("DELETE /api/me/fallback-channels/{id}", requireSession(secret, q, meDeleteFallbackHandler(q)))
 		mux.HandleFunc("PATCH /api/me/fallback-channels/{id}/enabled", requireSession(secret, q, meEnableFallbackHandler(q)))
-		mux.HandleFunc("GET /api/me/slots", requireSession(secret, q, meListSlotsHandler(q)))
-		mux.HandleFunc("POST /api/me/slots", requireSession(secret, q, meCreateSlotHandler(q)))
-		mux.HandleFunc("DELETE /api/me/slots/{id}", requireSession(secret, q, meDeleteSlotHandler(q)))
-		mux.HandleFunc("PATCH /api/me/slots/{id}/enabled", requireSession(secret, q, meSetSlotEnabledHandler(q)))
+		// 时段槽位 removed from the tenant surface (product decision) — no /api/me/slots.
 		mux.HandleFunc("GET /api/me/dispatch-keys", requireSession(secret, q, meListDispatchKeysHandler(q)))
 		mux.HandleFunc("POST /api/me/dispatch-keys", requireSession(secret, q, meCreateDispatchKeyHandler(q)))
 		mux.HandleFunc("DELETE /api/me/dispatch-keys/{id}", requireSession(secret, q, meDeleteDispatchKeyHandler(q)))
