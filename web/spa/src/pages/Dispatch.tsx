@@ -69,10 +69,20 @@ function fmtCost(n: number | undefined): string {
   return n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`;
 }
 
+const ACCOUNTS_PAGE_SIZE = 10;
+
 function ConcurrencyPanel({ accounts }: { accounts: DispatchAccountSnapshot[] }) {
+  const [page, setPage] = useState(0);
+  const sorted = [...accounts].sort((x, y) => statusRank(x.status) - statusRank(y.status));
+  const pageCount = Math.max(1, Math.ceil(sorted.length / ACCOUNTS_PAGE_SIZE));
+  const cur = Math.min(page, pageCount - 1);
+  const pageRows = sorted.slice(cur * ACCOUNTS_PAGE_SIZE, (cur + 1) * ACCOUNTS_PAGE_SIZE);
   return (
     <div className="bg-surface border border-line rounded-xl overflow-hidden mb-6">
-      <div className="px-4 py-3 border-b border-line text-sm font-medium text-ink">并发 / 账户</div>
+      <div className="px-4 py-3 border-b border-line text-sm font-medium text-ink flex items-center justify-between">
+        <span>并发 / 账户</span>
+        <span className="text-xs text-muted font-normal">{sorted.length} 个号</span>
+      </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -91,7 +101,7 @@ function ConcurrencyPanel({ accounts }: { accounts: DispatchAccountSnapshot[] })
                 <td colSpan={6} className="px-4 py-6 text-center text-muted text-xs">无数据</td>
               </tr>
             )}
-            {[...accounts].sort((x, y) => statusRank(x.status) - statusRank(y.status)).map((a) => (
+            {pageRows.map((a) => (
               <tr key={a.key} className="border-b border-line/50 hover:bg-line/30 transition">
                 <td className="px-4 py-2">
                   <p className="text-sm text-ink font-medium">{a.label || '—'}</p>
@@ -111,6 +121,25 @@ function ConcurrencyPanel({ accounts }: { accounts: DispatchAccountSnapshot[] })
           </tbody>
         </table>
       </div>
+      {pageCount > 1 && (
+        <div className="flex items-center justify-end gap-3 px-4 py-2 border-t border-line text-xs text-muted">
+          <button
+            onClick={() => setPage(Math.max(0, cur - 1))}
+            disabled={cur === 0}
+            className="px-2 py-1 rounded border border-line hover:bg-line/30 transition disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            上一页
+          </button>
+          <span className="tabular-nums">第 {cur + 1} / {pageCount} 页</span>
+          <button
+            onClick={() => setPage(Math.min(pageCount - 1, cur + 1))}
+            disabled={cur >= pageCount - 1}
+            className="px-2 py-1 rounded border border-line hover:bg-line/30 transition disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            下一页
+          </button>
+        </div>
+      )}
     </div>
   );
 }
