@@ -1232,44 +1232,46 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 			return !ok || strings.Contains(strings.ToLower(model), strings.ToLower(pm))
 		}
 		var activeEligible []string
+		inActive := make(map[string]bool, len(order))
 		for _, k := range order {
+			inActive[k] = true
 			if eligible(k) {
 				activeEligible = append(activeEligible, k)
 			}
 		}
-		if len(activeEligible) > 0 {
-			order = activeEligible
-		} else {
-			inActive := make(map[string]bool, len(order))
-			for _, k := range order {
-				inActive[k] = true
+		// Reserve accounts that can serve this model (pinned to it, or unpinned). These
+		// are appended as FAILOVER after the active ones — so when the active accounts
+		// fail or are at capacity the request falls over to reserve BEFORE the保底 channel
+		// (fixing "reserve idle but 号池耗尽"). Under normal success the orchestrator stops
+		// at the first active account, so reserve stays idle.
+		var reservePinned, reserveFresh []string
+		for _, k := range reserve {
+			if inActive[k] {
+				continue
 			}
-			var reservePinned, reserveFresh []string
-			for _, k := range reserve {
-				if inActive[k] {
-					continue
-				}
-				if pm, ok := s.Store.PinnedModel(k, ttl); !ok {
-					reserveFresh = append(reserveFresh, k) // unpinned → can take this model
-				} else if strings.Contains(strings.ToLower(model), strings.ToLower(pm)) {
-					reservePinned = append(reservePinned, k) // already serving this model
-				}
+			if pm, ok := s.Store.PinnedModel(k, ttl); !ok {
+				reserveFresh = append(reserveFresh, k) // unpinned → can take this model
+			} else if strings.Contains(strings.ToLower(model), strings.ToLower(pm)) {
+				reservePinned = append(reservePinned, k) // already serving this model
 			}
-			switch {
-			case len(reservePinned) > 0:
-				// Reserve(s) already pinned to this model — use them (+ fresh as failover).
-				order = append(reservePinned, reserveFresh...)
-			case len(reserveFresh) > 0:
-				// No account serves this model yet → activate fresh reserve(s) for it; the
-				// first to succeed pins to the model. Event fires once per fresh activation
-				// (next request finds reservePinned, so it won't re-fire).
-				order = reserveFresh
+		}
+		reserveEligible := append(append([]string{}, reservePinned...), reserveFresh...)
+		switch {
+		case len(activeEligible) > 0:
+			// Active set covers this model; reserve trails as failover only.
+			order = append(activeEligible, reserveEligible...)
+		case len(reserveEligible) > 0:
+			// No active account can serve this model → activate reserve for it. Emit
+			// model_scale_up only on a FRESH activation (no reserve already pinned to it);
+			// once it serves it becomes reservePinned, so the event won't re-fire.
+			order = reserveEligible
+			if len(reservePinned) == 0 {
 				s.recordModelScaleUp(ctx, acctOwnerOf(keyOwner, reserveFresh[0], ownerID), reserveFresh[0], model)
-			default:
-				// Every account is pinned to OTHER models — surface "not enough accounts for
-				// this model" and fall back to the active set so the request still attempts.
-				s.recordModelExhausted(ctx, ownerID, model)
 			}
+		default:
+			// Every account is pinned to OTHER models — surface "not enough accounts for
+			// this model" and keep the active order as a last resort (request still tries).
+			s.recordModelExhausted(ctx, ownerID, model)
 		}
 	}
 

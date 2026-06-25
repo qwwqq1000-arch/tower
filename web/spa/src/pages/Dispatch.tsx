@@ -287,9 +287,10 @@ export function getEventLabel(type: string): EventLabel {
     case 'balance_low':   return { label: '余额不足',    cls: 'bg-red-500/20 text-red-400 border-red-500/40' };
     default:
       if (type === 'dispatch_err' || type.endsWith('_err') || type === 'error') {
-        return { label: type, cls: 'bg-orange-500/20 text-orange-400 border-orange-500/40' };
+        return { label: '错误', cls: 'bg-orange-500/20 text-orange-400 border-orange-500/40' };
       }
-      return { label: type, cls: 'bg-blue-500/20 text-blue-400 border-blue-500/40' };
+      // Unknown type → show a generic Chinese label (keep raw type in title via detail).
+      return { label: '事件', cls: 'bg-blue-500/20 text-blue-400 border-blue-500/40' };
   }
 }
 
