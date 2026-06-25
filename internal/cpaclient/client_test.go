@@ -52,18 +52,58 @@ func TestListAccounts_AuthRequired(t *testing.T) {
 	}
 }
 
-func TestUsage(t *testing.T) {
+// TestUsage_ApiCall tests the new CPA v7.2.40+ api-call path.
+func TestUsage_ApiCall(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v0/management/account-usage" {
+		if r.Method == "POST" && r.URL.Path == "/v0/management/api-call" {
+			w.Header().Set("Content-Type", "application/json")
+			// The body field is a JSON string (the outer envelope wraps the inner JSON as a string).
+			_, _ = w.Write([]byte(`{"status_code":200,"header":{},` +
+				`"body":"{\"five_hour\":{\"utilization\":8.0,\"resets_at\":\"2026-06-25T21:00:00+00:00\"},` +
+				`\"seven_day\":{\"utilization\":6.0,\"resets_at\":\"2026-06-29T00:00:00+00:00\"},` +
+				`\"seven_day_sonnet\":{\"utilization\":0.0,\"resets_at\":null},\"seven_day_opus\":null}"}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	u, err := New(srv.URL, "k").Usage(context.Background(), "18ab29ec4dc98d68", "claude-a@gmail.com.json")
+	if err != nil {
+		t.Fatalf("usage: %v", err)
+	}
+	if u.FiveHour == nil || u.FiveHour.Utilization != 8.0 {
+		t.Fatalf("five_hour = %+v, want 8.0", u.FiveHour)
+	}
+	if u.SevenDay == nil || u.SevenDay.Utilization != 6.0 {
+		t.Fatalf("seven_day = %+v, want 6.0", u.SevenDay)
+	}
+	if u.SevenDaySonnet == nil || u.SevenDaySonnet.Utilization != 0.0 {
+		t.Fatalf("seven_day_sonnet = %+v, want 0.0", u.SevenDaySonnet)
+	}
+	if u.SevenDayOpus != nil {
+		t.Fatalf("seven_day_opus should be nil")
+	}
+}
+
+// TestUsage_ApiCall_FallbackOnNotFound tests that a 404 on /api-call falls back to legacy account-usage.
+func TestUsage_ApiCall_FallbackOnNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && r.URL.Path == "/v0/management/api-call" {
 			http.NotFound(w, r)
 			return
 		}
-		_, _ = w.Write([]byte(`{"five_hour":{"utilization":0.0,"resets_at":"2026-06-22T17:20:00Z"},"seven_day":{"utilization":53.0,"resets_at":"2026-06-26T12:00:00Z"},"seven_day_opus":null,"seven_day_sonnet":{"utilization":8.0,"resets_at":"2026-06-26T12:00:00Z"}}`))
+		if r.Method == "GET" && r.URL.Path == "/v0/management/account-usage" {
+			_, _ = w.Write([]byte(`{"five_hour":{"utilization":0.0,"resets_at":"2026-06-22T17:20:00Z"},"seven_day":{"utilization":53.0,"resets_at":"2026-06-26T12:00:00Z"},"seven_day_opus":null,"seven_day_sonnet":{"utilization":8.0,"resets_at":"2026-06-26T12:00:00Z"}}`))
+			return
+		}
+		http.NotFound(w, r)
 	}))
 	defer srv.Close()
-	u, err := New(srv.URL, "k").Usage(context.Background(), "claude-a@gmail.com.json")
+
+	u, err := New(srv.URL, "k").Usage(context.Background(), "idx1", "claude-a@gmail.com.json")
 	if err != nil {
-		t.Fatalf("usage: %v", err)
+		t.Fatalf("usage fallback: %v", err)
 	}
 	if u.SevenDay == nil || u.SevenDay.Utilization != 53.0 {
 		t.Fatalf("seven_day = %+v, want 53", u.SevenDay)
@@ -73,5 +113,23 @@ func TestUsage(t *testing.T) {
 	}
 	if u.SevenDayOpus != nil {
 		t.Fatalf("seven_day_opus should be nil")
+	}
+}
+
+// TestUsage_ApiCall_UpstreamError tests that a non-200 inner status_code returns an error.
+func TestUsage_ApiCall_UpstreamError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && r.URL.Path == "/v0/management/api-call" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status_code":429,"header":{},"body":"rate limited"}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	_, err := New(srv.URL, "k").Usage(context.Background(), "idx1", "claude-a@gmail.com.json")
+	if err == nil {
+		t.Fatal("expected error on upstream 429, got nil")
 	}
 }

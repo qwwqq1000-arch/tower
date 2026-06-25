@@ -33,7 +33,7 @@ func RefreshQuotaForNode(ctx context.Context, q syncQuerier, node sqlc.Node, cip
 		}
 		aid := accountID(node.ID, a)
 		now := time.Now().UnixMilli()
-		if u, uerr := c.Usage(ctx, a.DispatchSelector()); uerr != nil {
+		if u, uerr := c.Usage(ctx, a.AuthIndex, a.DispatchSelector()); uerr != nil {
 			_ = q.SetCpaQuotaFetchError(ctx, sqlc.SetCpaQuotaFetchErrorParams{AccountID: aid, QuotaFetchError: uerr.Error(), UpdatedAt: now})
 		} else if u != nil {
 			_ = q.UpsertCpaQuota(ctx, quotaParams(aid, u, now))
