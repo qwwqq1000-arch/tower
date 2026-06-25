@@ -222,7 +222,20 @@ func main() {
 	}()
 
 	log.Printf("tower listening on %s", cfg.HTTPAddr)
-	if err := http.ListenAndServe(cfg.HTTPAddr, api.NewRouter(pool, cfg.SessionSecret, svc, q, cfg.SecureCookies, cipher)); err != nil {
+	// Explicit timeouts harden against slowloris / slow-body DoS (security-audit).
+	// WriteTimeout is 0: dispatch proxies long upstream responses and streams SSE,
+	// which a write deadline would sever mid-stream. ReadHeaderTimeout bounds the
+	// header-read phase (the slowloris vector); ReadTimeout bounds the full request.
+	srv := &http.Server{
+		Addr:              cfg.HTTPAddr,
+		Handler:           api.NewRouter(pool, cfg.SessionSecret, svc, q, cfg.SecureCookies, cipher),
+		ReadHeaderTimeout: 15 * time.Second,
+		ReadTimeout:       5 * time.Minute,
+		WriteTimeout:      0,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
 }

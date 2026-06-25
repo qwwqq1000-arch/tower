@@ -403,6 +403,12 @@ func meCreateFallbackHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.Handle
 			writeJSON(w, 400, map[string]string{"error": "name/baseUrl required"})
 			return
 		}
+		// SSRF guard: tenant-set channels are untrusted — block loopback/metadata/
+		// private so a tenant cannot point Tower at internal services (security-audit).
+		if verr := validateUpstreamURL(b.BaseUrl, false); verr != nil {
+			writeJSON(w, 400, map[string]string{"error": verr.Error()})
+			return
+		}
 		// Enforce per-tenant fallback channel limit. Default (or 0) = max 1.
 		limit := int32(1)
 		if t, err := q.GetTenantByID(r.Context(), owner); err == nil && t.FallbackLimit > 0 {
@@ -492,6 +498,12 @@ func meUpdateFallbackHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.Handle
 		meUpdateSpendCapAction := b.SpendCapAction
 		if meUpdateSpendCapAction == "" {
 			meUpdateSpendCapAction = "skip"
+		}
+		if b.BaseUrl != "" { // SSRF guard on update (security-audit)
+			if verr := validateUpstreamURL(b.BaseUrl, false); verr != nil {
+				writeJSON(w, 400, map[string]string{"error": verr.Error()})
+				return
+			}
 		}
 		if err := q.UpdateFallbackChannel(r.Context(), sqlc.UpdateFallbackChannelParams{
 			ID:                  ch.ID,

@@ -342,11 +342,11 @@ var redactedHeaderKeys = map[string]bool{
 	"Authorization": true, "X-Api-Key": true, "Cookie": true, "Proxy-Authorization": true,
 }
 
-func maskSecret(v string) string {
-	if len(v) <= 8 {
-		return "****"
-	}
-	return v[:6] + "…****"
+// maskSecret fully redacts a secret-bearing header value for the log-detail view.
+// It reveals NO characters — even a short prefix of a tenant's own dispatch key is
+// needless exposure (security-audit MED-2).
+func maskSecret(string) string {
+	return "****"
 }
 
 // redactHeadersJSON serializes the client headers for the log-detail view with

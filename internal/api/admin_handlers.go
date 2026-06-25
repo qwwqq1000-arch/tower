@@ -50,6 +50,12 @@ func createNodeHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc 
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "baseUrl required"})
 			return
 		}
+		// SSRF guard: http(s) only, no loopback/metadata. allowPrivate=true since an
+		// admin may legitimately register an internal-network node (security-audit).
+		if verr := validateUpstreamURL(body.BaseUrl, true); verr != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
+			return
+		}
 		if body.Name == "" {
 			body.Name = nextNodeName(r.Context(), q)
 		}

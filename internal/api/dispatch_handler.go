@@ -11,6 +11,10 @@ import (
 	"github.com/qwwqq1000-arch/tower/internal/dispatch"
 )
 
+// maxDispatchBodyBytes caps the inbound /v1/messages body (security-audit:
+// prevent memory exhaustion from an unbounded upload on a valid dispatch key).
+const maxDispatchBodyBytes = 64 << 20 // 64 MiB
+
 func extractKey(r *http.Request) string {
 	if k := r.Header.Get("x-api-key"); k != "" {
 		return k
@@ -47,7 +51,15 @@ func dispatchMessagesHandler(svc *dispatch.Service, q *sqlc.Queries) http.Handle
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid dispatch key"})
 			return
 		}
-		body, _ := io.ReadAll(r.Body)
+		// Cap the inbound body so a valid dispatch key can't exhaust memory with an
+		// unbounded upload (security-audit). 64MiB comfortably fits max-context +
+		// image requests; oversized bodies get a 413 from MaxBytesReader.
+		r.Body = http.MaxBytesReader(w, r.Body, maxDispatchBodyBytes)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "request body too large"})
+			return
+		}
 		var parsed struct {
 			Model  string `json:"model"`
 			Stream bool   `json:"stream"`

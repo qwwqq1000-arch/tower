@@ -29,7 +29,10 @@ func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc
 	// permissions into real server-side authz on the sensitive routes below).
 	loadRolePerms := func(r *http.Request, role string) []string { return loadPerms(pool, r, role) }
 	mux.HandleFunc("GET /healthz", healthzHandler(pool))
-	mux.HandleFunc("POST /auth/login", loginHandler(pool, secret, loginThrottle, secureCookies))
+	// requireSameOrigin guards login too (CSRF / login-fixation): the SPA sends
+	// X-Requested-With: tower on its login POST, a cross-site form/script cannot
+	// (security-audit MED-1). Throttling still applies inside loginHandler.
+	mux.HandleFunc("POST /auth/login", requireSameOrigin(loginHandler(pool, secret, loginThrottle, secureCookies)))
 	mux.HandleFunc("POST /auth/logout", requireSameOrigin(logoutHandler()))
 	mux.HandleFunc("GET /auth/me", requireSession(secret, q, meHandler(pool)))
 	mux.HandleFunc("GET /api/admin/server-status", requireAdmin(secret, q, serverStatusHandler()))

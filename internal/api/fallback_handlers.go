@@ -91,6 +91,12 @@ func createFallbackHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerF
 			writeJSON(w, 400, map[string]string{"error": "name/baseUrl required"})
 			return
 		}
+		// SSRF guard: a fallback channel is a proxy target; block loopback/metadata/
+		// private so a relay can't be pointed at internal infra (security-audit).
+		if verr := validateUpstreamURL(b.BaseUrl, false); verr != nil {
+			writeJSON(w, 400, map[string]string{"error": verr.Error()})
+			return
+		}
 		// owner default: a non-superadmin owns the channels it creates (cannot
 		// create channels for another tenant, bypassing per-tenant limits).
 		if owner, all := scope(r); !all {
@@ -175,6 +181,12 @@ func updateFallbackHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerF
 		updateSpendCapAction := b.SpendCapAction
 		if updateSpendCapAction == "" {
 			updateSpendCapAction = "skip"
+		}
+		if b.BaseUrl != "" { // SSRF guard on update (security-audit)
+			if verr := validateUpstreamURL(b.BaseUrl, false); verr != nil {
+				writeJSON(w, 400, map[string]string{"error": verr.Error()})
+				return
+			}
 		}
 		if err := q.UpdateFallbackChannel(r.Context(), sqlc.UpdateFallbackChannelParams{
 			ID:                  r.PathValue("id"),
