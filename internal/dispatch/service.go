@@ -1271,7 +1271,7 @@ func (s *Service) logAttemptErr(ctx context.Context, ownerID, model, key string,
 	s.insertLog(ctx, sqlc.InsertDispatchLogParams{
 		Ts: s.Now(), OwnerID: ownerID, Model: model, Target: key, ProfileID: "",
 		Status: "error", HttpStatus: int32(status), LatencyMs: 0, FallbackReason: "",
-		Stream: false, CostUsd: 0,
+		Stream: false, CostUsd: 0, IsAttempt: true,
 	})
 }
 

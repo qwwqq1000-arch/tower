@@ -258,6 +258,8 @@ export interface LogEntry {
   costUsd?: number;
   requestId?: string; // links to stored request detail (body+headers) for the 点开 view
   affinityHit?: boolean; // true when request was served by the session-affinity-pinned account
+  targetEmail?: string; // server-resolved email for the dispatch target (logs-email-1)
+  isAttempt?: boolean;  // true for intermediate per-attempt failover errors (retry-chain)
 }
 
 // --- Events ---

@@ -70,13 +70,19 @@ function resolveEmail(target: string, accountMap: Map<string, string>): string |
   return i >= 0 ? accountMap.get(target.slice(i + 1)) : undefined;
 }
 
-function renderTarget(target: string, channelMap: Map<string, string>, accountMap: Map<string, string>): React.ReactNode {
+function renderTarget(target: string, channelMap: Map<string, string>, accountMap: Map<string, string>, targetEmail?: string): React.ReactNode {
   if (!target) return '—';
   if (target.startsWith('fallback:')) {
     const id = target.slice('fallback:'.length);
     const name = channelMap.get(id);
     return name ? `保底: ${name}` : '保底';
   }
+  // Prefer server-resolved email (logs-email-1): avoids accountMap lookup failures for CPA keys.
+  if (targetEmail) return targetEmail;
+  // Account-less targets: surface a clear label rather than misleading "节点".
+  if (target === 'node') return '无可用节点';
+  if (target === 'none') return '—';
+  // Last-resort: client-side map lookup, then "节点" fallback.
   const email = resolveEmail(target, accountMap);
   return email ?? '节点';
 }
@@ -137,7 +143,7 @@ function LogDetailModal({ requestId, isTenant, onClose }: { requestId: string; i
 }
 
 function LogRow({ row, channelMap, accountMap, onOpen }: { row: LogEntry; channelMap: Map<string, string>; accountMap: Map<string, string>; onOpen?: () => void }) {
-  const targetLabel = renderTarget(row.target, channelMap, accountMap);
+  const targetLabel = renderTarget(row.target, channelMap, accountMap, row.targetEmail);
   return (
     <tr className={`border-t border-line hover:bg-line/20 transition text-sm ${onOpen ? 'cursor-pointer' : ''}`} onClick={onOpen}>
       <td className="px-3 py-2 text-xs text-muted whitespace-nowrap font-mono">{fmtTime(row.ts)}</td>
@@ -165,6 +171,9 @@ function LogRow({ row, channelMap, accountMap, onOpen }: { row: LogEntry; channe
           {row.affinityHit && (
             <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border bg-green-500/20 text-green-400 border-green-500/40">亲和</span>
           )}
+          {row.isAttempt && (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border bg-amber-500/20 text-amber-400 border-amber-500/40">重试</span>
+          )}
         </div>
       </td>
       <td className="px-3 py-2 text-muted text-xs">{fmtCost(row.costUsd)}</td>
@@ -176,7 +185,7 @@ function LogRow({ row, channelMap, accountMap, onOpen }: { row: LogEntry; channe
 }
 
 function LogCard({ row, channelMap, accountMap, onOpen }: { row: LogEntry; channelMap: Map<string, string>; accountMap: Map<string, string>; onOpen?: () => void }) {
-  const targetLabel = renderTarget(row.target, channelMap, accountMap);
+  const targetLabel = renderTarget(row.target, channelMap, accountMap, row.targetEmail);
   return (
     <div className={`bg-surface border border-line rounded-xl p-4 space-y-2 text-sm ${onOpen ? 'cursor-pointer active:bg-line/20' : ''}`} onClick={onOpen}>
       <div className="flex items-start justify-between gap-2">
@@ -195,6 +204,9 @@ function LogCard({ row, channelMap, accountMap, onOpen }: { row: LogEntry; chann
         <span>{streamBadge(row.stream)}</span>
         {row.affinityHit && (
           <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border bg-green-500/20 text-green-400 border-green-500/40">亲和</span>
+        )}
+        {row.isAttempt && (
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border bg-amber-500/20 text-amber-400 border-amber-500/40">重试</span>
         )}
         <span>{fmtCost(row.costUsd) !== '—' ? `费用 ${fmtCost(row.costUsd)}` : ''}</span>
       </div>

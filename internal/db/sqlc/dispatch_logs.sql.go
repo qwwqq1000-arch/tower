@@ -127,8 +127,8 @@ func (q *Queries) GetDispatchLogDetail(ctx context.Context, requestID string) (D
 }
 
 const insertDispatchLog = `-- name: InsertDispatchLog :exec
-INSERT INTO dispatch_logs (ts, owner_id, model, target, profile_id, status, http_status, latency_ms, tokens_in, tokens_out, fallback_reason, ttfb_ms, stream, cost_usd, request_id, cache_read, cache_creation, affinity_hit)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+INSERT INTO dispatch_logs (ts, owner_id, model, target, profile_id, status, http_status, latency_ms, tokens_in, tokens_out, fallback_reason, ttfb_ms, stream, cost_usd, request_id, cache_read, cache_creation, affinity_hit, is_attempt)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
 `
 
 type InsertDispatchLogParams struct {
@@ -150,6 +150,7 @@ type InsertDispatchLogParams struct {
 	CacheRead      int64   `json:"cache_read"`
 	CacheCreation  int64   `json:"cache_creation"`
 	AffinityHit    bool    `json:"affinity_hit"`
+	IsAttempt      bool    `json:"is_attempt"`
 }
 
 func (q *Queries) InsertDispatchLog(ctx context.Context, arg InsertDispatchLogParams) error {
@@ -172,12 +173,13 @@ func (q *Queries) InsertDispatchLog(ctx context.Context, arg InsertDispatchLogPa
 		arg.CacheRead,
 		arg.CacheCreation,
 		arg.AffinityHit,
+		arg.IsAttempt,
 	)
 	return err
 }
 
 const listLogsByOwner = `-- name: ListLogsByOwner :many
-SELECT id, ts, owner_id, model, target, profile_id, status, http_status, latency_ms, tokens_in, tokens_out, fallback_reason, created_at, ttfb_ms, stream, cost_usd, request_id, cache_read, cache_creation, affinity_hit FROM dispatch_logs WHERE owner_id = $1 ORDER BY ts DESC LIMIT $2
+SELECT id, ts, owner_id, model, target, profile_id, status, http_status, latency_ms, tokens_in, tokens_out, fallback_reason, created_at, ttfb_ms, stream, cost_usd, request_id, cache_read, cache_creation, affinity_hit, is_attempt FROM dispatch_logs WHERE owner_id = $1 ORDER BY ts DESC LIMIT $2
 `
 
 type ListLogsByOwnerParams struct {
@@ -215,6 +217,7 @@ func (q *Queries) ListLogsByOwner(ctx context.Context, arg ListLogsByOwnerParams
 			&i.CacheRead,
 			&i.CacheCreation,
 			&i.AffinityHit,
+			&i.IsAttempt,
 		); err != nil {
 			return nil, err
 		}
@@ -227,7 +230,7 @@ func (q *Queries) ListLogsByOwner(ctx context.Context, arg ListLogsByOwnerParams
 }
 
 const listRecentDispatchLogs = `-- name: ListRecentDispatchLogs :many
-SELECT id, ts, owner_id, model, target, profile_id, status, http_status, latency_ms, tokens_in, tokens_out, fallback_reason, created_at, ttfb_ms, stream, cost_usd, request_id, cache_read, cache_creation, affinity_hit FROM dispatch_logs ORDER BY ts DESC LIMIT $1
+SELECT id, ts, owner_id, model, target, profile_id, status, http_status, latency_ms, tokens_in, tokens_out, fallback_reason, created_at, ttfb_ms, stream, cost_usd, request_id, cache_read, cache_creation, affinity_hit, is_attempt FROM dispatch_logs ORDER BY ts DESC LIMIT $1
 `
 
 func (q *Queries) ListRecentDispatchLogs(ctx context.Context, limit int32) ([]DispatchLog, error) {
@@ -260,6 +263,7 @@ func (q *Queries) ListRecentDispatchLogs(ctx context.Context, limit int32) ([]Di
 			&i.CacheRead,
 			&i.CacheCreation,
 			&i.AffinityHit,
+			&i.IsAttempt,
 		); err != nil {
 			return nil, err
 		}

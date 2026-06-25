@@ -324,6 +324,37 @@ func listLogsHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		// Build target→email map for server-side resolution so the frontend doesn't
+		// need a reliable accountMap for every CPA key (logs-email-1).
+		// Keys: both "nodeId:profileId" (full) and "profileId" alone for tenant paths.
+		targetEmail := map[string]string{}
+		if accs, aerr := q.ListNodeAccountsAll(r.Context()); aerr == nil {
+			for _, a := range accs {
+				if a.Email != "" {
+					targetEmail[a.NodeID+":"+a.ProfileID] = a.Email
+					targetEmail[a.ProfileID] = a.Email
+				}
+			}
+		}
+		resolveTargetEmail := func(target string) string {
+			if target == "" || target == "node" || target == "none" {
+				return ""
+			}
+			// Try full key ("nodeId:profileId") first.
+			if e, ok := targetEmail[target]; ok {
+				return e
+			}
+			// Fallback: try the profileId part after the first ':'.
+			for k := 0; k < len(target); k++ {
+				if target[k] == ':' {
+					if e, ok := targetEmail[target[k+1:]]; ok {
+						return e
+					}
+					break
+				}
+			}
+			return ""
+		}
 		out := make([]map[string]any, 0, len(rows))
 		for _, l := range rows {
 			out = append(out, map[string]any{
@@ -335,6 +366,8 @@ func listLogsHandler(q *sqlc.Queries) http.HandlerFunc {
 				"requestId": l.RequestID,
 				"cacheRead": l.CacheRead, "cacheCreation": l.CacheCreation,
 				"affinityHit": l.AffinityHit,
+				"targetEmail": resolveTargetEmail(l.Target),
+				"isAttempt":   l.IsAttempt,
 			})
 		}
 		writeJSON(w, 200, out)

@@ -134,6 +134,7 @@ type DispatchLog struct {
 	CacheRead      int64              `json:"cache_read"`
 	CacheCreation  int64              `json:"cache_creation"`
 	AffinityHit    bool               `json:"affinity_hit"`
+	IsAttempt      bool               `json:"is_attempt"`
 }
 
 type DispatchLogDetail struct {
