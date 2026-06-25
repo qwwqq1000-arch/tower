@@ -192,6 +192,7 @@ export default function Policies() {
   const [onlyConfigured, setOnlyConfigured] = useState(false);
 
   // Integer fields
+  const idleFirstSelection = useField<boolean>(true);
   const maxConcurrent = useField<number>(3);
   const slotCooldownMinMs = useField<number>(2000);
   const slotCooldownMaxMs = useField<number>(5000);
@@ -349,6 +350,7 @@ export default function Policies() {
             if (!f.enabled) f.toggle();
           }
         };
+        setBool(idleFirstSelection, 'IdleFirstSelection');
         setNum(maxConcurrent, 'MaxConcurrent');
         setNum(slotCooldownMinMs, 'SlotCooldownMinMs');
         setNum(slotCooldownMaxMs, 'SlotCooldownMaxMs');
@@ -451,6 +453,7 @@ export default function Policies() {
   // Build patch — only include enabled fields
   function buildPatch(): PolicyPatch {
     const patch: PolicyPatch = {};
+    if (idleFirstSelection.enabled) patch.IdleFirstSelection = idleFirstSelection.value;
     if (maxConcurrent.enabled) patch.MaxConcurrent = maxConcurrent.value;
     // SlotCooldownMin/Max are controlled as a pair via the RangeInput widget
     if (slotCooldownMinMs.enabled) {
@@ -613,7 +616,7 @@ export default function Policies() {
   }
 
   const anyEnabled = [
-    maxConcurrent, slotCooldownMinMs, banPersistStreak, permanentBanStreak,
+    idleFirstSelection, maxConcurrent, slotCooldownMinMs, banPersistStreak, permanentBanStreak,
     cooldownBaseMs, cooldownMaxMs, cooldownMult, affinityTTLSec, affinityWaitMs,
     fallbackEnabled, fallbackPriceThresholdUsd, fallbackKeywords, fallbackModels, fallbackProbeEnabled, banSignals, banKeywords, cooldownSignals, cooldownSignalSec,
     maxFailover,
@@ -647,7 +650,7 @@ export default function Policies() {
       bodyPadEnabled, bodyPadBytesMin,
     ],
     concurrency: [
-      maxConcurrent, slotCooldownMinMs,
+      idleFirstSelection, maxConcurrent, slotCooldownMinMs,
       affinityTTLSec, affinityWaitMs,
       warmupHours, warmupMaxConcurrent, warmupBlockOpus,
     ],
@@ -862,6 +865,13 @@ export default function Policies() {
             {/* Group: 并发 / 冷却 */}
             <div className="bg-surface border border-line rounded-xl px-4 py-2 mb-4">
               <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2">并发 / 冷却</h2>
+
+              <FieldRow label="IdleFirstSelection" desc="空闲优先选号:按当前并发数从低到高排候选号(相同空闲随机打散),让流量铺满所有号。关闭则按权重固定顺序。" enabled={idleFirstSelection.enabled} onToggle={idleFirstSelection.toggle} showOnlyConfigured={so}>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={idleFirstSelection.value} onChange={(e) => idleFirstSelection.set(e.target.checked)} disabled={!idleFirstSelection.enabled} className="accent-accent w-4 h-4" />
+                  <span className="text-sm text-muted">{idleFirstSelection.value ? '空闲优先(开)' : '固定权重顺序(关)'}</span>
+                </label>
+              </FieldRow>
 
               <FieldRow label="MaxConcurrent" desc="每账号最大并发槽位数(节点总并发 = 账号数 × 此值)" enabled={maxConcurrent.enabled} onToggle={maxConcurrent.toggle} showOnlyConfigured={so}>
                 <NumInput value={maxConcurrent.value} onChange={maxConcurrent.set} disabled={!maxConcurrent.enabled} min={1} />

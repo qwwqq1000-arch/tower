@@ -48,6 +48,15 @@ function fmtDays(ms?: number): string {
 // opened synchronously within the click so it isn't popup-blocked, then redirected once
 // the URL resolves (node-console-1).
 function openConsole(node: NodeRecord) {
+  // cpa nodes: the CLIProxyAPI management UI lives at <baseUrl>/management.html#/
+  // (log in there with the secret-key). Open it directly — no server round-trip.
+  if ((node.kind ?? 'meridian').toLowerCase() === 'cpa') {
+    const base = node.baseUrl.replace(/\/+$/, '');
+    window.open(`${base}/management.html#/`, '_blank', 'noopener,noreferrer');
+    return;
+  }
+  // meridian: the URL embeds the node key so the dashboard opens authenticated;
+  // it's built server-side. Open a blank tab synchronously to avoid popup-blocking.
   const win = window.open('', '_blank', 'noopener,noreferrer');
   getNodeConsoleUrl(node.id)
     .then(({ url }) => { if (win) win.location.href = url; })
@@ -582,7 +591,7 @@ function AddNodeForm({ onAdded }: AddNodeFormProps) {
   const [ownerId, setOwnerId] = useState('');
   const [kind, setKind] = useState<'meridian' | 'cpa'>('meridian');
   const [mgmtKey, setMgmtKey] = useState('');
-  const [passthrough, setPassthrough] = useState(false);
+  const [passthrough, setPassthrough] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -604,7 +613,7 @@ function AddNodeForm({ onAdded }: AddNodeFormProps) {
       setApiKey('');
       setOwnerId('');
       setMgmtKey('');
-      setPassthrough(false);
+      setPassthrough(true);
       onAdded();
     } catch (error) {
       setErr(error instanceof Error ? error.message : '添加失败');

@@ -133,6 +133,7 @@ export interface Policy {
 
 // policy.Patch fields (all optional, pointer-like)
 export interface PolicyPatch {
+  IdleFirstSelection?: boolean;
   MaxConcurrent?: number;
   SlotCooldownMinMs?: number;
   SlotCooldownMaxMs?: number;
