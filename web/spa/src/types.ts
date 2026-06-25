@@ -153,6 +153,10 @@ export interface PolicyPatch {
   CooldownSignalSec?: number;
   BanKeywords?: string[];
   MaxFailover?: number;
+  DirectFallbackStatusCodes?: number[];
+  DirectFallbackKeywords?: string[];
+  RetryDelayMs?: number;
+  RetrySameAccountMax?: number;
   ModelMaxTokens?: Record<string, number>; // per-model output (max_tokens) ceiling; over-limit → 400 no retry
   WarmupHours?: number;
   WarmupMaxConcurrent?: number;

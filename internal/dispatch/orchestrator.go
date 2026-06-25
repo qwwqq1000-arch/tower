@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"context"
+	"time"
 
 	"github.com/qwwqq1000-arch/tower/internal/policy"
 	"github.com/qwwqq1000-arch/tower/internal/state"
@@ -46,6 +47,19 @@ type Orchestrator struct {
 	NowMs          func() int64       // clock used for serial-wait deadline; nil disables feature
 	SerialWaitKeys map[string]bool    // which keys have serial wait enabled
 	SerialWaitMs   map[string]int64   // per-key wait deadline in ms
+
+	// DirectFallback: when non-nil, called after a failed dispatched attempt; if it
+	// returns true, Dispatch stops trying further accounts immediately and returns
+	// ok=false (the caller routes to fallback as if the pool were exhausted).
+	DirectFallback func(res ProxyResult) bool
+
+	// RetryDelayMs is the delay between failover attempts (and same-account retries).
+	// 0 = no delay (default).
+	RetryDelayMs int
+
+	// RetrySameAccountMax is the number of additional same-account retries before
+	// moving to the next account. 0 = move on immediately (default).
+	RetrySameAccountMax int
 }
 
 // attempt sends one request to key with guaranteed settlement. ok reports a clean
@@ -119,10 +133,22 @@ func (o *Orchestrator) attempt(ctx context.Context, model, key string, px Proxy)
 func (o *Orchestrator) Dispatch(ctx context.Context, model string, order []string, px Proxy) (ProxyResult, string, bool) {
 	var last ProxyResult
 	attempts := 0
+	firstKey := true
 	for _, key := range order {
 		if attempts >= o.MaxAttempts {
 			break
 		}
+		// RetryDelayMs between different-account attempts (not before the very first).
+		if !firstKey && o.RetryDelayMs > 0 {
+			if ctx.Err() != nil {
+				break
+			}
+			time.Sleep(time.Duration(o.RetryDelayMs) * time.Millisecond)
+			if ctx.Err() != nil {
+				break
+			}
+		}
+		firstKey = false
 		// Serial-wait: if this key has bounded wait enabled, block until a slot
 		// frees or the deadline expires. On timeout we skip (same as slot-busy).
 		// Zero overhead when feature is off (nil maps / NowMs not set).
@@ -133,20 +159,49 @@ func (o *Orchestrator) Dispatch(ctx context.Context, model string, order []strin
 				}
 			}
 		}
-		res, ok, dispatched := o.attempt(ctx, model, key, px)
-		if !dispatched {
-			// account not contacted (breaker open/permanent/slot busy/limited) —
-			// not a real attempt: don't count it, log it, or emit a retry event.
-			continue
+		// Same-account retry: try this key up to RetrySameAccountMax+1 times on failure.
+		maxInner := 1
+		if o.RetrySameAccountMax > 0 {
+			maxInner = o.RetrySameAccountMax + 1
 		}
-		attempts++
-		if o.OnAttempt != nil {
-			o.OnAttempt(key, res, ok)
+		innerFirst := true
+		for inner := 0; inner < maxInner; inner++ {
+			if attempts >= o.MaxAttempts {
+				break
+			}
+			// RetryDelayMs between same-account retries (not before the first inner attempt).
+			if !innerFirst && o.RetryDelayMs > 0 {
+				if ctx.Err() != nil {
+					break
+				}
+				time.Sleep(time.Duration(o.RetryDelayMs) * time.Millisecond)
+				if ctx.Err() != nil {
+					break
+				}
+			}
+			innerFirst = false
+
+			res, ok, dispatched := o.attempt(ctx, model, key, px)
+			if !dispatched {
+				// account not contactable — not a real attempt; stop inner retries for this key
+				break
+			}
+			attempts++
+			if o.OnAttempt != nil {
+				o.OnAttempt(key, res, ok)
+			}
+			if ok {
+				return res, key, true
+			}
+			last = res
+			// DirectFallback: if this response matches the direct-fallback pattern,
+			// stop immediately (don't try more accounts or same-account retries).
+			if o.DirectFallback != nil && o.DirectFallback(res) {
+				return last, "", false
+			}
+			// On same-account retry loop: if we've reached inner retries, break out
+			// to let the outer loop move to the next account.
 		}
-		if ok {
-			return res, key, true
-		}
-		last = res
 	}
 	return last, "", false
 }

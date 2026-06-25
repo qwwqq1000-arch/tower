@@ -92,6 +92,33 @@ func matchesAny(body string, kws []string) bool {
 	return false
 }
 
+// directFallbackMatch reports whether a failed attempt's response should route
+// straight to fallback (skipping remaining account attempts): status is in the
+// configured codes AND the body contains a configured keyword. Empty codes or
+// empty keywords → never matches (feature off).
+func directFallbackMatch(status int, body string, cfg policy.Config) bool {
+	if len(cfg.DirectFallbackStatusCodes) == 0 || len(cfg.DirectFallbackKeywords) == 0 {
+		return false
+	}
+	hit := false
+	for _, c := range cfg.DirectFallbackStatusCodes {
+		if c == status {
+			hit = true
+			break
+		}
+	}
+	if !hit {
+		return false
+	}
+	lb := strings.ToLower(body)
+	for _, kw := range cfg.DirectFallbackKeywords {
+		if kw != "" && strings.Contains(lb, strings.ToLower(kw)) {
+			return true
+		}
+	}
+	return false
+}
+
 // Outcome is the result of a dispatch.
 type Outcome struct {
 	Status int
@@ -510,10 +537,13 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 					}
 				}
 			},
-			IsCooldownSignal: func(status int) bool { return isCooldownSignal(status, cfg) },
-			NowMs:            s.Now,
-			SerialWaitKeys:   serialWaitKeys,
-			SerialWaitMs:     serialWaitMs,
+			IsCooldownSignal:    func(status int) bool { return isCooldownSignal(status, cfg) },
+			NowMs:               s.Now,
+			SerialWaitKeys:      serialWaitKeys,
+			SerialWaitMs:        serialWaitMs,
+			DirectFallback:      func(res ProxyResult) bool { return directFallbackMatch(res.Status, res.Body, cfg) },
+			RetryDelayMs:        cfg.RetryDelayMs,
+			RetrySameAccountMax: cfg.RetrySameAccountMax,
 		}
 		np := &NodeProxy{Body: body, Resolve: resolver, BanSignals: cfg.BanSignals, BanKeywords: cfg.BanKeywords, IdleTimeout: time.Duration(cfg.StreamIdleTimeoutSec) * time.Second, UpstreamTimeoutSec: cfg.UpstreamTimeoutSec}
 		res, winKey, ok := orch.Dispatch(ctx, model, order, np)
@@ -1591,8 +1621,19 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 		if limited, resetMs := parseLimitReset(out.Status, out.Body, nowMs, cfg.QuotaLimitKeywords, cfg.QuotaLimitStatusCodes, cfg.QuotaLimitDefaultResetMs); limited {
 			s.applyReactiveLimit(ctx, acctOwnerOf(keyOwner, key, ownerID), key, resetMs)
 		}
+		// DirectFallback: if the response matches the configured status+keyword pattern,
+		// stop trying further accounts and fall through to exhausted fallback immediately.
+		if directFallbackMatch(out.Status, out.Body, cfg) {
+			break // → exhausted fallback (streamChannels) below
+		}
 		if justExiled := s.sess.RecordError(conv, int64(cfg.SessionErrorThreshold), int64(cfg.SessionCooldownSec)*1000, nowMs); justExiled {
 			_ = events.Record(ctx, s.Q, nowMs, events.Event{Type: "session_exile", Target: "session", OwnerID: ownerID})
+		}
+		// RetryDelayMs between failover attempts.
+		if cfg.RetryDelayMs > 0 {
+			if ctx.Err() == nil {
+				time.Sleep(time.Duration(cfg.RetryDelayMs) * time.Millisecond)
+			}
 		}
 	}
 

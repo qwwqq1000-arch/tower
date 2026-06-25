@@ -234,6 +234,26 @@ type Config struct {
 	// equal and MaxFailover=1. Default true (fixes the deterministic-concentration bug).
 	IdleFirstSelection bool
 
+	// DirectFallbackStatusCodes: when a node response has an HTTP status in this list
+	// AND the body contains any DirectFallbackKeywords substring, dispatch stops trying
+	// further accounts and falls straight through to the fallback channel (skipping the
+	// rest of the pool). Rationale: a concurrency-limit response means every account
+	// shares the same limit — hammering the rest of the pool wastes attempts.
+	// Default [400]. Empty = feature off.
+	DirectFallbackStatusCodes []int
+	// DirectFallbackKeywords are case-insensitive body substrings that, combined with
+	// a matching DirectFallbackStatusCodes entry, trigger immediate fallback routing.
+	// Default ["rate_limit_error"]. Empty = feature off.
+	DirectFallbackKeywords []string
+
+	// RetryDelayMs is the delay (ms) inserted between failover attempts (both between
+	// different accounts and between same-account retries). Default 0 = no delay.
+	RetryDelayMs int
+	// RetrySameAccountMax is the number of ADDITIONAL attempts on the SAME account
+	// before moving to the next (0 = move on immediately after first failure, the
+	// original behaviour). Each same-account retry also respects RetryDelayMs.
+	RetrySameAccountMax int
+
 	// BodyPadEnabled enables request-body padding (disguise-phase4). Default false.
 	// When true and BodyPadBytes resolves to > 0, a deterministic pad string is
 	// injected into the metadata.pad field of each request before dispatch.
@@ -346,6 +366,13 @@ func Defaults() Config {
 		BodyPadEnabled:        false,
 		BodyPadBytes:          RangeI{Min: 0, Max: 0},
 		IdleFirstSelection:    true,
+		// DirectFallback defaults: ON for the concurrency-limit storm case.
+		// A 400+rate_limit_error from a node means all accounts share the same limit;
+		// failing over hammers them all. Codes/keywords both non-empty → feature active.
+		DirectFallbackStatusCodes: []int{400},
+		DirectFallbackKeywords:    []string{"rate_limit_error"},
+		RetryDelayMs:              0,
+		RetrySameAccountMax:       0,
 	}
 }
 
@@ -425,6 +452,11 @@ type Patch struct {
 	BodyPadBytes   *RangeI
 
 	IdleFirstSelection *bool
+
+	DirectFallbackStatusCodes *[]int
+	DirectFallbackKeywords    *[]string
+	RetryDelayMs              *int
+	RetrySameAccountMax       *int
 }
 
 func apply(c *Config, p Patch) {
@@ -635,6 +667,18 @@ func apply(c *Config, p Patch) {
 	if p.IdleFirstSelection != nil {
 		c.IdleFirstSelection = *p.IdleFirstSelection
 	}
+	if p.DirectFallbackStatusCodes != nil {
+		c.DirectFallbackStatusCodes = *p.DirectFallbackStatusCodes
+	}
+	if p.DirectFallbackKeywords != nil {
+		c.DirectFallbackKeywords = *p.DirectFallbackKeywords
+	}
+	if p.RetryDelayMs != nil {
+		c.RetryDelayMs = *p.RetryDelayMs
+	}
+	if p.RetrySameAccountMax != nil {
+		c.RetrySameAccountMax = *p.RetrySameAccountMax
+	}
 }
 
 // MaxTokensFor returns the configured output-token ceiling for model, matching the
@@ -754,5 +798,10 @@ func DryRun(base Config, patches ...Patch) (Config, []Diff) {
 	add("BodyPadBytes", base.BodyPadBytes, final.BodyPadBytes)
 	// Idle-first selection
 	add("IdleFirstSelection", base.IdleFirstSelection, final.IdleFirstSelection)
+	// Retry policy
+	add("DirectFallbackStatusCodes", base.DirectFallbackStatusCodes, final.DirectFallbackStatusCodes)
+	add("DirectFallbackKeywords", base.DirectFallbackKeywords, final.DirectFallbackKeywords)
+	add("RetryDelayMs", base.RetryDelayMs, final.RetryDelayMs)
+	add("RetrySameAccountMax", base.RetrySameAccountMax, final.RetrySameAccountMax)
 	return final, diffs
 }

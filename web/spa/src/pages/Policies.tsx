@@ -286,6 +286,11 @@ export default function Policies() {
   const banKeywords = useField<string>('authentication_error,account_disabled,account_suspended');
   const cooldownSignals = useField<string>('429');
   const cooldownSignalSec = useField<number>(60);
+  // Retry policy
+  const directFallbackStatusCodes = useField<string>('400');
+  const directFallbackKeywords = useField<string>('rate_limit_error');
+  const retryDelayMs = useField<number>(0);
+  const retrySameAccountMax = useField<number>(0);
 
   const [dryRunResult, setDryRunResult] = useState<PolicyDryRunResult | null>(null);
   const [previewing, setPreviewing] = useState(false);
@@ -364,6 +369,10 @@ export default function Policies() {
         setArr(cooldownSignals, 'CooldownSignals');
         setNum(cooldownSignalSec, 'CooldownSignalSec');
         setNum(maxFailover, 'MaxFailover');
+        setArr(directFallbackStatusCodes, 'DirectFallbackStatusCodes');
+        setArr(directFallbackKeywords, 'DirectFallbackKeywords');
+        setNum(retryDelayMs, 'RetryDelayMs');
+        setNum(retrySameAccountMax, 'RetrySameAccountMax');
         {
           const mmt = p.ModelMaxTokens as Record<string, number> | undefined;
           const setMMT = (f: typeof limitOpus48, model: string) => {
@@ -484,6 +493,10 @@ export default function Policies() {
     }
     if (cooldownSignalSec.enabled) patch.CooldownSignalSec = cooldownSignalSec.value;
     if (maxFailover.enabled) patch.MaxFailover = maxFailover.value;
+    if (directFallbackStatusCodes.enabled) patch.DirectFallbackStatusCodes = directFallbackStatusCodes.value.split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+    if (directFallbackKeywords.enabled) patch.DirectFallbackKeywords = directFallbackKeywords.value.split(',').map(s => s.trim()).filter(Boolean);
+    if (retryDelayMs.enabled) patch.RetryDelayMs = retryDelayMs.value;
+    if (retrySameAccountMax.enabled) patch.RetrySameAccountMax = retrySameAccountMax.value;
     // ModelMaxTokens is a full-map replacement: when any override is enabled, send all
     // four models so the un-overridden ones keep their official ceiling (not unlimited).
     if (limitOpus48.enabled || limitOpus47.enabled || limitSonnet46.enabled || limitHaiku45.enabled) {
@@ -617,6 +630,7 @@ export default function Policies() {
     modelPinEnabled, modelPinMode, modelPinTarget,
     serialQueueEnabled, serialQueueWaitMs,
     bodyPadEnabled, bodyPadBytesMin,
+    directFallbackStatusCodes, directFallbackKeywords, retryDelayMs, retrySameAccountMax,
   ].some((f) => f.enabled);
 
   // ------------------------------------------------------------------
@@ -645,6 +659,7 @@ export default function Policies() {
     fallback: [
       fallbackEnabled, fallbackPriceThresholdUsd, fallbackKeywords, fallbackModels, fallbackProbeEnabled,
       maxFailover,
+      directFallbackStatusCodes, directFallbackKeywords, retryDelayMs, retrySameAccountMax,
       elasticEnabled, elasticScaleUpUtil, elasticScaleDownUtil, elasticMaxReserve, elasticBaselineCount,
     ],
     signals: [
@@ -1007,6 +1022,22 @@ export default function Policies() {
 
               <FieldRow label="最大故障转移次数(失败换号尝试上限)" desc="单次请求最多尝试换号的次数上限（故障转移 / 重试上限）" enabled={maxFailover.enabled} onToggle={maxFailover.toggle} showOnlyConfigured={so}>
                 <NumInput value={maxFailover.value} onChange={maxFailover.set} disabled={!maxFailover.enabled} min={1} />
+              </FieldRow>
+
+              <FieldRow label="DirectFallbackStatusCodes" desc="触发直接跳保底的 HTTP 状态码，逗号分隔（例: 400）。命中码 + 关键词 → 停止尝试其余号直接走保底渠道" enabled={directFallbackStatusCodes.enabled} onToggle={directFallbackStatusCodes.toggle} showOnlyConfigured={so}>
+                <input type="text" value={directFallbackStatusCodes.value} onChange={(e) => directFallbackStatusCodes.set(e.target.value)} disabled={!directFallbackStatusCodes.enabled} placeholder="400" className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition disabled:cursor-not-allowed" />
+              </FieldRow>
+
+              <FieldRow label="DirectFallbackKeywords" desc="触发直接跳保底的错误关键词，逗号分隔（例: rate_limit_error）。需同时匹配 DirectFallbackStatusCodes 才生效" enabled={directFallbackKeywords.enabled} onToggle={directFallbackKeywords.toggle} showOnlyConfigured={so}>
+                <input type="text" value={directFallbackKeywords.value} onChange={(e) => directFallbackKeywords.set(e.target.value)} disabled={!directFallbackKeywords.enabled} placeholder="rate_limit_error" className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition disabled:cursor-not-allowed" />
+              </FieldRow>
+
+              <FieldRow label="RetryDelayMs" desc="故障转移（换号）间隔毫秒数；0=无等待（默认）" enabled={retryDelayMs.enabled} onToggle={retryDelayMs.toggle} showOnlyConfigured={so}>
+                <NumInput value={retryDelayMs.value} onChange={retryDelayMs.set} disabled={!retryDelayMs.enabled} min={0} step={100} />
+              </FieldRow>
+
+              <FieldRow label="RetrySameAccountMax" desc="在换号前对同一账户额外重试的次数（0=失败立即换号，默认）" enabled={retrySameAccountMax.enabled} onToggle={retrySameAccountMax.toggle} showOnlyConfigured={so}>
+                <NumInput value={retrySameAccountMax.value} onChange={retrySameAccountMax.set} disabled={!retrySameAccountMax.enabled} min={0} />
               </FieldRow>
             </div>
 
