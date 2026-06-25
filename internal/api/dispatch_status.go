@@ -45,6 +45,13 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 			totalCostMap[r.Target] = r.Cost
 		}
 	}
+	// Build per-account RPM map: count dispatch_logs for each target in the last 60s.
+	rpmMap := map[string]int64{}
+	if rpmRows, err := q.CountRecentByTarget(ctx, now-60000); err == nil {
+		for _, r := range rpmRows {
+			rpmMap[r.Target] = r.N
+		}
+	}
 	accounts := []map[string]any{}
 	if svc != nil && svc.Store != nil {
 		for _, s := range svc.Store.Snapshot(now) {
@@ -76,6 +83,7 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 				"recoverAt":    s.RecoverAt,
 				"todayCostUsd": todayCostMap[s.Key],
 				"totalCostUsd": totalCostMap[s.Key],
+				"rpm":          rpmMap[s.Key],
 			})
 		}
 	}

@@ -159,7 +159,14 @@ function LogRow({ row, channelMap, accountMap, onOpen }: { row: LogEntry; channe
           </div>
         )}
       </td>
-      <td className="px-3 py-2">{streamBadge(row.stream)}</td>
+      <td className="px-3 py-2">
+        <div className="flex flex-wrap gap-1 items-center">
+          {streamBadge(row.stream)}
+          {row.affinityHit && (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border bg-green-500/20 text-green-400 border-green-500/40">亲和</span>
+          )}
+        </div>
+      </td>
       <td className="px-3 py-2 text-muted text-xs">{fmtCost(row.costUsd)}</td>
       <td className="px-3 py-2 text-xs text-muted truncate max-w-[120px]" title={row.fallbackReason}>
         {row.fallbackReason || <span className="text-muted/40 italic">—</span>}
@@ -186,6 +193,9 @@ function LogCard({ row, channelMap, accountMap, onOpen }: { row: LogEntry; chann
         <span>首字 {fmtMs(row.ttfbMs)}</span>
         <span>↑{row.tokensIn ?? 0} / ↓{row.tokensOut ?? 0}{(row.cacheRead > 0 || row.cacheCreation > 0) && <span className="text-muted/60 ml-1 text-[10px]">{row.cacheRead > 0 ? `缓存读 ${row.cacheRead.toLocaleString()}` : ''}{row.cacheRead > 0 && row.cacheCreation > 0 ? ' · ' : ''}{row.cacheCreation > 0 ? `缓存写 ${row.cacheCreation.toLocaleString()}` : ''}</span>}</span>
         <span>{streamBadge(row.stream)}</span>
+        {row.affinityHit && (
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border bg-green-500/20 text-green-400 border-green-500/40">亲和</span>
+        )}
         <span>{fmtCost(row.costUsd) !== '—' ? `费用 ${fmtCost(row.costUsd)}` : ''}</span>
       </div>
       {row.fallbackReason && (

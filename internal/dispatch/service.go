@@ -535,7 +535,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 					return s.viaChannels(ctx, ownerID, model, body, channels, "cyber", time.Since(start).Milliseconds(), cfg)
 				}
 				// No fallback channel — log and return the original response.
-				s.logOK(ctx, ownerID, model, res, winKey, time.Since(start).Milliseconds(), "cyber")
+				s.logOK(ctx, ownerID, model, res, winKey, time.Since(start).Milliseconds(), "cyber", pinned)
 				return Outcome{Status: res.Status, Body: res.Body, Target: winKey, Reason: "cyber"}
 			}
 			s.sess.RecordSuccess(conv)
@@ -558,7 +558,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 					s.Store.BurstReset(winKey)
 				}
 			}
-			s.logOK(ctx, ownerID, model, res, winKey, time.Since(start).Milliseconds(), "")
+			s.logOK(ctx, ownerID, model, res, winKey, time.Since(start).Milliseconds(), "", pinned)
 			return Outcome{Status: res.Status, Body: res.Body, Target: winKey, Reason: ""}
 		}
 		// our pool failed → record error for session tracking
@@ -1181,7 +1181,7 @@ func (s *Service) streamChannels(ctx context.Context, w http.ResponseWriter, cha
 	return Outcome{}, false
 }
 
-func (s *Service) logOK(ctx context.Context, ownerID, model string, res ProxyResult, key string, latencyMs int64, reason string) {
+func (s *Service) logOK(ctx context.Context, ownerID, model string, res ProxyResult, key string, latencyMs int64, reason string, affinityHit bool) {
 	in, out, cacheRead, cache5m, cache1h := parseUsage(res.Body)
 	cost := billing.CostUsdFull(model, in, out, cacheRead, cache5m, cache1h)
 	s.recordSpend(ctx, ownerID, key, cost) // node-account success path: accumulate spend + enforce caps
@@ -1193,6 +1193,7 @@ func (s *Service) logOK(ctx context.Context, ownerID, model string, res ProxyRes
 		Status: "ok", HttpStatus: int32(res.Status), LatencyMs: latencyMs, TokensIn: in, TokensOut: out,
 		FallbackReason: reason, TtfbMs: latencyMs, Stream: false, CostUsd: cost,
 		CacheRead: cacheRead, CacheCreation: cache5m + cache1h,
+		AffinityHit: affinityHit,
 	})
 	if in > 0 || out > 0 {
 		_ = s.Q.AddCostRollup(ctx, sqlc.AddCostRollupParams{
@@ -1337,7 +1338,7 @@ func parseUsageSSE(body string) (in, out, cacheRead, cache5m, cache1h int64) {
 }
 
 // logStream logs a completed streaming dispatch with TTFB and token counts.
-func (s *Service) logStream(ctx context.Context, ownerID, model, key string, status int, in, out, cacheRead, cache5m, cache1h, latencyMs, ttfbMs int64) {
+func (s *Service) logStream(ctx context.Context, ownerID, model, key string, status int, in, out, cacheRead, cache5m, cache1h, latencyMs, ttfbMs int64, affinityHit bool) {
 	httpStatus := "ok"
 	if status < 200 || status >= 300 {
 		httpStatus = "error"
@@ -1356,6 +1357,7 @@ func (s *Service) logStream(ctx context.Context, ownerID, model, key string, sta
 		TokensIn: in, TokensOut: out, TtfbMs: ttfbMs, Stream: true, CostUsd: cost,
 		FallbackReason: streamReason,
 		CacheRead: cacheRead, CacheCreation: cache5m + cache1h,
+		AffinityHit: affinityHit,
 	})
 	if in > 0 || out > 0 {
 		_ = s.Q.AddCostRollup(ctx, sqlc.AddCostRollupParams{
@@ -1513,7 +1515,7 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 		if !ok {
 			continue
 		}
-		out, committed, sseBody := s.streamOneWithBody(ctx, w, key, trial, resolver, breaker, body, cfg, ownerID, model, keyOwner)
+		out, committed, sseBody := s.streamOneWithBody(ctx, w, key, trial, resolver, breaker, body, cfg, ownerID, model, keyOwner, pinnedS)
 		if committed {
 			// Response exile: scan body for safety-refusal keywords.
 			if cfg.ResponseExileEnabled && matchesAny(sseBody, cfg.ResponseExileKeywords) {
@@ -1590,13 +1592,13 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 // streamOneWithBody is like streamOne but also returns the captured SSE body.
 // This allows callers to inspect the response for exile keywords without
 // duplicating any of the settle invariants.
-func (s *Service) streamOneWithBody(ctx context.Context, w http.ResponseWriter, key string, trial bool, resolver Resolver, breaker state.BreakerCfg, body []byte, cfg policy.Config, ownerID, model string, keyOwner map[string]string) (Outcome, bool, string) {
-	out, committed, sseBody := s.streamOneInternal(ctx, w, key, trial, resolver, breaker, body, cfg, ownerID, model, keyOwner)
+func (s *Service) streamOneWithBody(ctx context.Context, w http.ResponseWriter, key string, trial bool, resolver Resolver, breaker state.BreakerCfg, body []byte, cfg policy.Config, ownerID, model string, keyOwner map[string]string, affinityHit bool) (Outcome, bool, string) {
+	out, committed, sseBody := s.streamOneInternal(ctx, w, key, trial, resolver, breaker, body, cfg, ownerID, model, keyOwner, affinityHit)
 	return out, committed, sseBody
 }
 
 // streamOneInternal is the actual implementation; streamOneWithBody is a thin wrapper.
-func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, key string, trial bool, resolver Resolver, breaker state.BreakerCfg, body []byte, cfg policy.Config, ownerID, model string, keyOwner map[string]string) (Outcome, bool, string) {
+func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, key string, trial bool, resolver Resolver, breaker state.BreakerCfg, body []byte, cfg policy.Config, ownerID, model string, keyOwner map[string]string, affinityHit bool) (Outcome, bool, string) {
 	settled := false
 	sendReturned := false
 	lastStatus := 0
@@ -1700,7 +1702,7 @@ func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, 
 	if streamErr {
 		effStatus = 500
 	}
-	s.logStream(ctx, ownerID, model, key, effStatus, in, out, cacheRead, cache5m, cache1h, total, ttfb)
+	s.logStream(ctx, ownerID, model, key, effStatus, in, out, cacheRead, cache5m, cache1h, total, ttfb, affinityHit)
 	return Outcome{Status: effStatus, Target: key}, true, sseBody
 }
 

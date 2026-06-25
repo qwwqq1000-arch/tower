@@ -1,6 +1,6 @@
 -- name: InsertDispatchLog :exec
-INSERT INTO dispatch_logs (ts, owner_id, model, target, profile_id, status, http_status, latency_ms, tokens_in, tokens_out, fallback_reason, ttfb_ms, stream, cost_usd, request_id, cache_read, cache_creation)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17);
+INSERT INTO dispatch_logs (ts, owner_id, model, target, profile_id, status, http_status, latency_ms, tokens_in, tokens_out, fallback_reason, ttfb_ms, stream, cost_usd, request_id, cache_read, cache_creation, affinity_hit)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18);
 
 -- name: UpsertDispatchLogDetail :exec
 -- Writes the per-request body+headers once; later log rows of the same request
@@ -46,3 +46,6 @@ SELECT count(*) FROM dispatch_logs WHERE owner_id = $1;
 
 -- name: CountDispatchLogsByOwnerSince :one
 SELECT count(*) FROM dispatch_logs WHERE owner_id = $1 AND ts >= $2;
+
+-- name: CountRecentByTarget :many
+SELECT target, count(*) AS n FROM dispatch_logs WHERE ts >= $1 GROUP BY target;

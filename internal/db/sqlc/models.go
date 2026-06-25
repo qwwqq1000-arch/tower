@@ -133,6 +133,7 @@ type DispatchLog struct {
 	RequestID      string             `json:"request_id"`
 	CacheRead      int64              `json:"cache_read"`
 	CacheCreation  int64              `json:"cache_creation"`
+	AffinityHit    bool               `json:"affinity_hit"`
 }
 
 type DispatchLogDetail struct {

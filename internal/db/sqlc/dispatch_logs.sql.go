@@ -69,6 +69,35 @@ func (q *Queries) CountDispatchLogsSince(ctx context.Context, ts int64) (int64, 
 	return count, err
 }
 
+const countRecentByTarget = `-- name: CountRecentByTarget :many
+SELECT target, count(*) AS n FROM dispatch_logs WHERE ts >= $1 GROUP BY target
+`
+
+type CountRecentByTargetRow struct {
+	Target string `json:"target"`
+	N      int64  `json:"n"`
+}
+
+func (q *Queries) CountRecentByTarget(ctx context.Context, ts int64) ([]CountRecentByTargetRow, error) {
+	rows, err := q.db.Query(ctx, countRecentByTarget, ts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CountRecentByTargetRow
+	for rows.Next() {
+		var i CountRecentByTargetRow
+		if err := rows.Scan(&i.Target, &i.N); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deleteDispatchLogDetailBefore = `-- name: DeleteDispatchLogDetailBefore :exec
 DELETE FROM dispatch_log_details WHERE ts < $1
 `
@@ -98,8 +127,8 @@ func (q *Queries) GetDispatchLogDetail(ctx context.Context, requestID string) (D
 }
 
 const insertDispatchLog = `-- name: InsertDispatchLog :exec
-INSERT INTO dispatch_logs (ts, owner_id, model, target, profile_id, status, http_status, latency_ms, tokens_in, tokens_out, fallback_reason, ttfb_ms, stream, cost_usd, request_id, cache_read, cache_creation)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+INSERT INTO dispatch_logs (ts, owner_id, model, target, profile_id, status, http_status, latency_ms, tokens_in, tokens_out, fallback_reason, ttfb_ms, stream, cost_usd, request_id, cache_read, cache_creation, affinity_hit)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
 `
 
 type InsertDispatchLogParams struct {
@@ -120,6 +149,7 @@ type InsertDispatchLogParams struct {
 	RequestID      string  `json:"request_id"`
 	CacheRead      int64   `json:"cache_read"`
 	CacheCreation  int64   `json:"cache_creation"`
+	AffinityHit    bool    `json:"affinity_hit"`
 }
 
 func (q *Queries) InsertDispatchLog(ctx context.Context, arg InsertDispatchLogParams) error {
@@ -141,12 +171,13 @@ func (q *Queries) InsertDispatchLog(ctx context.Context, arg InsertDispatchLogPa
 		arg.RequestID,
 		arg.CacheRead,
 		arg.CacheCreation,
+		arg.AffinityHit,
 	)
 	return err
 }
 
 const listLogsByOwner = `-- name: ListLogsByOwner :many
-SELECT id, ts, owner_id, model, target, profile_id, status, http_status, latency_ms, tokens_in, tokens_out, fallback_reason, created_at, ttfb_ms, stream, cost_usd, request_id, cache_read, cache_creation FROM dispatch_logs WHERE owner_id = $1 ORDER BY ts DESC LIMIT $2
+SELECT id, ts, owner_id, model, target, profile_id, status, http_status, latency_ms, tokens_in, tokens_out, fallback_reason, created_at, ttfb_ms, stream, cost_usd, request_id, cache_read, cache_creation, affinity_hit FROM dispatch_logs WHERE owner_id = $1 ORDER BY ts DESC LIMIT $2
 `
 
 type ListLogsByOwnerParams struct {
@@ -183,6 +214,7 @@ func (q *Queries) ListLogsByOwner(ctx context.Context, arg ListLogsByOwnerParams
 			&i.RequestID,
 			&i.CacheRead,
 			&i.CacheCreation,
+			&i.AffinityHit,
 		); err != nil {
 			return nil, err
 		}
@@ -195,7 +227,7 @@ func (q *Queries) ListLogsByOwner(ctx context.Context, arg ListLogsByOwnerParams
 }
 
 const listRecentDispatchLogs = `-- name: ListRecentDispatchLogs :many
-SELECT id, ts, owner_id, model, target, profile_id, status, http_status, latency_ms, tokens_in, tokens_out, fallback_reason, created_at, ttfb_ms, stream, cost_usd, request_id, cache_read, cache_creation FROM dispatch_logs ORDER BY ts DESC LIMIT $1
+SELECT id, ts, owner_id, model, target, profile_id, status, http_status, latency_ms, tokens_in, tokens_out, fallback_reason, created_at, ttfb_ms, stream, cost_usd, request_id, cache_read, cache_creation, affinity_hit FROM dispatch_logs ORDER BY ts DESC LIMIT $1
 `
 
 func (q *Queries) ListRecentDispatchLogs(ctx context.Context, limit int32) ([]DispatchLog, error) {
@@ -227,6 +259,7 @@ func (q *Queries) ListRecentDispatchLogs(ctx context.Context, limit int32) ([]Di
 			&i.RequestID,
 			&i.CacheRead,
 			&i.CacheCreation,
+			&i.AffinityHit,
 		); err != nil {
 			return nil, err
 		}

@@ -253,6 +253,7 @@ export interface LogEntry {
   stream?: boolean;
   costUsd?: number;
   requestId?: string; // links to stored request detail (body+headers) for the 点开 view
+  affinityHit?: boolean; // true when request was served by the session-affinity-pinned account
 }
 
 // --- Events ---
@@ -469,6 +470,7 @@ export interface DispatchAccountSnapshot {
   limitedUntil?: number; // ms; quota-limit reset deadline when status==='limited'
   todayCostUsd?: number;
   totalCostUsd?: number;
+  rpm?: number; // requests in the last 60 seconds for this account
 }
 
 export interface DispatchTraffic {
