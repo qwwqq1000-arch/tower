@@ -5,6 +5,42 @@ import (
 	"testing"
 )
 
+// TestWindowSaltChangesCapPerWindow verifies that window-based salts produce
+// different cap values across windows while remaining stable within a window.
+func TestWindowSaltChangesCapPerWindow(t *testing.T) {
+	r := RangeF{Min: 100, Max: 150}
+
+	// Same window index → same cap (stable within a window).
+	w1a := r.Resolve("k", fmt.Sprintf("spend5h:%d", 1))
+	w1b := r.Resolve("k", fmt.Sprintf("spend5h:%d", 1))
+	if w1a != w1b {
+		t.Fatalf("within-window instability: %v != %v", w1a, w1b)
+	}
+	if w1a < 100 || w1a > 150 {
+		t.Fatalf("window 1 cap out of range: %v", w1a)
+	}
+
+	// Different window index → different cap for at least some keys.
+	w2 := r.Resolve("k", fmt.Sprintf("spend5h:%d", 2))
+	if w2 < 100 || w2 > 150 {
+		t.Fatalf("window 2 cap out of range: %v", w2)
+	}
+
+	// Over a set of keys, at least one pair should differ across windows.
+	anyDiffer := false
+	for i := 0; i < 20; i++ {
+		key := fmt.Sprintf("key_%d", i)
+		va := r.Resolve(key, fmt.Sprintf("spend5h:%d", 1))
+		vb := r.Resolve(key, fmt.Sprintf("spend5h:%d", 2))
+		if va != vb {
+			anyDiffer = true
+		}
+	}
+	if !anyDiffer {
+		t.Fatal("window-index salt change should produce at least one different cap across 20 keys")
+	}
+}
+
 func TestRangeResolveDeterministicAndInBounds(t *testing.T) {
 	r := RangeF{Min: 100, Max: 200}
 	a := r.Resolve("acc_123", "spend5h")

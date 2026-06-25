@@ -63,6 +63,18 @@ func main() {
 	}
 	svc := dispatch.NewService(q, store, base, nowMs, cipher)
 
+	// Restore persisted quota-limit state so limits survive restart.
+	if rows, err := q.ListActiveAccountLimitState(ctx, nowMs()); err != nil {
+		log.Printf("restore limit state: %v", err)
+	} else {
+		for _, r := range rows {
+			store.SetLimitedReason(r.Key, base.MaxConcurrent, r.LimitedUntil, r.LimitReason)
+		}
+		if len(rows) > 0 {
+			log.Printf("restored %d active limit(s) from DB", len(rows))
+		}
+	}
+
 	// Periodically persist account_state so warm-start after restart has data.
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)

@@ -22,6 +22,13 @@ type Account struct {
 	BannedAt         int64              `json:"banned_at"`
 }
 
+type AccountLimitState struct {
+	Key          string `json:"key"`
+	LimitedUntil int64  `json:"limited_until"`
+	LimitReason  string `json:"limit_reason"`
+	UpdatedAt    int64  `json:"updated_at"`
+}
+
 type AccountState struct {
 	NodeID        string `json:"node_id"`
 	ProfileID     string `json:"profile_id"`

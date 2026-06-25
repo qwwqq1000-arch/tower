@@ -358,10 +358,28 @@ func (s *Service) recordAttemptError(ctx context.Context, key string, status int
 // rotation signal; the periodic quota poll no longer rotates accounts.
 func (s *Service) applyReactiveLimit(ctx context.Context, ownerID, key string, resetMs int64) {
 	s.Store.SetLimited(key, s.Base.MaxConcurrent, map[string]int64{"all": resetMs})
+	s.persistLimit(ctx, key, resetMs, "reactive")
 	_ = events.Record(ctx, s.Q, s.Now(), events.Event{
 		Type: "quota_limited", Target: key, OwnerID: ownerID,
 		Detail: map[string]any{"account": key, "resetsAt": resetMs, "source": "response"},
 	})
+}
+
+// persistLimit persists a quota-limit state to the DB so it survives restart.
+// Best-effort: DB errors are logged and never bubble up to the caller.
+func (s *Service) persistLimit(ctx context.Context, key string, untilMs int64, reason string) {
+	if err := s.Q.UpsertAccountLimitState(ctx, sqlc.UpsertAccountLimitStateParams{
+		Key: key, LimitedUntil: untilMs, LimitReason: reason, UpdatedAt: s.Now(),
+	}); err != nil {
+		log.Printf("persistLimit %s: %v", key, err)
+	}
+}
+
+// clearPersistedLimit removes a key's persisted limit row (best-effort).
+func (s *Service) clearPersistedLimit(ctx context.Context, key string) {
+	if err := s.Q.DeleteAccountLimitState(ctx, key); err != nil {
+		log.Printf("clearPersistedLimit %s: %v", key, err)
+	}
 }
 
 // overCap reports whether spend sum has reached or exceeded the configured cap.
@@ -388,20 +406,33 @@ func (s *Service) recordSpend(ctx context.Context, ownerID, key string, cost flo
 	}
 	now := s.Now()
 	s.Store.AddSpend(key, cost, now)
+	// Window-dependent salts: cap re-randomises each new window (same config range)
+	// but stays stable within a window so mid-window calls see the same cap.
+	// Guard against divide-by-zero for zero/negative window sizes.
+	salt5h := "spend5h"
+	if cfg.SpendWindow5hMs > 0 {
+		salt5h = fmt.Sprintf("spend5h:%d", now/cfg.SpendWindow5hMs)
+	}
+	salt7d := "spend7d"
+	if cfg.SpendWindow7dMs > 0 {
+		salt7d = fmt.Sprintf("spend7d:%d", now/cfg.SpendWindow7dMs)
+	}
 	if cfg.SpendCap5hEnabled {
-		cap5 := cfg.SpendCap5hUsd.Resolve(key, "spend5h")
+		cap5 := cfg.SpendCap5hUsd.Resolve(key, salt5h)
 		if overCap(s.Store.SpendInWindow(key, now, cfg.SpendWindow5hMs), cap5) {
 			fetchCtx5h, cancel5h := context.WithTimeout(ctx, 8*time.Second)
 			reason5h, recovMs5h := s.classifyQuotaLimit(fetchCtx5h, key, cfg, now)
 			cancel5h()
 			if reason5h != "" {
 				s.Store.SetLimitedReason(key, s.Base.MaxConcurrent, recovMs5h, reason5h)
+				s.persistLimit(ctx, key, recovMs5h, reason5h)
 				_ = events.Record(ctx, s.Q, now, events.Event{
 					Type: "quota_limited", Target: key, OwnerID: ownerID,
 					Detail: map[string]any{"account": key, "resetsAt": recovMs5h, "source": reason5h},
 				})
 			} else {
 				s.Store.SetLimited(key, s.Base.MaxConcurrent, map[string]int64{"all": now + cfg.SpendWindow5hMs})
+				s.persistLimit(ctx, key, now+cfg.SpendWindow5hMs, "spend5h")
 				_ = events.Record(ctx, s.Q, now, events.Event{
 					Type: "quota_limited", Target: key, OwnerID: ownerID,
 					Detail: map[string]any{"account": key, "resetsAt": now + cfg.SpendWindow5hMs, "source": "spend5h"},
@@ -410,19 +441,21 @@ func (s *Service) recordSpend(ctx context.Context, ownerID, key string, cost flo
 		}
 	}
 	if cfg.SpendCap7dEnabled {
-		cap7 := cfg.SpendCap7dUsd.Resolve(key, "spend7d")
+		cap7 := cfg.SpendCap7dUsd.Resolve(key, salt7d)
 		if overCap(s.Store.SpendInWindow(key, now, cfg.SpendWindow7dMs), cap7) {
 			fetchCtx7d, cancel7d := context.WithTimeout(ctx, 8*time.Second)
 			reason7d, recovMs7d := s.classifyQuotaLimit(fetchCtx7d, key, cfg, now)
 			cancel7d()
 			if reason7d != "" {
 				s.Store.SetLimitedReason(key, s.Base.MaxConcurrent, recovMs7d, reason7d)
+				s.persistLimit(ctx, key, recovMs7d, reason7d)
 				_ = events.Record(ctx, s.Q, now, events.Event{
 					Type: "quota_limited", Target: key, OwnerID: ownerID,
 					Detail: map[string]any{"account": key, "resetsAt": recovMs7d, "source": reason7d},
 				})
 			} else {
 				s.Store.SetLimited(key, s.Base.MaxConcurrent, map[string]int64{"all": now + cfg.SpendWindow7dMs})
+				s.persistLimit(ctx, key, now+cfg.SpendWindow7dMs, "spend7d")
 				_ = events.Record(ctx, s.Q, now, events.Event{
 					Type: "quota_limited", Target: key, OwnerID: ownerID,
 					Detail: map[string]any{"account": key, "resetsAt": now + cfg.SpendWindow7dMs, "source": "spend7d"},
@@ -1977,6 +2010,7 @@ func (s *Service) maybeCooldown(ctx context.Context, ownerID, key string, status
 			return
 		}
 		s.Store.SetLimitedReason(key, s.Base.MaxConcurrent, recoveryMs, reason)
+		s.persistLimit(context.Background(), key, recoveryMs, reason)
 		_ = events.Record(context.Background(), s.Q, s.Now(), events.Event{
 			Type: "quota_limited", Target: key, OwnerID: ownerID,
 			Detail: map[string]any{"account": key, "source": reason, "resetsAt": recoveryMs},
