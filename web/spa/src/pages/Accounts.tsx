@@ -459,12 +459,14 @@ function AccountTableRow({
   users,
   onUnassign,
   onRefresh,
+  onToast,
 }: {
   account: AccountRow;
   quotaMap: Map<string, QuotaAll>;
   users: UserRow[];
   onUnassign: (nodeId: string, accountId: string) => void;
   onRefresh: () => void;
+  onToast?: (msg: string) => void;
 }) {
   const [removing, setRemoving] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -520,6 +522,9 @@ function AccountTableRow({
     try {
       await refreshAccountQuota(account.accountId);
       onRefresh();
+      onToast?.(`已刷新额度 (${account.email || account.profileId})`);
+    } catch (e) {
+      onToast?.(`刷新失败: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setRefreshingQuota(false);
     }
@@ -1004,6 +1009,7 @@ function AdminAccounts() {
                     users={users}
                     onUnassign={handleUnassign}
                     onRefresh={() => { void fetchAll(); }}
+                    onToast={setToast}
                   />
                 ))}
               </tbody>

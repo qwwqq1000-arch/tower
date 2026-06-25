@@ -189,12 +189,12 @@ func main() {
 		}
 	}()
 
-	// Every 30m: prune stored request detail (body+headers) older than 48h so the
+	// Every 30m: prune stored request detail (body+headers) older than 7d so the
 	// log "view request" feature never bloats the database (logs-detail-1,
 	// nexaxis-disk-wal-bloat). Log rows themselves are retained; only the heavy
 	// per-request bodies expire.
 	go func() {
-		const retainMs = int64(48 * 60 * 60 * 1000)
+		const retainMs = int64(7 * 24 * 60 * 60 * 1000)
 		prune := func() {
 			if err := q.DeleteDispatchLogDetailBefore(context.Background(), nowMs()-retainMs); err != nil {
 				log.Printf("log-detail prune: %v", err)
