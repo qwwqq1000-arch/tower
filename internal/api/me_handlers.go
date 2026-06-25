@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 
 	"github.com/qwwqq1000-arch/tower/internal/auth"
 	"github.com/qwwqq1000-arch/tower/internal/billing"
@@ -80,6 +79,8 @@ func meAccountsHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc 
 			}
 			out = append(out, map[string]any{
 				"accountId":        a.AccountID,
+				"nodeId":           a.NodeID,
+				"profileId":        a.ProfileID,
 				"nodeName":         a.NodeName,
 				"email":            a.Email,
 				"expiresAt":        a.ExpiresAt,
@@ -180,13 +181,13 @@ func meDashboardHandler(q *sqlc.Queries) http.HandlerFunc {
 		if t, err := q.GetTenantByID(ctx, owner); err == nil {
 			channelRate = t.ChannelRate
 		}
-		nodeFee := consumption * rate                  // 累计托管费
+		nodeFee := consumption * rate                         // 累计托管费
 		channelHostingFee := channelConsumption * channelRate // 渠道托管费
 		// Unsettled is the COMBINED outstanding fee (node + channel) minus settled fee.
 		unsettled, _ := billing.ComputeHostingFee(nodeFee+channelHostingFee, settled)
 		writeJSON(w, 200, map[string]any{
-			"accounts": map[string]any{"total": accTotal, "active": accActive},
-			"today":    map[string]any{"requests": todayReq, "costUsd": todayCost},
+			"accounts":              map[string]any{"total": accTotal, "active": accActive},
+			"today":                 map[string]any{"requests": todayReq, "costUsd": todayCost},
 			"consumptionUsd":        billing.RoundUSD(consumption),
 			"hostingRate":           rate,
 			"unsettledUsd":          billing.RoundUSD(unsettled),
@@ -751,8 +752,11 @@ func meDeleteDispatchKeyHandler(q *sqlc.Queries) http.HandlerFunc {
 
 // ---- Tenant dispatch status (own concurrency) ----
 
-// meDispatchStatusHandler returns an owner-scoped dispatch snapshot: accounts
-// limited to the caller's, with traffic/events computed from owner-scoped logs.
+// meDispatchStatusHandler returns an owner-scoped dispatch snapshot. It delegates
+// to the SAME buildDispatchStatus used by the admin dispatch panel (all=false), so
+// tenants see identical status semantics — elastic 待命/亲和 overlay, 限额 reason, and
+// per-account RPM — instead of a drifting parallel implementation that showed every
+// account as 活跃 (为什么只改一遍: one code path now serves admin and tenant alike).
 func meDispatchStatusHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		owner, ok := ownerFrom(r)
@@ -760,147 +764,7 @@ func meDispatchStatusHandler(q *sqlc.Queries, svc *dispatch.Service) http.Handle
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 			return
 		}
-		ctx := r.Context()
-		now := nowUnix() * 1000
-		// owner-owned account keys (node:profile) + labels.
-		ownKeys := map[string]string{}
-		if accs, err := q.ListNodeAccountsAll(ctx); err == nil {
-			for _, a := range accs {
-				if a.AcctOwnerID != owner {
-					continue
-				}
-				label := a.NodeName
-				if a.Email != "" {
-					label = a.Email
-				}
-				ownKeys[a.NodeID+":"+a.ProfileID] = label
-			}
-		}
-		todayCostMap := map[string]float64{}
-		if rows, err := q.CostByTargetSince(ctx, startOfTodayMs()); err == nil {
-			for _, t := range rows {
-				todayCostMap[t.Target] = t.Cost
-			}
-		}
-		totalCostMap := map[string]float64{}
-		if rows, err := q.CostByTargetTotal(ctx); err == nil {
-			for _, t := range rows {
-				totalCostMap[t.Target] = t.Cost
-			}
-		}
-		accounts := []map[string]any{}
-		if svc != nil && svc.Store != nil {
-			for _, s := range svc.Store.Snapshot(now) {
-				if strings.HasPrefix(s.Key, "fb:") {
-					continue
-				}
-				label, mine := ownKeys[s.Key]
-				if !mine { // strict: only the caller's accounts
-					continue
-				}
-				if s.Status == "permanent" { // permanently banned → out of rotation, hide from the live pool
-					continue
-				}
-				accounts = append(accounts, map[string]any{
-					"key": s.Key, "label": label, "status": s.Status,
-					"inflight": s.Inflight, "available": s.Available, "recoverAt": s.RecoverAt,
-					"todayCostUsd": todayCostMap[s.Key], "totalCostUsd": totalCostMap[s.Key],
-				})
-			}
-		}
-		// traffic scoped to owner via owner-scoped logs.
-		var okc, errc int
-		var in, out int64
-		if logs, err := q.ListLogsByOwner(ctx, sqlc.ListLogsByOwnerParams{OwnerID: owner, Limit: 200}); err == nil {
-			for _, l := range logs {
-				switch l.Status {
-				case "ok":
-					okc++
-				case "error":
-					errc++
-				}
-				in += l.TokensIn
-				out += l.TokensOut
-			}
-		}
-		var total, rpm int64
-		if t, err := q.CountDispatchLogsByOwner(ctx, owner); err == nil {
-			total = t
-		}
-		if rr, err := q.CountDispatchLogsByOwnerSince(ctx, sqlc.CountDispatchLogsByOwnerSinceParams{OwnerID: owner, Ts: now - 60000}); err == nil {
-			rpm = rr
-		}
-		traffic := map[string]any{
-			"total": total, "rpm": rpm, "ok": okc, "error": errc,
-			"tokensIn": in, "tokensOut": out,
-		}
-		// Build resolution maps for event timeline (mirrors admin dispatch status handler).
-		evEmailMap := buildAccountEmailMap(ctx, q)
-		evChannelMap := buildChannelNameMap(ctx, q)
-		events := []map[string]any{}
-		if evs, err := q.ListEventsByOwner(ctx, sqlc.ListEventsByOwnerParams{OwnerID: owner, Limit: 20}); err == nil {
-			for _, e := range evs {
-				targetName := resolveEventTarget(e.Target, evEmailMap, evChannelMap)
-				detailAccount := ""
-				var d map[string]any
-				if len(e.Detail) > 0 {
-					if jerr := json.Unmarshal(e.Detail, &d); jerr == nil {
-						if acct, ok2 := d["account"].(string); ok2 && acct != "" {
-							if resolved := resolveAccountKey(acct, evEmailMap); resolved != "" {
-								detailAccount = resolved
-							} else {
-								detailAccount = acct
-							}
-						}
-					}
-				}
-				events = append(events, map[string]any{
-					"ts": e.Ts, "type": e.Type, "target": e.Target,
-					"detail":        json.RawMessage(e.Detail),
-					"targetName":    targetName,
-					"detailAccount": detailAccount,
-				})
-			}
-		}
-		// fallbackChannels: the caller's OWN channels (mirrors admin buildDispatchStatus shape).
-		snapMap := map[string]struct{ Inflight, Available int }{}
-		if svc != nil && svc.Store != nil {
-			for _, s := range svc.Store.Snapshot(now) {
-				snapMap[s.Key] = struct{ Inflight, Available int }{s.Inflight, s.Available}
-			}
-		}
-		fallbackChannels := []map[string]any{}
-		if chs, err := q.ListFallbackChannelsByOwner(ctx, owner); err == nil {
-			today := todayDayStr()
-			for _, ch := range chs {
-				var todayReq int64
-				var todayCost float64
-				if spend, serr := q.GetFallbackSpendToday(ctx, sqlc.GetFallbackSpendTodayParams{ChannelID: ch.ID, Day: today}); serr == nil {
-					todayReq = spend.Requests
-					todayCost = spend.Cost
-				}
-				fbKey := "fb:" + ch.ID
-				inflight, available := 0, int(ch.MaxConcurrent)
-				if available <= 0 {
-					available = 1000
-				}
-				if snap, ok := snapMap[fbKey]; ok {
-					inflight = snap.Inflight
-					available = snap.Available
-				}
-				fallbackChannels = append(fallbackChannels, map[string]any{
-					"id": ch.ID, "name": ch.Name, "enabled": ch.Enabled,
-					"priority": ch.Priority,
-					"todayRequests": todayReq, "todayCostUsd": todayCost,
-					"inflight": inflight, "available": available,
-					"balanceUsd": ch.BalanceUsd,
-				})
-			}
-		}
-		writeJSON(w, 200, map[string]any{
-			"accounts": accounts, "traffic": traffic, "events": events,
-			"fallbackChannels": fallbackChannels, "asOf": now,
-		})
+		writeJSON(w, 200, buildDispatchStatus(r.Context(), q, svc, nowUnix()*1000, owner, false))
 	}
 }
 

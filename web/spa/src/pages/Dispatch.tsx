@@ -71,7 +71,7 @@ function fmtCost(n: number | undefined): string {
 
 const ACCOUNTS_PAGE_SIZE = 10;
 
-function ConcurrencyPanel({ accounts }: { accounts: DispatchAccountSnapshot[] }) {
+export function ConcurrencyPanel({ accounts }: { accounts: DispatchAccountSnapshot[] }) {
   const [page, setPage] = useState(0);
   const sorted = [...accounts].sort((x, y) => statusRank(x.status) - statusRank(y.status));
   const pageCount = Math.max(1, Math.ceil(sorted.length / ACCOUNTS_PAGE_SIZE));

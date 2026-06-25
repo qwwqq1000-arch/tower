@@ -150,3 +150,34 @@ PASS — no data races detected.
 - `internal/dispatch/service_test.go` — updated 3 `buildCandidates` call sites to unpack 4 return values
 - `internal/policy/policy.go` — updated `RateExceedAction` comment
 - `web/spa/src/pages/Policies.tsx` — removed `delay` option; updated description texts
+
+---
+
+## Addendum 2026-06-24: WaitForSlot context-cancellation fix (commit efd0c80)
+
+`WaitForSlot` previously used `time.Sleep(20ms)` unconditionally. When a client
+disconnected, the goroutine blocked until the full deadline (up to 2 s) elapsed —
+wasting a goroutine slot and holding the request open.
+
+**Changes (commit efd0c80):**
+
+- `internal/state/store.go` — signature changed to `WaitForSlot(ctx context.Context, key string, deadlineMs int64, now func() int64) bool`; `time.Sleep(20ms)` replaced with `select { case <-ctx.Done(): return false; case <-time.After(20ms): }`.
+- `internal/dispatch/orchestrator.go` — `WaitForSlot` call updated to pass `ctx`.
+- `internal/dispatch/service.go` — inline `WaitForSlot` call in `DispatchStream` updated to pass `ctx`.
+- `internal/state/wait_test.go` — three existing calls updated to pass `context.Background()`; new test `TestWaitForSlot_CtxCancelled` verifies that a pre-cancelled context causes return within 100 ms even with a far-future deadline.
+
+**Race test result after fix:**
+```
+ok  github.com/qwwqq1000-arch/tower/internal/state     2.121s
+ok  github.com/qwwqq1000-arch/tower/internal/dispatch  2.597s
+```
+
+---
+
+## Final Status
+
+**Commits:** 382e830 (main fix), efd0c80 (ctx-aware fix)
+**Build:** go build ./... GREEN
+**Vet:** go vet ./... GREEN  
+**Tests:** go test ./... GREEN (25 packages)
+**Race:** go test -race ./internal/dispatch/ ./internal/state/ GREEN (no data races)

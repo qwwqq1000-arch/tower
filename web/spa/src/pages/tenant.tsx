@@ -29,9 +29,8 @@ import type {
   DispatchKeyRecord,
 } from '../types';
 import type { BanAnalysis, BanBucket, BanAccountEntry } from '../api';
-import { EventTimeline } from './Dispatch';
+import { EventTimeline, ConcurrencyPanel } from './Dispatch';
 import { copyText } from '../lib/clipboard';
-import { statusColor, statusLabel } from '../lib/status';
 import { StatusBadge, statusRank } from '../components/AccountStatus';
 
 // ------------------------------------------------------------------
@@ -112,6 +111,7 @@ export function TenantDashboard() {
   const [accounts, setAccounts] = useState<MeAccountRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
 
   const load = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true);
@@ -132,6 +132,12 @@ export function TenantDashboard() {
     const timer = setInterval(() => void load(false), REFRESH_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [load]);
+
+  // Sort the same way every account table does (status priority), before pagination.
+  const dashAccountsSorted = useMemo(
+    () => [...accounts].sort((x, y) => statusRank(x.status) - statusRank(y.status)),
+    [accounts],
+  );
 
   if (loading) {
     return (
@@ -174,39 +180,56 @@ export function TenantDashboard() {
       {/* Account list (read-only) */}
       <section>
         <h2 className="text-xs font-medium text-muted uppercase tracking-wide mb-3">号库列表</h2>
-        <div className="bg-surface border border-line rounded-xl overflow-x-auto">
+        <div className="bg-surface border border-line rounded-xl overflow-hidden">
           {accounts.length === 0 ? (
             <p className="p-6 text-center text-sm text-muted">暂无账户</p>
           ) : (
-            <table className="w-full text-left min-w-[640px]">
-              <thead>
-                <tr className="text-xs text-muted uppercase tracking-wide">
-                  <th className="py-2 pr-3 pl-3 font-medium">邮箱</th>
-                  <th className="py-2 pr-3 font-medium">节点</th>
-                  <th className="py-2 pr-3 font-medium">订阅类型</th>
-                  <th className="py-2 pr-3 font-medium">状态</th>
-                  <th className="py-2 pr-3 font-medium text-right">今日消费</th>
-                  <th className="py-2 pr-3 font-medium text-right">总消费</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[...accounts].sort((x, y) => statusRank(x.status) - statusRank(y.status)).map((a) => (
-                  <tr key={a.accountId} className="border-t border-line hover:bg-line/20 transition">
-                    <td className="py-2 pr-3 pl-3 text-sm text-ink truncate max-w-[200px]">{a.email || '—'}</td>
-                    <td className="py-2 pr-3 text-xs text-muted">{a.nodeName || '—'}</td>
-                    <td className="py-2 pr-3 text-xs text-muted">{a.subscriptionType || '—'}</td>
-                    <td className="py-2 pr-3">
-                      <span className={`inline-flex items-center gap-1 text-xs ${a.enabled ? 'text-ok' : 'text-muted'}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${a.enabled ? 'bg-ok' : 'bg-muted'}`} />
-                        {a.enabled ? '启用' : '暂停'}
-                      </span>
-                    </td>
-                    <td className="py-2 pr-3 text-xs text-muted text-right tabular-nums">{fmtCost(a.todayCostUsd)}</td>
-                    <td className="py-2 pr-3 text-xs text-muted text-right tabular-nums">{fmtCost(a.totalCostUsd)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left min-w-[640px]">
+                  <thead>
+                    <tr className="text-xs text-muted uppercase tracking-wide">
+                      <th className="py-2 pr-3 pl-3 font-medium">邮箱</th>
+                      <th className="py-2 pr-3 font-medium">节点</th>
+                      <th className="py-2 pr-3 font-medium">订阅类型</th>
+                      <th className="py-2 pr-3 font-medium">状态</th>
+                      <th className="py-2 pr-3 font-medium text-right">今日消费</th>
+                      <th className="py-2 pr-3 font-medium text-right">总消费</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dashAccountsSorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map((a) => (
+                      <tr key={a.accountId} className="border-t border-line hover:bg-line/20 transition">
+                        <td className="py-2 pr-3 pl-3 text-sm text-ink truncate max-w-[200px]">{a.email || '—'}</td>
+                        <td className="py-2 pr-3 text-xs text-muted">{a.nodeName || '—'}</td>
+                        <td className="py-2 pr-3 text-xs text-muted">{a.subscriptionType || '—'}</td>
+                        <td className="py-2 pr-3">
+                          {isLiveStatus(a.status) ? (
+                            <StatusBadge status={a.status} limitedUntil={a.limitedUntil} />
+                          ) : (
+                            <span className={`inline-flex items-center gap-1 text-xs ${a.enabled ? 'text-ok' : 'text-muted'}`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${a.enabled ? 'bg-ok' : 'bg-muted'}`} />
+                              {a.enabled ? '启用' : '暂停'}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2 pr-3 text-xs text-muted text-right tabular-nums">{fmtCost(a.todayCostUsd)}</td>
+                        <td className="py-2 pr-3 text-xs text-muted text-right tabular-nums">{fmtCost(a.totalCostUsd)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {accounts.length > PAGE_SIZE && (
+                <div className="px-3 py-2 border-t border-line">
+                  <PaginationBar
+                    page={page} total={accounts.length} pageSize={PAGE_SIZE}
+                    onPrev={() => setPage((p) => Math.max(0, p - 1))}
+                    onNext={() => setPage((p) => p + 1)}
+                  />
+                </div>
+              )}
+            </>
           )}
         </div>
       </section>
@@ -222,16 +245,19 @@ function daysRemaining(ms: number | undefined): number | null {
   return Math.floor((ms - Date.now()) / 86400000);
 }
 
-// liveBanned/permanent flags from the account's live breaker status.
-function isLiveBanned(status?: string): boolean {
-  return status === 'permanent' || status === 'banned' || status === 'half_open' || status === 'cooldown';
+// isLiveStatus: a live breaker/quota state worth surfacing as a status badge — the
+// SAME set the admin 号库 renders (banned/half_open/permanent/cooldown/limited). 'active'
+// deliberately falls through to the 启用/暂停 indicator (the tenant-actionable state).
+function isLiveStatus(status?: string): boolean {
+  return status === 'permanent' || status === 'banned' || status === 'half_open'
+    || status === 'cooldown' || status === 'limited';
 }
 
 function TenantAccountRow({ account, onChanged }: { account: MeAccountRow; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
   const days = daysRemaining(account.expiresAt);
   const permanent = account.status === 'permanent';
-  const liveBanned = isLiveBanned(account.status);
+  const liveBanned = isLiveStatus(account.status);
 
   async function toggle() {
     setBusy(true);
@@ -294,7 +320,7 @@ function TenantAccountCard({ account, onChanged }: { account: MeAccountRow; onCh
   const [busy, setBusy] = useState(false);
   const days = daysRemaining(account.expiresAt);
   const permanent = account.status === 'permanent';
-  const liveBanned = isLiveBanned(account.status);
+  const liveBanned = isLiveStatus(account.status);
 
   async function toggle() {
     setBusy(true);
@@ -453,6 +479,8 @@ export function TenantBilling() {
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [ledgerPage, setLedgerPage] = useState(0);
+  const pagedLedger = ledger.slice(ledgerPage * PAGE_SIZE, (ledgerPage + 1) * PAGE_SIZE);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -536,10 +564,10 @@ export function TenantBilling() {
                       </tr>
                     </thead>
                     <tbody>
-                      {ledger.map((row, i) => {
+                      {pagedLedger.map((row, i) => {
                         const isDebit = row.amount < 0;
                         return (
-                          <tr key={i} className="border-t border-line hover:bg-line/20 transition text-sm">
+                          <tr key={ledgerPage * PAGE_SIZE + i} className="border-t border-line hover:bg-line/20 transition text-sm">
                             <td className="px-3 py-2 text-xs text-muted whitespace-nowrap font-mono">{fmtTime(row.ts)}</td>
                             <td className="px-3 py-2 text-ink">{row.type || '—'}</td>
                             <td className={`px-3 py-2 font-mono text-xs font-medium ${isDebit ? 'text-err' : 'text-ok'}`}>
@@ -554,10 +582,10 @@ export function TenantBilling() {
                   </table>
                 </div>
                 <div className="md:hidden space-y-3">
-                  {ledger.map((row, i) => {
+                  {pagedLedger.map((row, i) => {
                     const isDebit = row.amount < 0;
                     return (
-                      <div key={i} className="bg-surface border border-line rounded-xl p-4 space-y-1.5 text-sm">
+                      <div key={ledgerPage * PAGE_SIZE + i} className="bg-surface border border-line rounded-xl p-4 space-y-1.5 text-sm">
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-ink font-medium">{row.type || '—'}</span>
                           <span className={`font-mono text-sm font-semibold ${isDebit ? 'text-err' : 'text-ok'}`}>
@@ -570,7 +598,15 @@ export function TenantBilling() {
                     );
                   })}
                 </div>
-                <p className="text-xs text-muted text-right">{ledger.length} 条记录</p>
+                {ledger.length > PAGE_SIZE ? (
+                  <PaginationBar
+                    page={ledgerPage} total={ledger.length} pageSize={PAGE_SIZE}
+                    onPrev={() => setLedgerPage((p) => Math.max(0, p - 1))}
+                    onNext={() => setLedgerPage((p) => p + 1)}
+                  />
+                ) : (
+                  <p className="text-xs text-muted text-right">{ledger.length} 条记录</p>
+                )}
               </>
             )}
           </div>
@@ -644,10 +680,6 @@ function TenantFallbackChannelsPanel({ channels }: { channels: DispatchFallbackC
   );
 }
 
-function dispStatusCls(status: string): string {
-  return statusColor(status);
-}
-
 const DISPATCH_REFRESH_MS = 5_000;
 
 export function TenantDispatch() {
@@ -677,12 +709,16 @@ export function TenantDispatch() {
       .catch(() => {});
     getMeAccounts()
       .then((accounts) => {
+        // Key by `${nodeId}:${profileId}` — the SAME format the admin event timeline
+        // uses (Dispatch.tsx) — so 节点报错 etc. resolve to the email instead of the raw
+        // n_<id>:claude-<email>.json target. Also key by accountId/profileId for events
+        // whose target is the bare account id (e.g. account_recovered).
         const m = new Map<string, string>();
         for (const a of accounts) {
-          if (a.email) {
-            m.set(a.accountId, a.email);
-            if (a.profileId) m.set(a.profileId, a.email);
-          }
+          if (!a.email) continue;
+          if (a.nodeId && a.profileId) m.set(`${a.nodeId}:${a.profileId}`, a.email);
+          m.set(a.accountId, a.email);
+          if (a.profileId) m.set(a.profileId, a.email);
         }
         setAccountNames(m);
       })
@@ -730,43 +766,9 @@ export function TenantDispatch() {
           </div>
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-            {/* Concurrency */}
-            <div className="bg-surface border border-line rounded-xl overflow-hidden">
-              <div className="px-4 py-3 border-b border-line text-sm font-medium text-ink">并发 / 账户</div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-line text-left text-xs text-muted">
-                      <th className="px-4 py-2 font-medium">邮箱</th>
-                      <th className="px-4 py-2 font-medium">状态</th>
-                      <th className="px-4 py-2 font-medium text-right">并发中</th>
-                      <th className="px-4 py-2 font-medium text-right">可用</th>
-                      <th className="px-4 py-2 font-medium text-right">今日消费</th>
-                      <th className="px-4 py-2 font-medium text-right">总消费</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {accounts.length === 0 && (
-                      <tr><td colSpan={6} className="px-4 py-6 text-center text-muted text-xs">无数据</td></tr>
-                    )}
-                    {[...accounts].sort((x, y) => statusRank(x.status) - statusRank(y.status)).map((a) => (
-                      <tr key={a.key} className="border-b border-line/50 hover:bg-line/30 transition">
-                        <td className="px-4 py-2 text-sm text-ink font-medium truncate max-w-[200px]">{a.label || '—'}</td>
-                        <td className="px-4 py-2">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded border text-xs font-mono ${dispStatusCls(a.status)}`}>
-                            {statusLabel(a.status)}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2 text-right tabular-nums">{a.inflight}</td>
-                        <td className="px-4 py-2 text-right tabular-nums">{a.available}</td>
-                        <td className="px-4 py-2 text-right tabular-nums text-xs text-muted">{fmtCost(a.todayCostUsd)}</td>
-                        <td className="px-4 py-2 text-right tabular-nums text-xs text-muted">{fmtCost(a.totalCostUsd)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+            {/* Concurrency — reuse the SAME admin panel so 待命/亲和/限额 status, sorting
+                and pagination are identical for tenant and admin (one code path). */}
+            <ConcurrencyPanel accounts={accounts} />
 
             {/* Event timeline (reuse shared rendering) */}
             <EventTimeline events={data.events} fallbackNames={fallbackNames} accountNames={accountNames} />

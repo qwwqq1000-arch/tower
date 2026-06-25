@@ -534,6 +534,7 @@ export interface Slot {
 export interface MeAccountRow {
   nodeName: string;
   accountId: string;
+  nodeId: string;
   profileId: string;
   email: string;
   enabled: boolean;

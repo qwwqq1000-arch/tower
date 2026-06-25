@@ -149,9 +149,23 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 			errc = c
 		}
 	} else {
-		// owner-scoped traffic (per-status / token breakdown is superadmin-only)
+		// owner-scoped traffic. ok/error + token breakdown come from the owner's recent
+		// logs so the tenant dispatch panel shows real 成功/错误 (not just totals); this
+		// is the same computation the old per-tenant handler did, now shared here.
 		total, _ = q.CountDispatchLogsByOwner(ctx, owner)
 		rpm, _ = q.CountDispatchLogsByOwnerSince(ctx, sqlc.CountDispatchLogsByOwnerSinceParams{OwnerID: owner, Ts: now - 60000})
+		if logs, lerr := q.ListLogsByOwner(ctx, sqlc.ListLogsByOwnerParams{OwnerID: owner, Limit: 200}); lerr == nil {
+			for _, l := range logs {
+				switch l.Status {
+				case "ok":
+					okc++
+				case "error":
+					errc++
+				}
+				in += l.TokensIn
+				out += l.TokensOut
+			}
+		}
 	}
 	traffic := map[string]any{"total": total, "rpm": rpm, "ok": okc, "error": errc, "tokensIn": in, "tokensOut": out}
 	events := []map[string]any{}
