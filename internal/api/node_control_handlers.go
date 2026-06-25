@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 
@@ -37,33 +38,47 @@ func nodeConsoleURLHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerF
 }
 
 // accountsRefreshQuotaHandler refreshes quota for ALL CPA accounts on demand (the 号库
-// 刷新全部额度 button). Quota auto-polling is off, so this is the only refresh path.
-func accountsRefreshQuotaHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
+// 刷新全部额度 button). It first runs SyncAll to ingest any newly-added CPA node
+// accounts into the pool (best-effort: SyncAll errors are logged but do not abort
+// the quota refresh). Then RefreshAllQuota fetches live quota for every ingested
+// account. This means clicking 刷新 immediately after adding a CPA node loads its
+// accounts without waiting for the 5-minute auto-Sync timer.
+func accountsRefreshQuotaHandler(q *sqlc.Queries, cipher *crypto.Cipher, rot *cpaclient.RotateConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Ingest accounts from all CPA nodes first (best-effort).
+		if err := cpaclient.SyncAll(r.Context(), q, rot); err != nil {
+			log.Printf("accountsRefreshQuota: SyncAll (best-effort): %v", err)
+		}
 		n, err := cpaclient.RefreshAllQuota(r.Context(), q, cipher)
 		if err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"refreshed": n})
+		writeJSON(w, http.StatusOK, map[string]any{"refreshed": n, "synced": true})
 	}
 }
 
 // accountRefreshQuotaHandler refreshes quota for one account (the per-row 刷新 button).
-// A CPA account triggers a re-fetch of its node's accounts; meridian quota is already
-// live (the 号库 re-fetches node quota), so it's a no-op there.
-func accountRefreshQuotaHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
+// For CPA accounts, it first runs Sync on the owning node to ingest any newly-added
+// accounts into the pool (best-effort: Sync errors are logged but do not abort the
+// quota refresh). Then RefreshQuotaForNode fetches live quota for that node's accounts.
+// Meridian accounts are a no-op (meridian quota is already live).
+func accountRefreshQuotaHandler(q *sqlc.Queries, cipher *crypto.Cipher, rot *cpaclient.RotateConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		aid := r.PathValue("accountId")
 		if strings.HasPrefix(aid, "cpa:") {
 			if parts := strings.SplitN(aid, ":", 3); len(parts) >= 2 {
 				if node, err := q.GetNode(r.Context(), parts[1]); err == nil {
+					// Ingest accounts from this node first (best-effort).
+					if _, serr := cpaclient.Sync(r.Context(), q, node, rot); serr != nil {
+						log.Printf("accountRefreshQuota: Sync node %s (best-effort): %v", node.ID, serr)
+					}
 					n, rerr := cpaclient.RefreshQuotaForNode(r.Context(), q, node, cipher)
 					if rerr != nil {
 						writeJSON(w, http.StatusBadGateway, map[string]string{"error": rerr.Error()})
 						return
 					}
-					writeJSON(w, http.StatusOK, map[string]any{"refreshed": n})
+					writeJSON(w, http.StatusOK, map[string]any{"refreshed": n, "synced": true})
 					return
 				}
 			}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/qwwqq1000-arch/tower/internal/auth"
+	"github.com/qwwqq1000-arch/tower/internal/cpaclient"
 	"github.com/qwwqq1000-arch/tower/internal/crypto"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 	"github.com/qwwqq1000-arch/tower/internal/dispatch"
@@ -34,6 +35,18 @@ func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc
 	mux.HandleFunc("GET /api/admin/server-status", requireAdmin(secret, q, serverStatusHandler()))
 	if svc != nil {
 		mux.HandleFunc("POST /v1/messages", dispatchMessagesHandler(svc, q))
+	}
+	// Build a RotateConfig for manual refresh handlers, mirroring the auto-Sync
+	// poller in cmd/tower/main.go. When svc is nil (test/partial setup), rot is nil
+	// and Sync calls are skipped best-effort inside the handlers.
+	var rot *cpaclient.RotateConfig
+	if svc != nil {
+		rot = &cpaclient.RotateConfig{
+			Store:        svc.Store,
+			BaseCapacity: svc.Base.MaxConcurrent,
+			DefaultTTLMs: 3600000,
+			Cipher:       cipher,
+		}
 	}
 	if q != nil {
 		mux.HandleFunc("POST /api/admin/nodes", requireAdmin(secret, q, createNodeHandler(q, cipher)))
@@ -66,8 +79,8 @@ func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc
 		mux.HandleFunc("PATCH /api/admin/accounts/{accountId}/expiry", requireAdmin(secret, q, setAccountExpiryHandler(q)))
 		mux.HandleFunc("PATCH /api/admin/accounts/{accountId}/owner", requireAdmin(secret, q, setAccountOwnerHandler(q)))
 		mux.HandleFunc("POST /api/admin/accounts/{accountId}/recover", requireAdmin(secret, q, recoverAccountHandler(q, svc)))
-		mux.HandleFunc("POST /api/admin/accounts/refresh-quota", requireAdmin(secret, q, accountsRefreshQuotaHandler(q, cipher)))
-		mux.HandleFunc("POST /api/admin/accounts/{accountId}/refresh-quota", requireAdmin(secret, q, accountRefreshQuotaHandler(q, cipher)))
+		mux.HandleFunc("POST /api/admin/accounts/refresh-quota", requireAdmin(secret, q, accountsRefreshQuotaHandler(q, cipher, rot)))
+		mux.HandleFunc("POST /api/admin/accounts/{accountId}/refresh-quota", requireAdmin(secret, q, accountRefreshQuotaHandler(q, cipher, rot)))
 		mux.HandleFunc("GET /api/admin/nodes/{id}/profiles", requireAdmin(secret, q, listProfilesHandler(q, cipher)))
 		mux.HandleFunc("POST /api/admin/nodes/{id}/accounts/import", requireAdmin(secret, q, importProfileHandler(q, cipher)))
 		mux.HandleFunc("POST /api/admin/nodes/{id}/oauth/start", requireAdmin(secret, q, oauthStartHandler(q, cipher)))
