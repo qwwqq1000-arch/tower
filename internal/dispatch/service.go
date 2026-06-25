@@ -29,9 +29,15 @@ import (
 )
 
 const (
-	spendWindow5hMs int64 = 18_000_000  // 5 hours
-	spendWindow7dMs int64 = 604_800_000 // 7 days
+	spendFallbackRecoveryMs int64 = 18_000_000 // 5h fallback when quota classify unavailable
 )
+
+// spendThresholdEntry holds the persisted per-account spending threshold T and
+// the calendar day (nowMs/86400000) it was anchored on.
+type spendThresholdEntry struct {
+	threshold float64
+	day       int64 // calendar day bucket (nowMs / 86400000)
+}
 
 // Service assembles policy + selection + proxy + orchestration into one call.
 type Service struct {
@@ -67,12 +73,44 @@ type Service struct {
 	// quotaInFlight guards against multiple concurrent quota-classify goroutines for
 	// the same account key (e.g. burst of 429s). Only one goroutine runs at a time.
 	quotaInFlight sync.Map // key: string → struct{}
+
+	// spendThreshold holds the in-memory per-account cumulative spend threshold T for
+	// the raising-threshold model. Persisted to account_spend_threshold on change.
+	// Value type: spendThresholdEntry.
+	spendThreshold sync.Map // key: string (dispatch key) → spendThresholdEntry
+
+	// spendLimitedAt tracks the threshold at which the account was last limited, to
+	// detect recovery and raise the bar exactly once per cycle. Value type: float64.
+	spendLimitedAt sync.Map // key: string → float64
 }
 
 // NewService builds a dispatch Service. cipher is the runtime master-key cipher
 // (vault-crypto-1) used to decrypt secrets at use; it may be nil.
 func NewService(q *sqlc.Queries, store *state.Store, base policy.Config, now func() int64, cipher *crypto.Cipher) *Service {
 	return &Service{Q: q, Store: store, Base: base, Now: now, sess: session.NewStore(), Cipher: cipher, scaledUp: make(map[string]bool)}
+}
+
+// RestoreSpendThresholds loads persisted spend thresholds from DB into the in-memory map.
+// Called once at startup. todaySpend is ephemeral (resets to 0 on restart — intended).
+// If the stored day matches today, the threshold is restored so the bar is not re-anchored
+// to T₀ mid-cycle. If the day has changed, the next recordSpend will re-anchor naturally.
+func (s *Service) RestoreSpendThresholds(ctx context.Context) {
+	if s.Q == nil {
+		return
+	}
+	today := s.Now() / 86_400_000
+	rows, err := s.Q.ListAccountSpendThresholds(ctx)
+	if err != nil {
+		log.Printf("RestoreSpendThresholds: %v", err)
+		return
+	}
+	for _, r := range rows {
+		s.spendThreshold.Store(r.Key, spendThresholdEntry{threshold: r.Threshold, day: r.Day})
+		_ = today // day-mismatch is handled lazily in loadSpendThreshold
+	}
+	if len(rows) > 0 {
+		log.Printf("restored %d spend threshold(s) from DB", len(rows))
+	}
 }
 
 // effectiveCap returns the maximum concurrency for a single account, accounting
@@ -393,73 +431,118 @@ func overCap(sum, capUsd float64) bool {
 	return capUsd > 0 && sum >= capUsd
 }
 
-// recordSpend accumulates spend for key and, if a 5h or 7d cap is breached,
-// rotates the account out of dispatch via SetLimited. Best-effort: panics are
-// caught so spend tracking never fails the request.
+// loadSpendThreshold returns the current threshold T for key. If absent or the
+// stored day differs from today (day = nowMs/86400000), it re-anchors to the
+// initial draw (salt "thr:0") and returns the new T. Persists on change (best-effort).
+func (s *Service) loadSpendThreshold(ctx context.Context, key string, cfg policy.Config, now int64) float64 {
+	today := now / 86_400_000
+	if v, ok := s.spendThreshold.Load(key); ok {
+		e := v.(spendThresholdEntry)
+		if e.day == today {
+			return e.threshold
+		}
+	}
+	// First time or day changed → re-anchor.
+	t := cfg.SpendCap5hUsd.Resolve(key, "thr:0")
+	s.spendThreshold.Store(key, spendThresholdEntry{threshold: t, day: today})
+	s.persistSpendThreshold(ctx, key, t, today, now)
+	s.spendLimitedAt.Delete(key) // clear stale limitedAt marker on day reset
+	return t
+}
+
+// raiseSpendThreshold bumps the threshold from currentT to currentT+nextCap and
+// persists. Returns the new threshold.
+func (s *Service) raiseSpendThreshold(ctx context.Context, key string, cfg policy.Config, currentT float64, now int64) float64 {
+	today := now / 86_400_000
+	next := cfg.SpendCap5hUsd.Resolve(key, fmt.Sprintf("thr:%d", int64(currentT)))
+	newT := currentT + next
+	s.spendThreshold.Store(key, spendThresholdEntry{threshold: newT, day: today})
+	s.persistSpendThreshold(ctx, key, newT, today, now)
+	return newT
+}
+
+// persistSpendThreshold upserts the threshold row (best-effort, no-op if Q is nil).
+func (s *Service) persistSpendThreshold(ctx context.Context, key string, threshold float64, day, now int64) {
+	if s.Q == nil {
+		return
+	}
+	if err := s.Q.UpsertAccountSpendThreshold(ctx, sqlc.UpsertAccountSpendThresholdParams{
+		Key:       key,
+		Threshold: threshold,
+		Day:       day,
+		UpdatedAt: now,
+	}); err != nil {
+		log.Printf("persistSpendThreshold %s: %v", key, err)
+	}
+}
+
+// recordSpend accumulates spend for key and, if the cumulative today-spend reaches
+// the raising threshold T, rotates the account out of dispatch via SetLimited.
+// Recovery (quota resets_at) raises T by one cap-draw so the next stop is higher.
+// Best-effort: panics are caught so spend tracking never fails the request.
 func (s *Service) recordSpend(ctx context.Context, ownerID, key string, cost float64) {
 	defer func() { recover() }() //nolint:errcheck
-	// Resolve the per-account spend-cap config: look up the business accountID for
-	// this dispatch key (populated in buildCandidates). Falls back to "" (no account
-	// layer) when the key is unknown, so a per-account spend-cap override applies.
+	// Resolve per-account spend-cap config.
 	accountID := ""
 	if v, ok := s.keyAccount.Load(key); ok {
 		accountID, _ = v.(string)
 	}
 	cfg := s.resolveConfig(ctx, ownerID, accountID)
-	if !cfg.SpendCap5hEnabled && !cfg.SpendCap7dEnabled {
-		return // zero overhead when both caps are off (default)
+	if !cfg.SpendCap5hEnabled {
+		return // zero overhead when cap is off (default)
 	}
 	now := s.Now()
 	s.Store.AddSpend(key, cost, now)
-	// Window-dependent salts: cap re-randomises each new window (same config range)
-	// but stays stable within a window so mid-window calls see the same cap.
-	salt5h := fmt.Sprintf("spend5h:%d", now/spendWindow5hMs)
-	salt7d := fmt.Sprintf("spend7d:%d", now/spendWindow7dMs)
-	if cfg.SpendCap5hEnabled {
-		cap5 := cfg.SpendCap5hUsd.Resolve(key, salt5h)
-		if overCap(s.Store.SpendInWindow(key, now, spendWindow5hMs), cap5) {
-			fetchCtx5h, cancel5h := context.WithTimeout(context.Background(), 8*time.Second)
-			reason5h, recovMs5h := s.classifyQuotaLimit(fetchCtx5h, key, cfg, now)
-			cancel5h()
-			if reason5h != "" {
-				s.Store.SetLimitedReason(key, s.Base.MaxConcurrent, recovMs5h, reason5h)
-				s.persistLimit(ctx, key, recovMs5h, reason5h)
-				_ = events.Record(ctx, s.Q, now, events.Event{
-					Type: "quota_limited", Target: key, OwnerID: ownerID,
-					Detail: map[string]any{"account": key, "resetsAt": recovMs5h, "source": reason5h},
-				})
-			} else {
-				s.Store.SetLimited(key, s.Base.MaxConcurrent, map[string]int64{"all": now + spendWindow5hMs})
-				s.persistLimit(ctx, key, now+spendWindow5hMs, "spend5h")
-				_ = events.Record(ctx, s.Q, now, events.Event{
-					Type: "quota_limited", Target: key, OwnerID: ownerID,
-					Detail: map[string]any{"account": key, "resetsAt": now + spendWindow5hMs, "source": "spend5h"},
-				})
-			}
+
+	// Load current threshold T (re-anchors if day changed).
+	T := s.loadSpendThreshold(ctx, key, cfg, now)
+
+	// Check whether this account is currently limited.
+	isLimited := s.Store.IsLimited(key, now)
+
+	// If currently limited → skip re-firing. But check for threshold raise on recovery.
+	if isLimited {
+		return
+	}
+
+	// Not currently limited. Check if we need to raise the bar (just recovered).
+	if latV, ok := s.spendLimitedAt.Load(key); ok {
+		latT := latV.(float64)
+		if latT == T {
+			// Recovered from the latT cycle → raise T.
+			T = s.raiseSpendThreshold(ctx, key, cfg, T, now)
+			s.spendLimitedAt.Delete(key)
 		}
 	}
-	if cfg.SpendCap7dEnabled {
-		cap7 := cfg.SpendCap7dUsd.Resolve(key, salt7d)
-		if overCap(s.Store.SpendInWindow(key, now, spendWindow7dMs), cap7) {
-			fetchCtx7d, cancel7d := context.WithTimeout(context.Background(), 8*time.Second)
-			reason7d, recovMs7d := s.classifyQuotaLimit(fetchCtx7d, key, cfg, now)
-			cancel7d()
-			if reason7d != "" {
-				s.Store.SetLimitedReason(key, s.Base.MaxConcurrent, recovMs7d, reason7d)
-				s.persistLimit(ctx, key, recovMs7d, reason7d)
-				_ = events.Record(ctx, s.Q, now, events.Event{
-					Type: "quota_limited", Target: key, OwnerID: ownerID,
-					Detail: map[string]any{"account": key, "resetsAt": recovMs7d, "source": reason7d},
-				})
-			} else {
-				s.Store.SetLimited(key, s.Base.MaxConcurrent, map[string]int64{"all": now + spendWindow7dMs})
-				s.persistLimit(ctx, key, now+spendWindow7dMs, "spend7d")
-				_ = events.Record(ctx, s.Q, now, events.Event{
-					Type: "quota_limited", Target: key, OwnerID: ownerID,
-					Detail: map[string]any{"account": key, "resetsAt": now + spendWindow7dMs, "source": "spend7d"},
-				})
-			}
-		}
+
+	// Check today spend against current threshold.
+	todaySpend := s.Store.SpendToday(key, now)
+	if !overCap(todaySpend, T) {
+		return // under threshold — nothing to do
+	}
+
+	// todaySpend >= T: limit the account.
+	s.spendLimitedAt.Store(key, T) // remember which T triggered this
+
+	fetchCtx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	reason, recovMs := s.classifyQuotaLimit(fetchCtx, key, cfg, now)
+	cancel()
+	if reason != "" {
+		s.Store.SetLimitedReason(key, s.Base.MaxConcurrent, recovMs, reason)
+		s.persistLimit(ctx, key, recovMs, reason)
+		_ = events.Record(ctx, s.Q, now, events.Event{
+			Type: "quota_limited", Target: key, OwnerID: ownerID,
+			Detail: map[string]any{"account": key, "resetsAt": recovMs, "source": reason},
+		})
+	} else {
+		// Quota classify unavailable → fallback recovery: +5h.
+		fallbackRecov := now + spendFallbackRecoveryMs
+		s.Store.SetLimitedReason(key, s.Base.MaxConcurrent, fallbackRecov, "5h")
+		s.persistLimit(ctx, key, fallbackRecov, "5h")
+		_ = events.Record(ctx, s.Q, now, events.Event{
+			Type: "quota_limited", Target: key, OwnerID: ownerID,
+			Detail: map[string]any{"account": key, "resetsAt": fallbackRecov, "source": "spend5h_fallback"},
+		})
 	}
 }
 

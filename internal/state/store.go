@@ -358,6 +358,19 @@ func (s *Store) SpendInWindow(key string, now, windowMs int64) float64 {
 	return a.SpendInWindow(now, windowMs)
 }
 
+// SpendToday returns the cumulative spend for key for the current calendar day
+// (bucket = now/86400000). Returns 0 if no spend has been recorded today or the
+// account is unknown. Resets to 0 automatically when the day bucket changes.
+func (s *Store) SpendToday(key string, now int64) float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.accts[key]
+	if a == nil {
+		return 0
+	}
+	return a.SpendToday(now)
+}
+
 // SetLimited replaces an account's model-class rate-limit map (creating it if absent).
 // It clears LimitReason so a stale typed reason ("5h"/"7d") does not linger after a
 // reactive/spend limit replaces it. SetLimitedReason still sets it explicitly.

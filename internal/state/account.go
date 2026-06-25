@@ -38,6 +38,11 @@ type Account struct {
 	spendLog     []spendEntry     // 升序时间
 	reqLog       []int64          // timestamps (ms, ascending) of dispatched requests; for rate governor
 
+	// todayDay and todayTotal track cumulative spend for the current calendar day.
+	// Day bucket = nowMs / 86400000. Resets when the bucket changes.
+	todayDay   int64
+	todayTotal float64
+
 	// Session-sim burst state (only used when SessionSimEnabled=true).
 	burstCount int // requests served in the current burst
 
@@ -182,6 +187,7 @@ func (a *Account) CanDispatch(now int64, model string, cfg BreakerCfg) (ok bool,
 // AddSpend records a spend entry and prunes entries older than (now-pruneWindowMs).
 // The caller should pass the longest applicable window (e.g., 7d) to avoid pruning
 // data that is still needed for shorter windows.
+// It also maintains the today-bucket (todayDay/todayTotal) for SpendToday queries.
 func (a *Account) AddSpend(now int64, usd float64, pruneWindowMs int64) {
 	a.spendLog = append(a.spendLog, spendEntry{ts: now, usd: usd})
 	cut := now - pruneWindowMs
@@ -192,6 +198,23 @@ func (a *Account) AddSpend(now int64, usd float64, pruneWindowMs int64) {
 	if i > 0 {
 		a.spendLog = a.spendLog[i:]
 	}
+	// Update today-bucket (day = nowMs / 86400000).
+	day := now / 86_400_000
+	if day != a.todayDay {
+		a.todayDay = day
+		a.todayTotal = 0
+	}
+	a.todayTotal += usd
+}
+
+// SpendToday returns the cumulative spend for the current calendar day (bucket = now/86400000).
+// Returns 0 if no spend has been recorded today or if the bucket has rolled over.
+func (a *Account) SpendToday(now int64) float64 {
+	day := now / 86_400_000
+	if day != a.todayDay {
+		return 0
+	}
+	return a.todayTotal
 }
 
 // BurstTick increments the burst counter by one (called on each successful dispatch

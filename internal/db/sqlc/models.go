@@ -29,6 +29,13 @@ type AccountLimitState struct {
 	UpdatedAt    int64  `json:"updated_at"`
 }
 
+type AccountSpendThreshold struct {
+	Key       string  `json:"key"`
+	Threshold float64 `json:"threshold"`
+	Day       int64   `json:"day"`
+	UpdatedAt int64   `json:"updated_at"`
+}
+
 type AccountState struct {
 	NodeID        string `json:"node_id"`
 	ProfileID     string `json:"profile_id"`

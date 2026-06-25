@@ -146,14 +146,13 @@ type Config struct {
 	// (both node and fallback channel proxies). Default 300 (5 minutes).
 	UpstreamTimeoutSec int
 
-	// SpendCap5hEnabled enables 5-hour spend-cap enforcement. Default false.
+	// SpendCap5hEnabled enables cumulative today-spend vs raising-threshold enforcement.
+	// Default false. When true, each account tracks daily cumulative spend against a
+	// raising threshold T (initial draw from SpendCap5hUsd; raises by one draw per cycle).
 	SpendCap5hEnabled bool
-	// SpendCap5hUsd is the 5-hour spend cap range (per account). Default {Min: 100, Max: 200}.
+	// SpendCap5hUsd is the per-draw cap range (USD). Initial and each raised step are
+	// drawn from this range (per-account deterministic). Default {Min: 100, Max: 200}.
 	SpendCap5hUsd RangeF
-	// SpendCap7dEnabled enables 7-day spend-cap enforcement. Default false.
-	SpendCap7dEnabled bool
-	// SpendCap7dUsd is the 7-day spend cap range (per account). Default {Min: 500, Max: 1000}.
-	SpendCap7dUsd RangeF
 	// HumanDelayEnabled gates the human-delay feature. When false (default), the
 	// effective distribution is always "uniform" regardless of HumanDelayDist.
 	// When true, HumanDelayDist applies.
@@ -337,8 +336,6 @@ func Defaults() Config {
 		},
 		SpendCap5hEnabled: false,
 		SpendCap5hUsd:     RangeF{Min: 100, Max: 200},
-		SpendCap7dEnabled: false,
-		SpendCap7dUsd:     RangeF{Min: 500, Max: 1000},
 		HumanDelayEnabled: false,
 		HumanDelayDist:    "uniform",
 		HumanDelayP50Ms:   RangeI{Min: 2000, Max: 2000},
@@ -416,10 +413,8 @@ type Patch struct {
 	QuietHoursTZ              *string
 	QuotaLimitDefaultResetMs  *int64
 	UpstreamTimeoutSec        *int
-	SpendCap5hEnabled         *bool
-	SpendCap5hUsd             *RangeF
-	SpendCap7dEnabled         *bool
-	SpendCap7dUsd             *RangeF
+	SpendCap5hEnabled *bool
+	SpendCap5hUsd     *RangeF
 	HumanDelayEnabled         *bool
 	HumanDelayDist            *string
 	HumanDelayP50Ms           *RangeI
@@ -581,12 +576,6 @@ func apply(c *Config, p Patch) {
 	}
 	if p.SpendCap5hUsd != nil {
 		c.SpendCap5hUsd = *p.SpendCap5hUsd
-	}
-	if p.SpendCap7dEnabled != nil {
-		c.SpendCap7dEnabled = *p.SpendCap7dEnabled
-	}
-	if p.SpendCap7dUsd != nil {
-		c.SpendCap7dUsd = *p.SpendCap7dUsd
 	}
 	if p.HumanDelayEnabled != nil {
 		c.HumanDelayEnabled = *p.HumanDelayEnabled
@@ -755,11 +744,9 @@ func DryRun(base Config, patches ...Patch) (Config, []Diff) {
 	add("QuietHoursTZ", base.QuietHoursTZ, final.QuietHoursTZ)
 	add("QuotaLimitDefaultResetMs", base.QuotaLimitDefaultResetMs, final.QuotaLimitDefaultResetMs)
 	add("UpstreamTimeoutSec", base.UpstreamTimeoutSec, final.UpstreamTimeoutSec)
-	// Phase 2: SpendCap
+	// Phase 2: SpendCap (cumulative today-spend vs raising threshold)
 	add("SpendCap5hEnabled", base.SpendCap5hEnabled, final.SpendCap5hEnabled)
 	add("SpendCap5hUsd", base.SpendCap5hUsd, final.SpendCap5hUsd)
-	add("SpendCap7dEnabled", base.SpendCap7dEnabled, final.SpendCap7dEnabled)
-	add("SpendCap7dUsd", base.SpendCap7dUsd, final.SpendCap7dUsd)
 	// Phase 3: HumanDelay
 	add("HumanDelayEnabled", base.HumanDelayEnabled, final.HumanDelayEnabled)
 	add("HumanDelayDist", base.HumanDelayDist, final.HumanDelayDist)

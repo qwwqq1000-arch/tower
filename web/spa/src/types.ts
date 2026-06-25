@@ -173,11 +173,9 @@ export interface PolicyPatch {
   ElasticScaleDownUtil?: number;
   ElasticMaxReserve?: number;
   ElasticBaselineCount?: number;
-  // Spend-cap (5h / 7d rolling window)
+  // Spend-cap (cumulative today-spend vs raising threshold)
   SpendCap5hEnabled?: boolean;
   SpendCap5hUsd?: { Min: number; Max: number };
-  SpendCap7dEnabled?: boolean;
-  SpendCap7dUsd?: { Min: number; Max: number };
   // Phase 3: Cadence (拟人节奏)
   HumanDelayEnabled?: boolean;
   HumanDelayDist?: string;

@@ -230,13 +230,10 @@ export default function Policies() {
   const elasticScaleDownUtil = useField<number>(0.3);
   const elasticMaxReserve = useField<number>(1000);
   const elasticBaselineCount = useField<number>(1);
-  // SpendCap (5h / 7d rolling window)
+  // SpendCap (cumulative today-spend vs raising threshold)
   const spendCap5hEnabled = useField<boolean>(false);
   const spendCap5hMin = useField<number>(0);
   const spendCap5hMax = useField<number>(0);
-  const spendCap7dEnabled = useField<boolean>(false);
-  const spendCap7dMin = useField<number>(0);
-  const spendCap7dMax = useField<number>(0);
   // Phase 3: HumanDelay (人类延迟)
   const humanDelayEnabled = useField<boolean>(false);
   const humanDelayDist = useField<string>('uniform');
@@ -378,7 +375,7 @@ export default function Policies() {
       sessionErrorThreshold, sessionCooldownSec, responseExileEnabled, responseExileKeywords,
       quotaLimitKeywords, quotaLimitCodes,
       elasticEnabled, elasticScaleUpUtil, elasticScaleDownUtil, elasticMaxReserve, elasticBaselineCount,
-      spendCap5hEnabled, spendCap5hMin, spendCap5hMax, spendCap7dEnabled, spendCap7dMin, spendCap7dMax,
+      spendCap5hEnabled, spendCap5hMin, spendCap5hMax,
       humanDelayEnabled, humanDelayDist, humanDelayP50Min, humanDelayP50Max, humanDelayP95Min, humanDelayP95Max,
       rateGovEnabled, rateRPMMin, rateRPMMax, rateRPHMin, rateRPHMax, rateRPDMin, rateRPDMax, rateExceedAction,
       sessionSimEnabled, sessionBurstCountMin, sessionBurstCountMax, sessionPauseMsMin, sessionPauseMsMax,
@@ -443,11 +440,9 @@ export default function Policies() {
       setNum(elasticScaleDownUtil, p, 'ElasticScaleDownUtil');
       setNum(elasticMaxReserve, p, 'ElasticMaxReserve');
       setNum(elasticBaselineCount, p, 'ElasticBaselineCount');
-      // Phase 2: SpendCap
+      // Phase 2: SpendCap (cumulative today-spend vs raising threshold)
       setBool(spendCap5hEnabled, p, 'SpendCap5hEnabled');
       setRange(spendCap5hMin, spendCap5hMax, p, 'SpendCap5hUsd');
-      setBool(spendCap7dEnabled, p, 'SpendCap7dEnabled');
-      setRange(spendCap7dMin, spendCap7dMax, p, 'SpendCap7dUsd');
       // Phase 3: HumanDelay
       setBool(humanDelayEnabled, p, 'HumanDelayEnabled');
       setStr(humanDelayDist, p, 'HumanDelayDist');
@@ -581,11 +576,9 @@ export default function Policies() {
     if (elasticScaleDownUtil.enabled) patch.ElasticScaleDownUtil = elasticScaleDownUtil.value;
     if (elasticMaxReserve.enabled) patch.ElasticMaxReserve = elasticMaxReserve.value;
     if (elasticBaselineCount.enabled) patch.ElasticBaselineCount = elasticBaselineCount.value;
-    // SpendCap fields — 5h and 7d share the same enable checkbox approach
+    // SpendCap: cumulative today-spend vs raising threshold
     if (spendCap5hEnabled.enabled) patch.SpendCap5hEnabled = spendCap5hEnabled.value;
     if (spendCap5hMin.enabled) patch.SpendCap5hUsd = { Min: spendCap5hMin.value, Max: spendCap5hMax.value };
-    if (spendCap7dEnabled.enabled) patch.SpendCap7dEnabled = spendCap7dEnabled.value;
-    if (spendCap7dMin.enabled) patch.SpendCap7dUsd = { Min: spendCap7dMin.value, Max: spendCap7dMax.value };
     // Phase 3: HumanDelay
     if (humanDelayEnabled.enabled) patch.HumanDelayEnabled = humanDelayEnabled.value;
     if (humanDelayDist.enabled) patch.HumanDelayDist = humanDelayDist.value;
@@ -692,7 +685,7 @@ export default function Policies() {
     warmupHours, warmupMaxConcurrent, warmupBlockOpus,
     sessionErrorThreshold, sessionCooldownSec, responseExileEnabled, responseExileKeywords, quotaLimitKeywords, quotaLimitCodes,
     elasticEnabled, elasticScaleUpUtil, elasticScaleDownUtil, elasticMaxReserve, elasticBaselineCount,
-    spendCap5hEnabled, spendCap5hMin, spendCap5hMax, spendCap7dEnabled, spendCap7dMin, spendCap7dMax,
+    spendCap5hEnabled, spendCap5hMin, spendCap5hMax,
     // Phase 3
     humanDelayEnabled, humanDelayDist, humanDelayP50Min, humanDelayP95Min,
     rateGovEnabled, rateRPMMin, rateRPHMin, rateRPDMin, rateExceedAction,
@@ -724,7 +717,7 @@ export default function Policies() {
       warmupHours, warmupMaxConcurrent, warmupBlockOpus,
     ],
     limits: [
-      spendCap5hEnabled, spendCap5hMin, spendCap7dEnabled, spendCap7dMin,
+      spendCap5hEnabled, spendCap5hMin,
       quotaLimitKeywords, quotaLimitCodes,
       limitOpus48, limitOpus47, limitSonnet46, limitHaiku45,
     ],
@@ -995,31 +988,19 @@ export default function Policies() {
           <>
             {/* Group: 自保限额 (SpendCap) */}
             <div className="bg-surface border border-line rounded-xl px-4 py-2 mb-4">
-              <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2">自保限额（花费上限保护）</h2>
-              <p className="text-xs text-muted/70 -mt-1 mb-1">账户作用域下可按号设置不同的上限（随机种子区间）。0 = 不限。</p>
+              <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2">自保限额（今日累计花费 vs 递增阈值）</h2>
+              <p className="text-xs text-muted/70 -mt-1 mb-1">每号今日累计花费超过阈值 T 则触发限额；恢复后阈值自动提升（T → T+cap），当日清零后重新锚定 T₀。0 = 不限。</p>
 
-              {/* 5h window */}
-              <FieldRow label="SpendCap5hEnabled" desc="启用 5h 滚动窗口花费上限检测" enabled={spendCap5hEnabled.enabled} onToggle={spendCap5hEnabled.toggle} showOnlyConfigured={so}>
+              {/* 今日累计花费 vs 递增阈值 */}
+              <FieldRow label="SpendCap5hEnabled" desc="启用今日累计花费上限检测。每号初始阈值 T₀∈[min,max]；触发后按配额重置时间恢复，每次恢复阈值提升一个 cap 档（T → T+cap）" enabled={spendCap5hEnabled.enabled} onToggle={spendCap5hEnabled.toggle} showOnlyConfigured={so}>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" checked={spendCap5hEnabled.value} onChange={(e) => spendCap5hEnabled.set(e.target.checked)} disabled={!spendCap5hEnabled.enabled} className="accent-accent w-4 h-4" />
                   <span className="text-sm text-ink">{spendCap5hEnabled.value ? '已启用' : '已禁用'}</span>
                 </label>
               </FieldRow>
 
-              <FieldRow label="SpendCap5hUsd (min ~ max)" desc="5h 窗口花费上限随机区间 (USD)：每号启动时随机取 [min, max] 内的值" enabled={spendCap5hMin.enabled} onToggle={spendCap5hMin.toggle} showOnlyConfigured={so}>
+              <FieldRow label="SpendCap5hUsd (min ~ max)" desc="每档阈值区间 (USD)：每号/每轮随机抽取，初始 T₀，每轮触发后 T += 再抽一次。0 = 不限。" enabled={spendCap5hMin.enabled} onToggle={spendCap5hMin.toggle} showOnlyConfigured={so}>
                 <RangeInput min={spendCap5hMin.value} max={spendCap5hMax.value} onChangeMin={spendCap5hMin.set} onChangeMax={spendCap5hMax.set} disabled={!spendCap5hMin.enabled} step={0.01} minLabel="min $" maxLabel="max $" />
-              </FieldRow>
-
-              {/* 7d window */}
-              <FieldRow label="SpendCap7dEnabled" desc="启用 7d 滚动窗口花费上限检测" enabled={spendCap7dEnabled.enabled} onToggle={spendCap7dEnabled.toggle} showOnlyConfigured={so}>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={spendCap7dEnabled.value} onChange={(e) => spendCap7dEnabled.set(e.target.checked)} disabled={!spendCap7dEnabled.enabled} className="accent-accent w-4 h-4" />
-                  <span className="text-sm text-ink">{spendCap7dEnabled.value ? '已启用' : '已禁用'}</span>
-                </label>
-              </FieldRow>
-
-              <FieldRow label="SpendCap7dUsd (min ~ max)" desc="7d 窗口花费上限随机区间 (USD)：每号启动时随机取 [min, max] 内的值" enabled={spendCap7dMin.enabled} onToggle={spendCap7dMin.toggle} showOnlyConfigured={so}>
-                <RangeInput min={spendCap7dMin.value} max={spendCap7dMax.value} onChangeMin={spendCap7dMin.set} onChangeMax={spendCap7dMax.set} disabled={!spendCap7dMin.enabled} step={0.1} minLabel="min $" maxLabel="max $" />
               </FieldRow>
 
             </div>

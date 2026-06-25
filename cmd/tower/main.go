@@ -75,6 +75,12 @@ func main() {
 		}
 	}
 
+	// Restore persisted spend thresholds so the raising-threshold bar survives restart.
+	// todaySpend resets to 0 on restart (intended); threshold is restored so the account
+	// doesn't restart from T₀ mid-cycle (would re-fire too early if the bar was raised).
+	// On day change the threshold is re-anchored automatically in recordSpend.
+	svc.RestoreSpendThresholds(ctx)
+
 	// Periodically persist account_state so warm-start after restart has data.
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
