@@ -654,6 +654,13 @@ export default function Policies() {
         await putGlobalPolicy(buildPatch());
         setSaveMsg('全局策略已保存');
       }
+      // Re-fetch policy rows so switching scope reflects the saved state immediately.
+      const freshRows = await listPolicies();
+      setPolicyRows(freshRows.map((r) => ({
+        scopeType: r.scopeType,
+        scopeId: r.scopeId,
+        params: (r.params ?? {}) as Record<string, unknown>,
+      })));
       setTimeout(() => setSaveMsg(null), 3000);
     } catch (e) {
       setErr(e instanceof Error ? e.message : '保存失败');
@@ -671,6 +678,13 @@ export default function Policies() {
       await deleteAccountPolicy(selectedAccountId);
       const acct = accounts.find((a) => a.accountId === selectedAccountId);
       setSaveMsg(`账户策略已清除 (${acct?.email ?? selectedAccountId})`);
+      // Re-fetch policy rows so the deleted account override is removed from state.
+      const freshRows = await listPolicies();
+      setPolicyRows(freshRows.map((r) => ({
+        scopeType: r.scopeType,
+        scopeId: r.scopeId,
+        params: (r.params ?? {}) as Record<string, unknown>,
+      })));
       setTimeout(() => setSaveMsg(null), 3000);
     } catch (e) {
       setErr(e instanceof Error ? e.message : '清除失败');

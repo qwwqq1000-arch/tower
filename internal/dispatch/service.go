@@ -420,7 +420,7 @@ func (s *Service) recordSpend(ctx context.Context, ownerID, key string, cost flo
 	if cfg.SpendCap5hEnabled {
 		cap5 := cfg.SpendCap5hUsd.Resolve(key, salt5h)
 		if overCap(s.Store.SpendInWindow(key, now, cfg.SpendWindow5hMs), cap5) {
-			fetchCtx5h, cancel5h := context.WithTimeout(ctx, 8*time.Second)
+			fetchCtx5h, cancel5h := context.WithTimeout(context.Background(), 8*time.Second)
 			reason5h, recovMs5h := s.classifyQuotaLimit(fetchCtx5h, key, cfg, now)
 			cancel5h()
 			if reason5h != "" {
@@ -443,7 +443,7 @@ func (s *Service) recordSpend(ctx context.Context, ownerID, key string, cost flo
 	if cfg.SpendCap7dEnabled {
 		cap7 := cfg.SpendCap7dUsd.Resolve(key, salt7d)
 		if overCap(s.Store.SpendInWindow(key, now, cfg.SpendWindow7dMs), cap7) {
-			fetchCtx7d, cancel7d := context.WithTimeout(ctx, 8*time.Second)
+			fetchCtx7d, cancel7d := context.WithTimeout(context.Background(), 8*time.Second)
 			reason7d, recovMs7d := s.classifyQuotaLimit(fetchCtx7d, key, cfg, now)
 			cancel7d()
 			if reason7d != "" {
@@ -1603,6 +1603,10 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 	conv := session.ConvID(body)
 	nowMs := s.Now()
 
+	// Capture original body text BEFORE padding so keyword matching uses the unpadded body
+	// (matches the non-stream Dispatch path which uses bodyText before padBody).
+	bodyText := string(body)
+
 	// BodyPad (disguise-phase4): inject padding into metadata.pad before dispatch.
 	// Guard: only active when explicitly enabled AND BodyPadBytes resolves to > 0.
 	// Default BodyPadEnabled=false + BodyPadBytes={0,0} → this block never executes.
@@ -1613,16 +1617,27 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 	}
 
 	// TIER 1: keyword + model — highest priority, before affinity.
+	// Terminal: if a keyword or model rule matches, the request MUST go to channels.
+	// If channels are at capacity/error (committed=false), return 503 rather than
+	// falling through to node accounts — mirroring the non-stream Dispatch path.
 	if cfg.FallbackEnabled && len(channels) > 0 {
-		if fallback.MatchesKeyword(string(body), cfg.FallbackKeywords) {
+		if fallback.MatchesKeyword(bodyText, cfg.FallbackKeywords) {
 			if out, committed := s.streamChannels(ctx, w, channels, body, ownerID, model, "keyword", cfg); committed {
 				return out
 			}
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":"fallback channel at capacity"}`))
+			s.logErr(ctx, ownerID, model, 503, 0, "keyword_no_channel")
+			return Outcome{Status: 503, Target: "none"}
 		}
 		if fallback.MatchesModel(model, cfg.FallbackModels) {
 			if out, committed := s.streamChannels(ctx, w, channels, body, ownerID, model, "model", cfg); committed {
 				return out
 			}
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":"fallback channel at capacity"}`))
+			s.logErr(ctx, ownerID, model, 503, 0, "model_no_channel")
+			return Outcome{Status: 503, Target: "none"}
 		}
 	}
 
@@ -1649,7 +1664,7 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 			chPriceThresholdS = channels[0].PriceThreshold
 		}
 		softTrigS := fallback.DecideSoft(fallback.DecideInput{
-			Model: model, BodyText: string(body), ProbeText: probeText, EstCostUsd: est, PoolEmpty: len(order) == 0,
+			Model: model, BodyText: bodyText, ProbeText: probeText, EstCostUsd: est, PoolEmpty: len(order) == 0,
 			Keywords: cfg.FallbackKeywords, FallbackModels: cfg.FallbackModels,
 			PriceThresholdUsd: fallback.EffectivePriceThreshold(chPriceThresholdS, cfg.FallbackPriceThresholdUsd),
 			ProbeEnabled: cfg.FallbackProbeEnabled,
@@ -1699,11 +1714,11 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 				}
 			}
 		}
-		attempts++
 		ok, trial := s.Store.TryDispatchTrial(key, model, breaker)
 		if !ok {
 			continue
 		}
+		attempts++
 		out, committed, sseBody := s.streamOneWithBody(ctx, w, key, trial, resolver, breaker, body, cfg, ownerID, model, keyOwner, pinnedS)
 		if committed {
 			// Response exile: scan body for safety-refusal keywords.
@@ -2092,9 +2107,7 @@ func (s *Service) classifyQuotaLimit(ctx context.Context, key string, cfg policy
 		mgmtKey = s.Cipher.DecryptOrPlaintext(node.MgmtKey)
 	}
 	c := cpaclient.New(node.BaseUrl, mgmtKey)
-	fetchCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
-	defer cancel()
-	u, err := c.Usage(fetchCtx, profileID)
+	u, err := c.Usage(ctx, profileID)
 	if err != nil {
 		return "", 0
 	}

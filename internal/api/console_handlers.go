@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
@@ -337,7 +338,7 @@ func listLogsHandler(q *sqlc.Queries) http.HandlerFunc {
 			}
 		}
 		resolveTargetEmail := func(target string) string {
-			if target == "" || target == "node" || target == "none" {
+			if target == "" || target == "node" || target == "none" || strings.HasPrefix(target, "fallback:") {
 				return ""
 			}
 			// Try full key ("nodeId:profileId") first.

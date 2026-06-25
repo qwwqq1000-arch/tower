@@ -359,11 +359,14 @@ func (s *Store) SpendInWindow(key string, now, windowMs int64) float64 {
 }
 
 // SetLimited replaces an account's model-class rate-limit map (creating it if absent).
+// It clears LimitReason so a stale typed reason ("5h"/"7d") does not linger after a
+// reactive/spend limit replaces it. SetLimitedReason still sets it explicitly.
 func (s *Store) SetLimited(key string, capacity int, limits map[string]int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	a := s.ensureLocked(key, capacity)
 	a.LimitedUntil = limits
+	a.LimitReason = ""
 }
 
 // SetLimitedReason sets a typed quota limit (reason "5h"/"7d") with the real recovery
