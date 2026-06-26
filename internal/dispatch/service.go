@@ -594,7 +594,8 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 		BaseMs: cfg.CooldownBaseMs, MaxMs: cfg.CooldownMaxMs, Mult: cfg.CooldownMult,
 	}
 
-	order, allKeys, resolver, keyOwner, keyCfg := s.buildCandidates(ctx, ownerID, model, cfg)
+	longCtx := isLongContextRequest(model, body, cfg)
+	order, allKeys, resolver, keyOwner, keyCfg := s.buildCandidates(ctx, ownerID, model, cfg, longCtx)
 	channels := s.enabledChannels(ctx, ownerID, model)
 
 	// Envelope gate (CCEnvelopeEnabled): check whether the request carries the
@@ -952,7 +953,7 @@ func nodeCreatedMs(n sqlc.Node) int64 {
 	return 0
 }
 
-func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cfg policy.Config) (order []string, allKeys []string, resolver Resolver, keyOwner map[string]string, keyCfg map[string]policy.Config) {
+func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cfg policy.Config, longCtx bool) (order []string, allKeys []string, resolver Resolver, keyOwner map[string]string, keyCfg map[string]policy.Config) {
 	nodes, _ := s.Q.ListNodes(ctx)
 	// keyCfg holds the per-account resolved config for each dispatch key.
 	// Used by callers to populate per-key SerialWaitKeys/SerialWaitMs on the Orchestrator.
@@ -1035,14 +1036,19 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 			// rate-governor RPM/RPH/RPD, and model-pin.
 			acfg := s.resolveConfig(ctx, ownerID, na.AccountID)
 			// Determine warmup state for this account (per-account warmup window).
-			var onboardedAt int64
+			var onboardedAt, no1mUntil int64
 			if acc, aerr := s.Q.GetAccount(ctx, na.AccountID); aerr == nil {
 				onboardedAt = acc.OnboardedAt
+				no1mUntil = acc.No1MUntil
 			}
 			inWarmup := acfg.WarmupHours > 0 && onboardedAt > 0 &&
 				(nowMs-onboardedAt) < int64(acfg.WarmupHours)*3_600_000
 			// Skip opus candidates that are still warming up (if block is enabled).
 			if inWarmup && acfg.WarmupBlockOpus && isOpus {
+				continue
+			}
+			// #143: long-context request — skip accounts marked as not supporting 1M (mark not expired).
+			if longCtx && cfg.LongContextGateEnabled && no1mUntil > nowMs {
 				continue
 			}
 			key := n.ID + ":" + na.ProfileID
@@ -1979,7 +1985,8 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 		PersistStreak: cfg.BanPersistStreak, PermStreak: cfg.PermanentBanStreak,
 		BaseMs: cfg.CooldownBaseMs, MaxMs: cfg.CooldownMaxMs, Mult: cfg.CooldownMult,
 	}
-	order, allKeysS, resolver, keyOwner, keyCfgS := s.buildCandidates(ctx, ownerID, model, cfg)
+	longCtx := isLongContextRequest(model, body, cfg)
+	order, allKeysS, resolver, keyOwner, keyCfgS := s.buildCandidates(ctx, ownerID, model, cfg, longCtx)
 	channels := s.enabledChannels(ctx, ownerID, model)
 
 	// Envelope gate (CCEnvelopeEnabled): mirror of the Dispatch tier — identical logic.
