@@ -22,7 +22,7 @@ import (
 // cipher is the runtime master-key cipher (vault-crypto-1) made available to
 // handlers that encrypt secrets on write / decrypt on read (vault-crypto-2/3); it
 // may be nil in tests that do not exercise secret persistence.
-func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc.Queries, secureCookies bool, cipher *crypto.Cipher) http.Handler {
+func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc.Queries, secureCookies bool, cipher *crypto.Cipher, pushToken string) http.Handler {
 	mux := http.NewServeMux()
 	loginThrottle := auth.NewThrottle(5, time.Minute, 15*time.Minute)
 	// DB-backed permission loader for requirePerm (turns the seeded role
@@ -53,8 +53,10 @@ func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc
 	}
 	if q != nil {
 		mux.HandleFunc("POST /api/admin/nodes", requireAdmin(secret, q, createNodeHandler(q, cipher)))
-		mux.HandleFunc("GET /api/admin/nodes", requireAdmin(secret, q, listNodesHandler(q, cipher)))
+		mux.HandleFunc("GET /api/admin/nodes", requireAdmin(secret, q, listNodesHandler(q, cipher, svc)))
 		mux.HandleFunc("DELETE /api/admin/nodes/{id}", requireAdmin(secret, q, deleteNodeHandler(pool, q, svc)))
+		mux.HandleFunc("POST /api/admin/nodes/normalize-mgmt-key", requireSuperadmin(secret, q, normalizeMgmtKeyHandler(pool, q, cipher)))
+		mux.HandleFunc("POST /api/admin/nodes/push", requireAdminOrToken(secret, q, pushToken, pushNodeHandler(pool, q, cipher, svc)))
 		mux.HandleFunc("POST /api/admin/dispatch-keys", requireAdmin(secret, q, createDispatchKeyHandler(q)))
 		mux.HandleFunc("GET /api/admin/dispatch-keys", requireAdmin(secret, q, listDispatchKeysHandler(q)))
 		mux.HandleFunc("DELETE /api/admin/dispatch-keys/{id}", requireAdmin(secret, q, deleteDispatchKeyHandler(q)))

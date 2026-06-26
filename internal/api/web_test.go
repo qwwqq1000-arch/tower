@@ -8,7 +8,7 @@ import (
 )
 
 func TestServesIndex(t *testing.T) {
-	h := NewRouter(nil, "test-secret-padding-to-32-chars!", nil, nil, false, nil)
+	h := NewRouter(nil, "test-secret-padding-to-32-chars!", nil, nil, false, nil, "")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 	if rec.Code != http.StatusOK {

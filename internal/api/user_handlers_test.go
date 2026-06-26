@@ -25,7 +25,7 @@ func TestUserMgmtAndChangePassword(t *testing.T) {
 	_, _ = pool.Exec(ctx, "DELETE FROM tenants")
 
 	const secret = "test-secret-padding-to-32-chars!"
-	router := NewRouter(pool, secret, nil, q, false, nil)
+	router := NewRouter(pool, secret, nil, q, false, nil, "")
 	ck := adminCookie(t, ctx, q, secret) // sub=u_admin role=admin
 	do := func(m, p, b string, c *http.Cookie) *httptest.ResponseRecorder {
 		var r *http.Request

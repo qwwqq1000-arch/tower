@@ -54,6 +54,11 @@ func accountsRefreshQuotaHandler(q *sqlc.Queries, cipher *crypto.Cipher, rot *cp
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 			return
 		}
+		// NOTE: do NOT re-align spend-limit recovery times here. A spend-cap recovery is
+		// the real 5h reset CAPTURED ONCE at trip time; re-aligning on every refresh would
+		// chase the CURRENT 5h window, so right after a window rolls (util→0, next reset
+		// ~5h out) it would push an about-to-recover account back out to ~5h — the "一轮后
+		//又变 5h" sync loop. The captured reset auto-recovers the account when it passes.
 		writeJSON(w, http.StatusOK, map[string]any{"refreshed": n, "synced": true})
 	}
 }

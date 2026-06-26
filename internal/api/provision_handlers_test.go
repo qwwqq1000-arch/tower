@@ -34,7 +34,7 @@ func TestProvisionOwnerScope(t *testing.T) {
 	t.Cleanup(pool.Close)
 	q := sqlc.New(pool)
 	const secret = "test-secret-padding-to-32-chars!"
-	router := NewRouter(pool, secret, nil, q, false, nil)
+	router := NewRouter(pool, secret, nil, q, false, nil, "")
 
 	// Seed a non-superadmin caller and a different target owner.
 	caller := randHex("prov_caller_")
@@ -110,7 +110,7 @@ func TestProvisionSuperadminCanSetOwner(t *testing.T) {
 	t.Cleanup(pool.Close)
 	q := sqlc.New(pool)
 	const secret = "test-secret-padding-to-32-chars!"
-	router := NewRouter(pool, secret, nil, q, false, nil)
+	router := NewRouter(pool, secret, nil, q, false, nil, "")
 
 	targetOwner := randHex("prov_tgt_")
 	if _, err := q.CreateTenant(ctx, sqlc.CreateTenantParams{

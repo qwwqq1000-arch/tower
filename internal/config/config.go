@@ -15,6 +15,11 @@ type Config struct {
 	SessionSecret string // HMAC secret for session cookies
 	AdminUser     string
 	AdminPassword string
+	// PushToken is an optional fixed bearer token (TOWER_PUSH_TOKEN). When set, the
+	// node-push API (POST /api/admin/nodes/push) accepts it via the X-Admin-Token
+	// header (or Authorization: Bearer) for headless/automation calls, bypassing the
+	// session+CSRF requirement for that one endpoint. Empty = session-only (default).
+	PushToken string
 	// SecureCookies controls whether the tower_session cookie has the Secure
 	// flag set. Defaults to false so plain-HTTP deployments work out of the
 	// box. Set TOWER_SECURE_COOKIES=1 (or "true"/"yes") in TLS environments.
@@ -33,6 +38,7 @@ func Load() (Config, error) {
 		SessionSecret: os.Getenv("TOWER_SESSION_SECRET"),
 		AdminUser:     os.Getenv("TOWER_ADMIN_USER"),
 		AdminPassword: os.Getenv("TOWER_ADMIN_PASSWORD"),
+		PushToken:     os.Getenv("TOWER_PUSH_TOKEN"),
 		SecureCookies: parseBoolEnv("TOWER_SECURE_COOKIES"),
 	}
 	var errs []string

@@ -158,7 +158,7 @@ func TestNodeQuotaKindRouting(t *testing.T) {
 	}
 
 	const secret = "test-secret-padding-to-32-chars!"
-	router := NewRouter(pool, secret, nil, q, false, nil)
+	router := NewRouter(pool, secret, nil, q, false, nil, "")
 	ck := adminCookie(t, ctx, q, secret)
 	do := func(p string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest("GET", p, nil)
@@ -241,7 +241,7 @@ func TestNodeControl(t *testing.T) {
 	}
 
 	const secret = "test-secret-padding-to-32-chars!"
-	router := NewRouter(pool, secret, nil, q, false, nil)
+	router := NewRouter(pool, secret, nil, q, false, nil, "")
 	ck := adminCookie(t, ctx, q, secret)
 	do := func(m, p, body string) *httptest.ResponseRecorder {
 		var r *http.Request
@@ -377,7 +377,7 @@ func TestCpaControlGuard(t *testing.T) {
 	}
 
 	const secret = "test-secret-padding-to-32-chars!"
-	router := NewRouter(pool, secret, nil, q, false, nil)
+	router := NewRouter(pool, secret, nil, q, false, nil, "")
 	ck := adminCookie(t, ctx, q, secret)
 	do := func(m, path, body string) *httptest.ResponseRecorder {
 		var req *http.Request

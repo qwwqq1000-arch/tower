@@ -32,7 +32,7 @@ func TestAdminCreateFallbackLimit(t *testing.T) {
 	t.Cleanup(pool.Close)
 	q := sqlc.New(pool)
 	const secret = "test-secret-padding-to-32-chars!"
-	router := NewRouter(pool, secret, nil, q, false, nil)
+	router := NewRouter(pool, secret, nil, q, false, nil, "")
 
 	// Create a tenant with fallback_limit=1.
 	owner := randHex("owFL_")
@@ -101,7 +101,7 @@ func TestFallbackChannelCRUD(t *testing.T) {
 	defer pool.Close()
 	q := sqlc.New(pool)
 	const secret = "test-secret-padding-to-32-chars!"
-	router := NewRouter(pool, secret, nil, q, false, nil)
+	router := NewRouter(pool, secret, nil, q, false, nil, "")
 	ck := adminCookie(t, ctx, q, secret)
 	do := func(m, p, b string) *httptest.ResponseRecorder {
 		var r *http.Request

@@ -57,7 +57,7 @@ func TestOwnerFilterBeforeLimit(t *testing.T) {
 		}
 	})
 
-	router := NewRouter(pool, secret, nil, q, false, nil)
+	router := NewRouter(pool, secret, nil, q, false, nil, "")
 
 	// Seed limit rows for ownerA and limit+5 rows for ownerB (ownerB dominates).
 	// Use unique targets so we can count ownerA rows in the response.

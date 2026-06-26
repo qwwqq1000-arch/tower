@@ -59,7 +59,7 @@ func TestAdminNodesAndKeys(t *testing.T) {
 	q := sqlc.New(pool)
 
 	const secret = "test-secret-padding-to-32-chars!"
-	router := NewRouter(pool, secret, nil, q, false, nil)
+	router := NewRouter(pool, secret, nil, q, false, nil, "")
 	ck := adminCookie(t, ctx, q, secret)
 
 	// create node
@@ -128,7 +128,7 @@ func TestCreateNodeForceOwner(t *testing.T) {
 	q := sqlc.New(pool)
 
 	const secret = "test-secret-padding-to-32-chars!"
-	router := NewRouter(pool, secret, nil, q, false, nil)
+	router := NewRouter(pool, secret, nil, q, false, nil, "")
 
 	// Create an admin session with a specific owner ID
 	adminCookie := seedSessionCookie(t, ctx, q, secret, "u_admin1", "admin")
@@ -173,7 +173,7 @@ func TestDeleteNodeClearsAccountState(t *testing.T) {
 	q := sqlc.New(pool)
 
 	const secret = "test-secret-padding-to-32-chars!"
-	router := NewRouter(pool, secret, nil, q, false, nil)
+	router := NewRouter(pool, secret, nil, q, false, nil, "")
 	ck := adminCookie(t, ctx, q, secret)
 
 	// Create a node.

@@ -260,7 +260,7 @@ func main() {
 	// header-read phase (the slowloris vector); ReadTimeout bounds the full request.
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           api.NewRouter(pool, cfg.SessionSecret, svc, q, cfg.SecureCookies, cipher),
+		Handler:           api.NewRouter(pool, cfg.SessionSecret, svc, q, cfg.SecureCookies, cipher, cfg.PushToken),
 		ReadHeaderTimeout: 15 * time.Second,
 		ReadTimeout:       5 * time.Minute,
 		WriteTimeout:      0,

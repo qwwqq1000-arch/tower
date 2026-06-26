@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"net"
 	"net/http"
 	"strings"
@@ -107,6 +108,30 @@ func requireAdmin(secret string, q *sqlc.Queries, next http.HandlerFunc) http.Ha
 		}
 		next(w, r)
 	})
+}
+
+// requireAdminOrToken authorizes a route by EITHER a valid admin session (the normal
+// cookie + CSRF path via requireAdmin) OR a fixed bearer token presented in the
+// X-Admin-Token header (or Authorization: Bearer). The token path is for headless
+// automation: it carries no cookie, so there is no CSRF surface to guard. When token
+// is empty the feature is off and only the session path is accepted. Constant-time
+// compare avoids leaking the token via timing.
+func requireAdminOrToken(secret string, q *sqlc.Queries, token string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if token != "" {
+			got := r.Header.Get("X-Admin-Token")
+			if got == "" {
+				if a := r.Header.Get("Authorization"); strings.HasPrefix(a, "Bearer ") {
+					got = strings.TrimPrefix(a, "Bearer ")
+				}
+			}
+			if got != "" && subtle.ConstantTimeCompare([]byte(got), []byte(token)) == 1 {
+				next(w, r) // token-authorized: no session, no CSRF needed
+				return
+			}
+		}
+		requireAdmin(secret, q, next)(w, r)
+	}
 }
 
 // requireSuperadmin restricts a route to the superadmin role. Used for global,

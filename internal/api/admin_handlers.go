@@ -87,7 +87,7 @@ func createNodeHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc 
 	}
 }
 
-func listNodesHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
+func listNodesHandler(q *sqlc.Queries, cipher *crypto.Cipher, svc *dispatch.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		owner, all := scope(r)
 		allRows, err := q.ListNodes(r.Context())
@@ -148,6 +148,38 @@ func listNodesHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 		}
 		wg.Wait()
 
+		// Per-node ban overlay (节点封号): a node is "banned" when it has accounts in
+		// the dispatch store and ALL of them are banned/permanent — a node with any
+		// still-working account keeps serving, so it stays 正常. Store keys are
+		// "<nodeID>:<profile>", so the node id is the prefix before the first colon.
+		banned := make([]bool, len(rows))
+		if svc != nil && svc.Store != nil {
+			type cnt struct{ total, ban int }
+			counts := make(map[string]*cnt, len(rows))
+			idxOf := make(map[string]int, len(rows))
+			for i, n := range rows {
+				counts[n.ID] = &cnt{}
+				idxOf[n.ID] = i
+			}
+			for _, s := range svc.Store.Snapshot(time.Now().UnixMilli()) {
+				ci := strings.IndexByte(s.Key, ':')
+				if ci <= 0 {
+					continue
+				}
+				if c, ok := counts[s.Key[:ci]]; ok {
+					c.total++
+					if s.Status == "banned" || s.Status == "permanent" {
+						c.ban++
+					}
+				}
+			}
+			for id, c := range counts {
+				if c.total > 0 && c.ban == c.total {
+					banned[idxOf[id]] = true
+				}
+			}
+		}
+
 		out := make([]map[string]any, 0, len(rows))
 		for i, n := range rows {
 			var createdAtMs int64
@@ -167,9 +199,74 @@ func listNodesHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 				"loggedIn":    results[i].loggedIn,
 				"email":       results[i].email,
 				"liveVersion": results[i].liveVersion,
+				"banned":      banned[i],
 			})
 		}
 		writeJSON(w, http.StatusOK, out)
+	}
+}
+
+// normalizeMgmtKeyHandler sets every CPA node's mgmt_key to the given value (stored
+// encrypted), updating ONLY the nodes whose current (decrypted) key differs. One-shot
+// maintenance to unify the CPA management key across the fleet. Returns which changed.
+func normalizeMgmtKeyHandler(pool *pgxpool.Pool, q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
+	// fingerprint masks a key for display so a typo is recognizable without
+	// leaking the full secret: first 8 + last 4 chars + length.
+	fingerprint := func(s string) string {
+		if s == "" {
+			return "(empty)"
+		}
+		if len(s) <= 12 {
+			return fmt.Sprintf("len=%d", len(s))
+		}
+		return fmt.Sprintf("%s…%s len=%d", s[:8], s[len(s)-4:], len(s))
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		var b struct {
+			Key    string `json:"key"`
+			DryRun bool   `json:"dryRun"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&b); err != nil || strings.TrimSpace(b.Key) == "" {
+			writeJSON(w, 400, map[string]string{"error": "key required"})
+			return
+		}
+		key := strings.TrimSpace(b.Key)
+		nodes, err := q.ListNodes(r.Context())
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		changed := []string{}
+		mismatched := []map[string]string{}
+		alreadyOk := 0
+		for _, n := range nodes {
+			if !strings.EqualFold(n.Kind, "cpa") {
+				continue
+			}
+			cur := cipher.DecryptOrPlaintext(n.MgmtKey)
+			if cur == key {
+				alreadyOk++
+				continue
+			}
+			mismatched = append(mismatched, map[string]string{
+				"id": n.ID, "name": n.Name, "current": fingerprint(cur),
+			})
+			if b.DryRun {
+				continue
+			}
+			if _, err := pool.Exec(r.Context(), "UPDATE nodes SET mgmt_key=$2 WHERE id=$1", n.ID, cipher.EncryptStr(key)); err != nil {
+				continue
+			}
+			changed = append(changed, n.Name)
+		}
+		if !b.DryRun {
+			recordAudit(r, q, "node.normalize_mgmt_key", "global", nil, map[string]any{"changed": changed})
+		}
+		writeJSON(w, 200, map[string]any{
+			"dryRun": b.DryRun, "target": fingerprint(key),
+			"alreadyOk": alreadyOk, "mismatched": mismatched,
+			"changed": len(changed), "changedNodes": changed,
+		})
 	}
 }
 

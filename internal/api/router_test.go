@@ -32,7 +32,7 @@ func TestServerConstructsWithCipher(t *testing.T) {
 	if svc.Cipher != cipher {
 		t.Fatalf("dispatch service did not retain the cipher")
 	}
-	h := NewRouter(nil, "test-secret-padding-to-32-chars!", svc, nil, false, cipher)
+	h := NewRouter(nil, "test-secret-padding-to-32-chars!", svc, nil, false, cipher, "")
 	if h == nil {
 		t.Fatalf("NewRouter returned nil with a cipher")
 	}
@@ -47,7 +47,7 @@ func TestServerConstructsWithCipher(t *testing.T) {
 
 func TestHealthz_OKWithoutDB(t *testing.T) {
 	// nil pool → handler must still respond (degraded), never panic.
-	h := NewRouter(nil, "test-secret-padding-to-32-chars!", nil, nil, false, nil)
+	h := NewRouter(nil, "test-secret-padding-to-32-chars!", nil, nil, false, nil, "")
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -73,7 +73,7 @@ func TestHealthz_OKWithPool(t *testing.T) {
 	}
 	defer pool.Close()
 
-	h := NewRouter(pool, "test-secret-padding-to-32-chars!", nil, nil, false, nil)
+	h := NewRouter(pool, "test-secret-padding-to-32-chars!", nil, nil, false, nil, "")
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
