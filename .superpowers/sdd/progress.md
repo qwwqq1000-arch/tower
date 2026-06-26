@@ -1,25 +1,46 @@
-# SDD Progress Ledger — Tower 审计修复 (2026-06-23)
+# SDD Progress Ledger — #137 号库归属 dropdown + #2 三件套 envelope (2026-06-26)
 
-Plan: docs/superpowers/plans/2026-06-23-tower-audit-fixes.md
-Branch: fix/audit-2026-06-23
-Base commit: 8ecf6f9 (docs: audit report + plan)
+Plans: docs/superpowers/plans/2026-06-26-node-account-owner-dropdown.md (#137, 5 tasks)
+       docs/superpowers/plans/2026-06-26-cc-envelope-strategy.md (#2, 6 tasks)
+Branch: feat/anticontrol-phase1
+Base commit: ed6ea17 (docs: implementation plans)
+Mode: subagent-driven, autonomous continuous (user authorized "不用问我"), implement→review→fix per task.
+Recovery: each task = git commit(s). Trust git log + this ledger after compaction.
+Pre-flight: clean. Note: #2 Task 4 TestBothTiersConsultEnvelope is a source-grep tier-drift guard (legit, used elsewhere) — kept.
 
-Execution: background orchestration workflow (subagent-driven; implement→review→fix per task, sequential).
-Recovery: each completed task is one git commit. Trust `git log` + this ledger over memory after compaction.
+## #137
+(populated as tasks complete)
 
-Decisions confirmed by user (default = WIRE):
-- Phase 6 secrets: WIRE the AES Cipher (encrypt node/channel/oauth secrets at rest).
-- Phase 4.1 per-tenant policy: WIRE the three-layer resolution.
+## #2
+(populated as tasks complete)
+Task 1: complete (commit b362962, review clean — spec ✅ + quality approved). nodes.account_owner_id column + sqlc Node.AccountOwnerID + SetNodeAccountOwner.
+Task 2: complete (commit c84dfae, review clean — spec ✅ + quality approved). discovery Sync uses AccountOwnerID then OwnerID fallback + test.
+Task 3: complete (commit a3308d8, review clean — spec ✅ + quality approved). createNodeHandler resolves accountOwnerId (default test). MINOR(final-review): default-tenant fallback path has no automated test.
+Task 4: complete (commit 05e5404, controller-reviewed clean — diff in context: overwrite UPDATE +account_owner_id=$7=tenant.ID args correct, CreateNode +AccountOwnerID, inline UPDATE accounts removed). spec ✅.
+Task 5: complete (commit 6c94cb0, review clean — spec ✅ + quality approved). frontend 号库归属 dropdown, default test, SPA builds 0 errors. MINOR(final): after submit the test default not re-applied on reset (in-spec).
 
-47 task-units across 11 phases. Status tracked by git commits + executor workflow result.
+#137 DONE: 5/5 tasks complete, commits b362962..6c94cb0, all reviews clean.
 
-(populated as the executor workflow reports back)
-(46/47 COMPLETE, 6.3 NEEDS_ATTENTION; 63 commits 8ecf6f9..HEAD; final review ready-to-merge, 0 mustFix, 5 shouldFix)
+## #2
+#2 Task 1: complete (commit 502a164 + fix 3d52733, review clean — spec ✅ all 9 fields in all 5 places; quality: removed YAGNI exported Apply wrapper, test calls apply() in-package). NOTE plan said diff() but real fn is DryRun() — implementer used correct one.
+#2 Task 2: complete (commit 54b1bcb, review clean — spec ✅ + quality approved). missingEnvelopePieces detection. MINOR(final-review): array-of-blocks system shape handled in code but not unit-tested (only string form tested) — spec says handle BOTH shapes; add an array test case at final review.
+#2 Task 3: complete (commit 5366d80, review clean — spec ✅ + quality approved). ctx plumbing WithRequestQuery/withEnvelopeInject + handler wiring.
+#2 Task 4: complete (commit 4b9c59d, review clean — spec ✅ PASS + quality approved). envelope gate in Dispatch(602)+DispatchStream(1986), fully behind CCEnvelopeEnabled, fallback reuses viaChannels/streamChannels reason="envelope", ctx propagation verified. MINOR(cosmetic): DispatchStream uses exReason var vs inline literal.
+#2 Task 5: complete (commit 4985e0b, review clean — spec ✅ PASS + quality approved). injectEnvelope into NodeProxy.Send+OpenStream (not ChannelProxy), ?beta=true URL node-only, headers override, body+ContentLength rebuilt, no-op when empty, EnvVals at both sites. MINOR(final-review): change-detection guard does full body string compare on hot path — could reassign unconditionally.
+#2 Task 6: complete (commit 721ffc0, review clean — spec ✅ + quality approved). Policies "Claude Code 三件套" group: 9 fields wired into PolicyPatch(types.ts)+hooks+allFields+hydrateFrom+buildPatch+anyEnabled+catFields.cadence; render GroupMaster+3 piece toggles+select(走保底/补全→fallback/complete)+4 text inputs, all showOnlyConfigured={so}. Go names byte-for-byte. SPA builds 0 errors. No findings.
 
-FINAL: 47/47 fixed (6.3 resolved as pointer-only + locked by test). +6 final-review shouldFix items fixed. build/vet/test/npm green, no sqlc drift. HEAD 5e3e294. Total 69 commits. Branch ready for review/deploy (NOT pushed).
+#2 DONE: 6/6 tasks complete, commits 502a164..721ffc0, all reviews clean.
 
-REVIEW (w3pcjf9jb): 9-lane independent pre-deploy review. 21 confirmed findings (3 high deploy-blockers, all REGRESSIONS from the 6 finishing fixes; 2 medium regressions; rest low/info). ALL blockers + both medium regressions + money-safety polish FIXED in commits 7c9bc24/52cc8e0/9471f93/ec3f26b. Re-verified build/vet/test/npm green. HEAD ec3f26b, 74 commits. VERDICT: GO (0 remaining deploy-blockers). Deferred: ~8 low/info non-blockers (logout-CSRF, streamOne dead code, fallback-stream idle timeout, test-coverage gaps).
+## Final whole-branch review — DONE (opus, review-ed6ea17..721ffc0.diff, 12 commits 24 files)
+Verdict: merge after fixing I-1. All invariants verified: default-off neutrality, tier mirroring (Dispatch+DispatchStream), injection target isolation (NodeProxy only, not ChannelProxy), owner semantics, sqlc Scan/column alignment, nil-safety/concurrency. build+vet+test green.
+ - I-1 (Important): array-form `system` data-loss in injectEnvelope complete path — FIXED commit db67cda (unshift text block preserving content) + 4 array/string injection unit tests. go build/vet/test ./internal/dispatch all pass. Covers batched MINOR #3 too.
+ - Deferred Minors (reviewer-approved defer): #1 default-tenant test (optional), #2 form-reset default (in-spec cosmetic), #4 exReason var (non-issue), #5 body string-compare (negligible, only on complete path).
 
-CLEANUP: remaining low/info addressed (commits 8758153/3993452/6c11cc8): logout CSRF, fallback-stream idle timeout, dead code (streamOne, ssh_test loop, PersistAll LimitedUntil), single ban ts, threshold=1.0 test. Deliberately LEFT (noted, non-blocking): double requireSession on 4 superadmin routes (low-urgency, refactor risk), single-channel 503-when-full (pre-existing design), RecoverCountdown per-account intervals (fine <20). HEAD 6c11cc8, 78 commits. Branch GREEN, GO — awaiting user deploy decision (not pushed/deployed).
+Pre-deploy verify @db67cda: go build ./... OK, go vet ./... clean, go test policy/dispatch/cpaclient/api/db all ok. SPA build 0 errors.
 
-DEPLOYED 2026-06-23 03:35 UTC to 23.237.28.170:8088 (/home/ubuntu/tower, docker compose up -d --build). Required a Dockerfile fix (alpine→glibc node:26 for vite8/rolldown). Migrations applied (goose 31). Verified live: 117 rpm ~96.6% ok, money rounded (63.35), old sessions valid (epoch back-compat), decrypt-shim OK on existing plaintext secrets, no panics. Rollback: image tower-tower:rollback-pre-audit (9b383015) + DB backup tower-db-backup-pre-audit-20260623-032857.sql.gz on server. Node pool thin (1 usable account; others banned/disabled = operational).
+## Original batched MINOR findings (handed to final reviewer):
+ - #137 T3: createNode default-tenant fallback path has no automated test.
+ - #137 T5: after submit the test default not re-applied on form reset (in-spec).
+ - #2 T2: array-of-blocks `system` shape handled in code but only string form unit-tested — spec says handle BOTH; add an array test case.
+ - #2 T4: DispatchStream uses exReason var vs inline literal (cosmetic).
+ - #2 T5: change-detection guard does full body string compare on hot path — could reassign unconditionally.
