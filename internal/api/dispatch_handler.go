@@ -70,6 +70,7 @@ func dispatchMessagesHandler(svc *dispatch.Service, q *sqlc.Queries) http.Handle
 		// Generate the request id here (not inside Dispatch) so we can record the
 		// response detail after dispatch returns (logs-detail-2).
 		ctx := dispatch.WithClientHeaders(r.Context(), r.Header.Clone())
+		ctx = dispatch.WithRequestQuery(ctx, r.URL.Query())
 		ctx = dispatch.WithRequestID(ctx, dispatch.NewRequestID())
 		if parsed.Stream {
 			out := svc.DispatchStream(ctx, w, ownerID, parsed.Model, body)

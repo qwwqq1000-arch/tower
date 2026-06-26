@@ -1,7 +1,9 @@
 package dispatch
 
 import (
+	"context"
 	"net/http"
+	"net/url"
 	"testing"
 )
 
@@ -39,5 +41,19 @@ func TestCopyForwardableHeaders(t *testing.T) {
 		if dst.Get(k) != "" {
 			t.Fatalf("%s must NOT be copied", k)
 		}
+	}
+}
+
+func TestRequestQueryAndInjectCtx(t *testing.T) {
+	ctx := WithRequestQuery(context.Background(), url.Values{"beta": {"true"}})
+	if requestQueryFrom(ctx).Get("beta") != "true" {
+		t.Fatal("query round-trip failed")
+	}
+	ctx = withEnvelopeInject(ctx, []EnvelopePiece{PieceBetaParam})
+	if got := envelopeInjectFrom(ctx); len(got) != 1 || got[0] != PieceBetaParam {
+		t.Fatalf("inject round-trip failed: %v", got)
+	}
+	if envelopeInjectFrom(context.Background()) != nil {
+		t.Fatal("absent inject should be nil")
 	}
 }

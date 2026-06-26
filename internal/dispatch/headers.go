@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -72,6 +73,37 @@ func NewRequestID() string {
 		return ""
 	}
 	return hex.EncodeToString(b[:])
+}
+
+// requestQueryKeyT is the context key for the original downstream request URL query.
+type requestQueryKeyT struct{}
+
+// WithRequestQuery stashes the original downstream request URL query on ctx so
+// the envelope strategy can inspect query parameters (e.g. ?beta=true) without
+// re-parsing the URL deep inside dispatch.
+func WithRequestQuery(ctx context.Context, q url.Values) context.Context {
+	return context.WithValue(ctx, requestQueryKeyT{}, q)
+}
+
+// requestQueryFrom returns the query stashed by WithRequestQuery, or nil.
+func requestQueryFrom(ctx context.Context) url.Values {
+	q, _ := ctx.Value(requestQueryKeyT{}).(url.Values)
+	return q
+}
+
+// envelopeInjectKeyT is the context key for the set of EnvelopePiece values
+// that the dispatch layer should inject into the outbound request envelope.
+type envelopeInjectKeyT struct{}
+
+// withEnvelopeInject stashes the list of EnvelopePiece values to inject on ctx.
+func withEnvelopeInject(ctx context.Context, pieces []EnvelopePiece) context.Context {
+	return context.WithValue(ctx, envelopeInjectKeyT{}, pieces)
+}
+
+// envelopeInjectFrom returns the pieces stashed by withEnvelopeInject, or nil.
+func envelopeInjectFrom(ctx context.Context) []EnvelopePiece {
+	p, _ := ctx.Value(envelopeInjectKeyT{}).([]EnvelopePiece)
+	return p
 }
 
 var noCopy = map[string]bool{
