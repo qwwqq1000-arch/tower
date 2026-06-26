@@ -351,6 +351,7 @@ export interface AccountRow {
   ownerId?: string;          // tenant owner id ("" = shared)
   subscriptionType?: string; // e.g. "claude_max_5x"
   cpaQuota?: CpaQuota | null; // CPA account rate-limit usage (5h/7d/7d-sonnet)
+  no1mUntil?: number;         // unix ms — 不支持1M until this timestamp (0 = unrestricted)
 }
 
 export interface CpaQuota {

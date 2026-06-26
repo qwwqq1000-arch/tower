@@ -323,6 +323,7 @@ func listAccountsHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFun
 				"subscriptionType": a.SubscriptionType,
 				"ownerId":          a.AcctOwnerID,
 				"cpaQuota":         quota,
+				"no1mUntil":        a.No1MUntil,
 			})
 		}
 		writeJSON(w, 200, out)
@@ -456,6 +457,22 @@ func setAccountOwnerHandler(q *sqlc.Queries) http.HandlerFunc {
 			return
 		}
 		recordAudit(r, q, "account.owner", "account:"+accountID, nil, map[string]any{"ownerId": body.OwnerID})
+		writeJSON(w, 200, map[string]string{"ok": "true"})
+	}
+}
+
+func clearNo1MHandler(q *sqlc.Queries) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("accountId")
+		if id == "" {
+			writeJSON(w, 400, map[string]string{"error": "account id required"})
+			return
+		}
+		if err := q.ClearAccountNo1M(r.Context(), id); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		recordAudit(r, q, "account.clear_no1m", "account:"+id, nil, nil)
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }

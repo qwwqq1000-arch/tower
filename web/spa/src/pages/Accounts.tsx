@@ -12,6 +12,7 @@ import {
   setAccountExpiry,
   setAccountOwner,
   recoverAccount,
+  clearNo1M,
   refreshAllQuota,
   refreshAccountQuota,
   listUsers,
@@ -88,6 +89,15 @@ function LimitedBadge({ until }: { until?: number }) {
   return (
     <span className={`inline-flex items-center mt-1 px-1.5 py-0.5 rounded border text-[10px] font-mono ${statusColor('limited')}`}>
       限额{cd ? `(${cd})` : '(配额)'}
+    </span>
+  );
+}
+
+// No1MBadge: shows "不支持1M" for accounts where no_1m_until > now
+function No1MBadge() {
+  return (
+    <span className="inline-flex items-center mt-1 px-1.5 py-0.5 rounded border text-[10px] font-mono bg-amber-500/20 text-amber-400 border-amber-500/40">
+      不支持1M
     </span>
   );
 }
@@ -516,6 +526,18 @@ function AccountTableRow({
     }
   }
 
+  const no1mActive = !!account.no1mUntil && account.no1mUntil > Date.now();
+  const [clearingNo1M, setClearingNo1M] = useState(false);
+  async function handleClearNo1M() {
+    setClearingNo1M(true);
+    try {
+      await clearNo1M(account.accountId);
+      onRefresh();
+    } finally {
+      setClearingNo1M(false);
+    }
+  }
+
   const [refreshingQuota, setRefreshingQuota] = useState(false);
   async function handleRefreshQuota() {
     setRefreshingQuota(true);
@@ -544,6 +566,7 @@ function AccountTableRow({
               {statusLabel(account.status)}
             </span>
           )}
+          {no1mActive && <No1MBadge />}
         </td>
         <td className="px-4 py-3 text-xs text-muted">{account.subscriptionType || '—'}</td>
         <td className="px-4 py-3">
@@ -592,6 +615,16 @@ function AccountTableRow({
                 title="清除封禁/冷却/永久封禁状态并重新启用"
               >
                 {recovering ? '恢复中…' : '恢复'}
+              </button>
+            )}
+            {no1mActive && (
+              <button
+                onClick={() => { void handleClearNo1M(); }}
+                disabled={clearingNo1M}
+                className="text-xs text-amber-400 hover:text-amber-300 disabled:opacity-50 transition"
+                title="清除「不支持1M」标记，允许该号重新承接长上下文请求"
+              >
+                {clearingNo1M ? '清除中…' : '清除'}
               </button>
             )}
             <button
