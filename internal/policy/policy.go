@@ -110,6 +110,15 @@ type Config struct {
 	// Default 120.
 	StreamIdleTimeoutSec int
 
+	// 1M long-context gating (#143): route long-context requests only to accounts
+	// that support extra-usage billing; reactively mark accounts that 400.
+	LongContextGateEnabled    bool
+	LongContextTokenThreshold int      // est tokens (len(body)/4) above which a request is "long"; 0 = don't judge by tokens
+	LongContextModelMarkers   []string // model-string substrings (lower) that mark a request long-context
+	ExtraUsageKeywords        []string // body substrings identifying the extra-usage 400
+	ExtraUsageStatusCodes     []int    // status codes on which to scan for ExtraUsageKeywords
+	No1MRecoveryMs            int64    // how long a no-1M mark lasts before re-probe; <=0 = permanent
+
 	// QuotaLimitKeywords are case-insensitive substrings that, when found in an ERROR
 	// response from an account, mark it quota-limited (rotated out until the parsed
 	// reset, or a 1h default). This is error + keyword — a bare error or a transient
@@ -342,6 +351,12 @@ func Defaults() Config {
 		ResponseExileEnabled:      false,
 		ResponseExileKeywords:     []string{"usage policy", "i can't help with that request"},
 		StreamIdleTimeoutSec:      120,
+		LongContextGateEnabled:    false,
+		LongContextTokenThreshold: 200000,
+		LongContextModelMarkers:   []string{"1m"},
+		ExtraUsageKeywords:        []string{"draw from your external", "extra usage"},
+		ExtraUsageStatusCodes:     []int{400},
+		No1MRecoveryMs:            86400000,
 		// Precise limit phrases — NOT the bare "rate_limit_error" (transient). Covers
 		// the subscription wording ("hit your limit" / "usage limit") AND CPA's
 		// ("All credentials for model … are cooling down via provider claude").
@@ -447,6 +462,12 @@ type Patch struct {
 	ResponseExileEnabled      *bool
 	ResponseExileKeywords     *[]string
 	StreamIdleTimeoutSec      *int
+	LongContextGateEnabled    *bool
+	LongContextTokenThreshold *int
+	LongContextModelMarkers   *[]string
+	ExtraUsageKeywords        *[]string
+	ExtraUsageStatusCodes     *[]int
+	No1MRecoveryMs            *int64
 	QuotaLimitKeywords        *[]string
 	QuotaLimitStatusCodes     *[]int
 	ModelMaxTokens            *map[string]int
@@ -604,6 +625,24 @@ func apply(c *Config, p Patch) {
 	}
 	if p.StreamIdleTimeoutSec != nil {
 		c.StreamIdleTimeoutSec = *p.StreamIdleTimeoutSec
+	}
+	if p.LongContextGateEnabled != nil {
+		c.LongContextGateEnabled = *p.LongContextGateEnabled
+	}
+	if p.LongContextTokenThreshold != nil {
+		c.LongContextTokenThreshold = *p.LongContextTokenThreshold
+	}
+	if p.LongContextModelMarkers != nil {
+		c.LongContextModelMarkers = *p.LongContextModelMarkers
+	}
+	if p.ExtraUsageKeywords != nil {
+		c.ExtraUsageKeywords = *p.ExtraUsageKeywords
+	}
+	if p.ExtraUsageStatusCodes != nil {
+		c.ExtraUsageStatusCodes = *p.ExtraUsageStatusCodes
+	}
+	if p.No1MRecoveryMs != nil {
+		c.No1MRecoveryMs = *p.No1MRecoveryMs
 	}
 	if p.QuotaLimitKeywords != nil {
 		c.QuotaLimitKeywords = *p.QuotaLimitKeywords
@@ -871,6 +910,13 @@ func DryRun(base Config, patches ...Patch) (Config, []Diff) {
 	add("TerminalErrorKeywords", base.TerminalErrorKeywords, final.TerminalErrorKeywords)
 	add("RetryDelayMs", base.RetryDelayMs, final.RetryDelayMs)
 	add("RetrySameAccountMax", base.RetrySameAccountMax, final.RetrySameAccountMax)
+	// #143: 1M long-context gating
+	add("LongContextGateEnabled", base.LongContextGateEnabled, final.LongContextGateEnabled)
+	add("LongContextTokenThreshold", base.LongContextTokenThreshold, final.LongContextTokenThreshold)
+	add("LongContextModelMarkers", base.LongContextModelMarkers, final.LongContextModelMarkers)
+	add("ExtraUsageKeywords", base.ExtraUsageKeywords, final.ExtraUsageKeywords)
+	add("ExtraUsageStatusCodes", base.ExtraUsageStatusCodes, final.ExtraUsageStatusCodes)
+	add("No1MRecoveryMs", base.No1MRecoveryMs, final.No1MRecoveryMs)
 	// Phase 5: reactive quota
 	add("QuotaFullThreshold", base.QuotaFullThreshold, final.QuotaFullThreshold)
 	// Sub-project #2: CC envelope enforcement

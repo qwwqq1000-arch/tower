@@ -223,6 +223,42 @@ func TestCCEnvelopeDefaultsAndApply(t *testing.T) {
 	}
 }
 
+func TestApplyLongContextFields(t *testing.T) {
+	c := Defaults()
+	if c.LongContextGateEnabled {
+		t.Fatal("default LongContextGateEnabled must be false (behavior-neutral)")
+	}
+	if c.LongContextTokenThreshold != 200000 {
+		t.Fatalf("default threshold=%d want 200000", c.LongContextTokenThreshold)
+	}
+	if c.No1MRecoveryMs != 86400000 {
+		t.Fatalf("default recovery=%d want 86400000", c.No1MRecoveryMs)
+	}
+	en := true
+	thr := 150000
+	rec := int64(3600000)
+	mk := []string{"1m", "[1m]"}
+	kw := []string{"extra usage"}
+	sc := []int{400, 402}
+	apply(&c, Patch{
+		LongContextGateEnabled:    &en,
+		LongContextTokenThreshold: &thr,
+		LongContextModelMarkers:   &mk,
+		ExtraUsageKeywords:        &kw,
+		ExtraUsageStatusCodes:     &sc,
+		No1MRecoveryMs:            &rec,
+	})
+	if !c.LongContextGateEnabled || c.LongContextTokenThreshold != 150000 || c.No1MRecoveryMs != 3600000 {
+		t.Fatalf("apply scalar mismatch: %+v", c)
+	}
+	if len(c.LongContextModelMarkers) != 2 || c.LongContextModelMarkers[0] != "1m" {
+		t.Fatalf("markers mismatch: %v", c.LongContextModelMarkers)
+	}
+	if len(c.ExtraUsageStatusCodes) != 2 || c.ExtraUsageStatusCodes[1] != 402 {
+		t.Fatalf("codes mismatch: %v", c.ExtraUsageStatusCodes)
+	}
+}
+
 func TestQuietWindowOvernight(t *testing.T) {
 	// 21:00-04:00 跨夜: 23:00(=1380) 命中, 12:00(=720) 不命中
 	windows := []TimeWindow{{StartMin: 1260, EndMin: 240}}
