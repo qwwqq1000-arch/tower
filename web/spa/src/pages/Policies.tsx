@@ -301,6 +301,13 @@ export default function Policies() {
   const ccCliUserAgent = useField<string>('');
   const ccCliAnthropicBeta = useField<string>('');
   const ccCliXApp = useField<string>('');
+  // 1M 长上下文门控 (#143)
+  const longContextGateEnabled = useField<boolean>(false);
+  const longContextTokenThreshold = useField<number>(200000);
+  const longContextModelMarkers = useField<string>('1m');
+  const extraUsageKeywords = useField<string>('draw from your external,extra usage');
+  const extraUsageStatusCodes = useField<string>('400');
+  const no1MRecoveryMs = useField<number>(86400000);
 
   const [dryRunResult, setDryRunResult] = useState<PolicyDryRunResult | null>(null);
   const [previewing, setPreviewing] = useState(false);
@@ -397,6 +404,9 @@ export default function Policies() {
       bodyPadEnabled, bodyPadBytesMin, bodyPadBytesMax,
       ccEnvelopeEnabled, ccEnforceSystemPrompt, ccEnforceBetaParam, ccEnforceCliHeaders,
       ccEnvelopeAction, ccSystemPromptText, ccCliUserAgent, ccCliAnthropicBeta, ccCliXApp,
+      // 1M 长上下文门控
+      longContextGateEnabled, longContextTokenThreshold, longContextModelMarkers,
+      extraUsageKeywords, extraUsageStatusCodes, no1MRecoveryMs,
     ];
     // Disable every enabled field
     for (const f of allFields) {
@@ -506,6 +516,13 @@ export default function Policies() {
       setStr(ccCliUserAgent, p, 'CCCliUserAgent');
       setStr(ccCliAnthropicBeta, p, 'CCCliAnthropicBeta');
       setStr(ccCliXApp, p, 'CCCliXApp');
+      // 1M 长上下文门控
+      setBool(longContextGateEnabled, p, 'LongContextGateEnabled');
+      setNum(longContextTokenThreshold, p, 'LongContextTokenThreshold');
+      setArr(longContextModelMarkers, p, 'LongContextModelMarkers');
+      setArr(extraUsageKeywords, p, 'ExtraUsageKeywords');
+      setArr(extraUsageStatusCodes, p, 'ExtraUsageStatusCodes');
+      setNum(no1MRecoveryMs, p, 'No1MRecoveryMs');
     };
 
     // ---- Pick the right row to hydrate from ----
@@ -647,6 +664,13 @@ export default function Policies() {
     if (ccCliUserAgent.enabled) patch.CCCliUserAgent = ccCliUserAgent.value;
     if (ccCliAnthropicBeta.enabled) patch.CCCliAnthropicBeta = ccCliAnthropicBeta.value;
     if (ccCliXApp.enabled) patch.CCCliXApp = ccCliXApp.value;
+    // 1M 长上下文门控
+    if (longContextGateEnabled.enabled) patch.LongContextGateEnabled = longContextGateEnabled.value;
+    if (longContextTokenThreshold.enabled) patch.LongContextTokenThreshold = longContextTokenThreshold.value;
+    if (longContextModelMarkers.enabled) patch.LongContextModelMarkers = longContextModelMarkers.value.split(',').map(s => s.trim()).filter(Boolean);
+    if (extraUsageKeywords.enabled) patch.ExtraUsageKeywords = extraUsageKeywords.value.split(',').map(s => s.trim()).filter(Boolean);
+    if (extraUsageStatusCodes.enabled) patch.ExtraUsageStatusCodes = extraUsageStatusCodes.value.split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+    if (no1MRecoveryMs.enabled) patch.No1MRecoveryMs = no1MRecoveryMs.value;
     return patch;
   }
 
@@ -737,6 +761,9 @@ export default function Policies() {
     // Claude Code 三件套
     ccEnvelopeEnabled, ccEnforceSystemPrompt, ccEnforceBetaParam, ccEnforceCliHeaders,
     ccEnvelopeAction, ccSystemPromptText, ccCliUserAgent, ccCliAnthropicBeta, ccCliXApp,
+    // 1M 长上下文门控
+    longContextGateEnabled, longContextTokenThreshold, longContextModelMarkers,
+    extraUsageKeywords, extraUsageStatusCodes, no1MRecoveryMs,
   ].some((f) => f.enabled);
 
   // ------------------------------------------------------------------
@@ -763,6 +790,8 @@ export default function Policies() {
       spendCap5hEnabled, spendCap5hMin,
       quotaLimitKeywords, quotaLimitCodes,
       limitOpus48, limitOpus47, limitSonnet46, limitHaiku45,
+      longContextGateEnabled, longContextTokenThreshold, longContextModelMarkers,
+      extraUsageKeywords, extraUsageStatusCodes, no1MRecoveryMs,
     ],
     fallback: [
       fallbackEnabled, fallbackPriceThresholdUsd, fallbackKeywords, fallbackModels, fallbackProbeEnabled,
@@ -1144,6 +1173,38 @@ export default function Policies() {
                   <NumInput value={f.value} onChange={f.set} disabled={!f.enabled} min={1} step={1000} />
                 </FieldRow>
               ))}
+            </div>
+
+            {/* Group: 1M 长上下文门控 */}
+            <div className="bg-surface border border-line rounded-xl px-4 py-2 mb-4">
+              <div className="flex items-center justify-between py-2">
+                <div>
+                  <h2 className="text-xs font-medium text-muted uppercase tracking-wide">1M 长上下文门控</h2>
+                  <p className="text-xs text-muted/70 mt-0.5">检测超长上下文请求并只路由到支持 extra-usage 的号；命中 extra-usage 错误时标记该号、按恢复窗口自动重试。</p>
+                </div>
+                <GroupMaster field={longContextGateEnabled} />
+              </div>
+              <div className={longContextGateEnabled.value ? '' : 'opacity-40 pointer-events-none'}>
+                <FieldRow label="输入 token 阈值" desc="估算输入 token 超过此值视为长上下文(1M)请求" enabled={longContextTokenThreshold.enabled} onToggle={longContextTokenThreshold.toggle} showOnlyConfigured={so}>
+                  <NumInput value={longContextTokenThreshold.value} onChange={longContextTokenThreshold.set} disabled={!longContextTokenThreshold.enabled} min={1} step={10000} />
+                </FieldRow>
+
+                <FieldRow label="长上下文模型标记(逗号分隔)" desc="model 名含任一标记(逗号分隔)视为长上下文,如 1m" enabled={longContextModelMarkers.enabled} onToggle={longContextModelMarkers.toggle} showOnlyConfigured={so}>
+                  <input type="text" value={longContextModelMarkers.value} onChange={(e) => longContextModelMarkers.set(e.target.value)} disabled={!longContextModelMarkers.enabled} placeholder="1m" className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition disabled:cursor-not-allowed" />
+                </FieldRow>
+
+                <FieldRow label="extra-usage 关键词(逗号分隔)" desc="错误响应命中即把该号标记不支持1M(extra-usage)" enabled={extraUsageKeywords.enabled} onToggle={extraUsageKeywords.toggle} showOnlyConfigured={so}>
+                  <input type="text" value={extraUsageKeywords.value} onChange={(e) => extraUsageKeywords.set(e.target.value)} disabled={!extraUsageKeywords.enabled} placeholder="draw from your external,extra usage" className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition disabled:cursor-not-allowed" />
+                </FieldRow>
+
+                <FieldRow label="extra-usage 状态码(逗号分隔)" desc="在这些状态码上查 extra-usage 关键词,逗号分隔" enabled={extraUsageStatusCodes.enabled} onToggle={extraUsageStatusCodes.toggle} showOnlyConfigured={so}>
+                  <input type="text" value={extraUsageStatusCodes.value} onChange={(e) => extraUsageStatusCodes.set(e.target.value)} disabled={!extraUsageStatusCodes.enabled} placeholder="400" className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition disabled:cursor-not-allowed" />
+                </FieldRow>
+
+                <FieldRow label="不支持1M 恢复窗口(ms)" desc="标记多久后自动重试(毫秒),默认 86400000=24h" enabled={no1MRecoveryMs.enabled} onToggle={no1MRecoveryMs.toggle} showOnlyConfigured={so}>
+                  <NumInput value={no1MRecoveryMs.value} onChange={no1MRecoveryMs.set} disabled={!no1MRecoveryMs.enabled} min={0} step={3600000} />
+                </FieldRow>
+              </div>
             </div>
           </>
         );

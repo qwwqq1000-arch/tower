@@ -214,6 +214,13 @@ export interface PolicyPatch {
   CCCliUserAgent?: string;
   CCCliAnthropicBeta?: string;
   CCCliXApp?: string;
+  // 1M 长上下文门控 (#143)
+  LongContextGateEnabled?: boolean;
+  LongContextTokenThreshold?: number;
+  LongContextModelMarkers?: string[];
+  ExtraUsageKeywords?: string[];
+  ExtraUsageStatusCodes?: number[];
+  No1MRecoveryMs?: number;
 }
 
 // policy.Config (resolved)
