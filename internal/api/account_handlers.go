@@ -374,7 +374,14 @@ func recoverAccountHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerF
 		}
 		if svc != nil && svc.Store != nil {
 			for _, na := range rows {
-				svc.Store.Recover(na.NodeID + ":" + na.ProfileID)
+				key := na.NodeID + ":" + na.ProfileID
+				svc.Store.Recover(key)
+				// A manual recover lifts EVERY hold, including a quota/spend limit (5h/7d):
+				// clear the in-memory LimitedUntil and the persisted limit row so the
+				// account re-enters dispatch now and its limit is recomputed on the next
+				// trip (spend-cap/quota recovery starts fresh).
+				svc.Store.SetLimited(key, svc.Base.MaxConcurrent, map[string]int64{})
+				_ = q.DeleteAccountLimitState(r.Context(), key)
 				// Persist the cleared verdict immediately so a restart in the
 				// periodic-persist window cannot reload permanent=true and silently
 				// re-ban the account the operator just recovered.
