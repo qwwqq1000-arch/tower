@@ -445,7 +445,7 @@ func overCap(sum, capUsd float64) bool {
 // loadSpendThreshold returns the current threshold T for key. If absent or the
 // stored day differs from today (day = nowMs/86400000), it re-anchors to the
 // initial draw (salt "thr:0") and returns the new T. Persists on change (best-effort).
-func (s *Service) loadSpendThreshold(ctx context.Context, key string, cfg policy.Config, now int64) float64 {
+func (s *Service) loadSpendThreshold(ctx context.Context, key string, cfg policy.Config, now int64, spendBasis float64) float64 {
 	today := now / 86_400_000
 	if v, ok := s.spendThreshold.Load(key); ok {
 		e := v.(spendThresholdEntry)
@@ -453,20 +453,29 @@ func (s *Service) loadSpendThreshold(ctx context.Context, key string, cfg policy
 			return e.threshold
 		}
 	}
-	// First time or day changed → re-anchor.
-	t := cfg.SpendCap5hUsd.Resolve(key, "thr:0")
+	// First time or day changed → anchor at the spend-so-far (spendBasis, the today-spend
+	// BEFORE the in-flight cost) + a fresh [min,max] budget, so the threshold always sits
+	// one draw ABOVE current spend. Re-anchoring mid-day (or after a config change) then
+	// gives the account a real budget instead of tripping instantly because cumulative
+	// spend already passed a smaller absolute value. At day start spendBasis≈0 → T≈draw.
+	t := spendBasis + cfg.SpendCap5hUsd.Resolve(key, "thr:0")
 	s.spendThreshold.Store(key, spendThresholdEntry{threshold: t, day: today})
 	s.persistSpendThreshold(ctx, key, t, today, now)
 	s.spendLimitedAt.Delete(key) // clear stale limitedAt marker on day reset
 	return t
 }
 
-// raiseSpendThreshold bumps the threshold from currentT to currentT+nextCap and
-// persists. Returns the new threshold.
-func (s *Service) raiseSpendThreshold(ctx context.Context, key string, cfg policy.Config, currentT float64, now int64) float64 {
+// raiseSpendThreshold sets the next threshold bar to today's spend + a fresh [min,max]
+// draw and persists it. Returns the new threshold. Anchoring at current spend (rather
+// than currentT) makes each post-recovery budget a real [min,max] above where the
+// account actually is.
+func (s *Service) raiseSpendThreshold(ctx context.Context, key string, cfg policy.Config, currentT float64, now int64, spendBasis float64) float64 {
 	today := now / 86_400_000
 	next := cfg.SpendCap5hUsd.Resolve(key, fmt.Sprintf("thr:%d", int64(currentT)))
-	newT := currentT + next
+	// Anchor the next bar at the spend-so-far (spendBasis) + a fresh [min,max] budget, so
+	// after a recovery the account always gets a real budget above where it actually is,
+	// never re-tripping instantly when cumulative spend already overshot the old bar.
+	newT := spendBasis + next
 	s.spendThreshold.Store(key, spendThresholdEntry{threshold: newT, day: today})
 	s.persistSpendThreshold(ctx, key, newT, today, now)
 	return newT
@@ -503,10 +512,14 @@ func (s *Service) recordSpend(ctx context.Context, ownerID, key string, cost flo
 		return // zero overhead when cap is off (default)
 	}
 	now := s.Now()
+	// Capture today's spend BEFORE adding this cost — that is the basis a fresh threshold
+	// anchors on (current spend + a [min,max] budget), so the in-flight cost doesn't get
+	// absorbed into the new budget.
+	spendBasis := s.Store.SpendToday(key, now)
 	s.Store.AddSpend(key, cost, now)
 
-	// Load current threshold T (re-anchors if day changed).
-	T := s.loadSpendThreshold(ctx, key, cfg, now)
+	// Load current threshold T (re-anchors at spendBasis + draw if day changed/first time).
+	T := s.loadSpendThreshold(ctx, key, cfg, now, spendBasis)
 
 	// Check whether this account is currently limited.
 	isLimited := s.Store.IsLimited(key, now)
@@ -520,8 +533,8 @@ func (s *Service) recordSpend(ctx context.Context, ownerID, key string, cost flo
 	if latV, ok := s.spendLimitedAt.Load(key); ok {
 		latT := latV.(float64)
 		if latT == T {
-			// Recovered from the latT cycle → raise T.
-			T = s.raiseSpendThreshold(ctx, key, cfg, T, now)
+			// Recovered from the latT cycle → raise T to spendBasis + a fresh budget.
+			T = s.raiseSpendThreshold(ctx, key, cfg, T, now, spendBasis)
 			s.spendLimitedAt.Delete(key)
 		}
 	}
@@ -908,6 +921,16 @@ func orderIdleFirst(keys []string, inflightOf map[string]int) {
 //     Affinity resolution MUST use allKeys so a pinned reserve account is reachable even when
 //     elastic is active and the baseline is the working set (affinity > elastic, Fix 2).
 //   - resolver, keyOwner, keyCfg: unchanged.
+// nodeCreatedMs returns a node's creation time in ms (0 if unset). Used as the elastic
+// baseline/reserve seniority tiebreak so a newly-added node's accounts sort to the BACK
+// (reserve) rather than jumping into the active baseline and displacing serving accounts.
+func nodeCreatedMs(n sqlc.Node) int64 {
+	if n.CreatedAt.Valid {
+		return n.CreatedAt.Time.UnixMilli()
+	}
+	return 0
+}
+
 func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cfg policy.Config) (order []string, allKeys []string, resolver Resolver, keyOwner map[string]string, keyCfg map[string]policy.Config) {
 	nodes, _ := s.Q.ListNodes(ctx)
 	// keyCfg holds the per-account resolved config for each dispatch key.
@@ -926,9 +949,10 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 	keyOwner = map[string]string{}
 	refs := map[string]NodeRef{}
 	type cand struct {
-		key     string
-		weight  int
-		reserve bool
+		key       string
+		weight    int
+		reserve   bool
+		createdAt int64
 	}
 	var cands []cand
 	nowMs := s.Now()
@@ -1082,7 +1106,7 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 					}
 				}
 			}
-			cands = append(cands, cand{key: key, weight: int(na.Weight), reserve: na.Role == "reserve"})
+			cands = append(cands, cand{key: key, weight: int(na.Weight), reserve: na.Role == "reserve", createdAt: nodeCreatedMs(n)})
 		}
 	}
 	// Deterministic order: weight desc, then key asc as tiebreak. Without the key
@@ -1094,6 +1118,12 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 	sort.Slice(cands, func(i, j int) bool {
 		if cands[i].weight != cands[j].weight {
 			return cands[i].weight > cands[j].weight
+		}
+		// Seniority tiebreak: older accounts (smaller createdAt) sort first → baseline;
+		// newly-added nodes' accounts sort to the BACK → reserve. So a freshly-pushed node
+		// never jumps the queue and interrupts accounts already serving in the active set.
+		if cands[i].createdAt != cands[j].createdAt {
+			return cands[i].createdAt < cands[j].createdAt
 		}
 		return cands[i].key < cands[j].key
 	})
@@ -1143,6 +1173,15 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 	var reserve []string
 	for i := n; i < len(cands); i++ {
 		reserve = append(reserve, cands[i].key)
+	}
+	// Cap the reserve pool at ElasticMaxReserve so elastic never activates more than the
+	// configured maximum: once that many reserve accounts can be in play, there is no
+	// further scale-up. Applied at the source so BOTH the legacy count path AND the
+	// model-aware path below honor it (the model-aware path otherwise iterated the full
+	// reserve list and appended every eligible one, ignoring the cap). Default 1000 =
+	// effectively uncapped.
+	if cfg.ElasticMaxReserve > 0 && len(reserve) > cfg.ElasticMaxReserve {
+		reserve = reserve[:cfg.ElasticMaxReserve]
 	}
 	if cfg.IdleFirstSelection {
 		orderIdleFirst(baseline, inflightOf)
@@ -1290,13 +1329,12 @@ func (s *Service) ReserveKeys(ctx context.Context, ownerID string, cfg policy.Co
 	if !cfg.ElasticEnabled {
 		return nil // elastic off → all accounts active
 	}
-	// Check scaled-up state first; if scaled up all reserves are active → no reserve keys.
+	// Scaled-up state. Do NOT early-return when scaled up: with ElasticMaxReserve only the
+	// first MaxReserve reserves are activated; the ones BEYOND the cap stay reserve (待命).
+	// The partition below skips just the activated prefix when scaled up.
 	s.scaledUpMu.Lock()
 	isScaledUp := s.scaledUp[ownerID]
 	s.scaledUpMu.Unlock()
-	if isScaledUp {
-		return nil
-	}
 
 	nowMs := s.Now()
 
@@ -1326,8 +1364,9 @@ func (s *Service) ReserveKeys(ctx context.Context, ownerID string, cfg policy.Co
 
 	// Replicate the candidate enumeration from buildCandidates (owner-scoped, weight-desc).
 	type cand struct {
-		key    string
-		weight int
+		key       string
+		weight    int
+		createdAt int64
 	}
 	var cands []cand
 	nodes, _ := s.Q.ListNodes(ctx)
@@ -1397,7 +1436,7 @@ func (s *Service) ReserveKeys(ctx context.Context, ownerID string, cfg policy.Co
 					}
 				}
 			}
-			cands = append(cands, cand{key: key, weight: int(na.Weight)})
+			cands = append(cands, cand{key: key, weight: int(na.Weight), createdAt: nodeCreatedMs(n)})
 		}
 	}
 	// Deterministic order: weight desc, then key asc as tiebreak. Without the key
@@ -1410,6 +1449,12 @@ func (s *Service) ReserveKeys(ctx context.Context, ownerID string, cfg policy.Co
 		if cands[i].weight != cands[j].weight {
 			return cands[i].weight > cands[j].weight
 		}
+		// Seniority tiebreak: older accounts (smaller createdAt) sort first → baseline;
+		// newly-added nodes' accounts sort to the BACK → reserve. So a freshly-pushed node
+		// never jumps the queue and interrupts accounts already serving in the active set.
+		if cands[i].createdAt != cands[j].createdAt {
+			return cands[i].createdAt < cands[j].createdAt
+		}
 		return cands[i].key < cands[j].key
 	})
 
@@ -1420,8 +1465,20 @@ func (s *Service) ReserveKeys(ctx context.Context, ownerID string, cfg policy.Co
 	if n > len(cands) {
 		n = len(cands)
 	}
+	// When scaled up, the first ElasticMaxReserve reserve accounts are activated (active);
+	// only those BEYOND the cap remain reserve (待命). When not scaled up, every account
+	// beyond the baseline is reserve. Mirrors the reserve cap in buildCandidates so the
+	// status partition matches dispatch.
+	reserveStart := n
+	if isScaledUp {
+		if cfg.ElasticMaxReserve > 0 {
+			reserveStart = n + cfg.ElasticMaxReserve // skip baseline + the activated reserves
+		} else {
+			reserveStart = len(cands) // uncapped: all reserves active → none shown as 待命
+		}
+	}
 	reserve := make(map[string]bool)
-	for i := n; i < len(cands); i++ {
+	for i := reserveStart; i < len(cands); i++ {
 		reserve[cands[i].key] = true
 	}
 	return reserve
