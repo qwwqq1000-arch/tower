@@ -225,6 +225,7 @@ type Node struct {
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	Kind            string             `json:"kind"`
 	Passthrough     bool               `json:"passthrough"`
+	AccountOwnerID  string             `json:"account_owner_id"`
 }
 
 type NodeAccount struct {
