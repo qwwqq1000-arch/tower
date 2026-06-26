@@ -19,8 +19,9 @@ import {
   oauthExchange,
   listNodeProfiles,
   importNodeProfile,
+  listUsers,
 } from '../api';
-import type { NodeRecord, NodeProfile } from '../types';
+import type { NodeRecord, NodeProfile, UserRow } from '../types';
 
 // ------------------------------------------------------------------
 // Helpers
@@ -593,11 +594,20 @@ function AddNodeForm({ onAdded }: AddNodeFormProps) {
   const [baseUrl, setBaseUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [ownerId, setOwnerId] = useState('');
+  const [users, setUsers] = useState<UserRow[]>([]);
   const [kind, setKind] = useState<'meridian' | 'cpa'>('meridian');
   const [mgmtKey, setMgmtKey] = useState('');
   const [passthrough, setPassthrough] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    listUsers().then((us) => {
+      setUsers(us);
+      const t = us.find((u) => u.username === 'test');
+      if (t) setOwnerId(t.id);
+    }).catch(() => setUsers([]));
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -609,7 +619,7 @@ function AddNodeForm({ onAdded }: AddNodeFormProps) {
         baseUrl: baseUrl.trim(),
         kind,
         ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
-        ...(ownerId.trim() ? { ownerId: ownerId.trim() } : {}),
+        ...(ownerId.trim() ? { accountOwnerId: ownerId.trim() } : {}),
         ...(kind === 'cpa' && mgmtKey.trim() ? { mgmtKey: mgmtKey.trim() } : {}),
         ...(kind === 'cpa' && passthrough ? { passthrough: true } : {}),
       });
@@ -660,13 +670,17 @@ function AddNodeForm({ onAdded }: AddNodeFormProps) {
           placeholder={kind === 'cpa' ? 'CPA api-key（推理）' : 'API密钥（选填）'}
           className={inputCls}
         />
-        <input
-          type="text"
+        <select
           value={ownerId}
           onChange={(e) => setOwnerId(e.target.value)}
-          placeholder="归属用户 ID（选填）"
           className={inputCls}
-        />
+          title="号库归属用户"
+        >
+          <option value="">超级管理员（全局）</option>
+          {users.map((u) => (
+            <option key={u.id} value={u.id}>{u.username}</option>
+          ))}
+        </select>
         <button
           type="submit"
           disabled={submitting || !baseUrl.trim()}
