@@ -329,6 +329,25 @@ func listAccountsHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFun
 	}
 }
 
+// realignSpendLimitsHandler re-evaluates every currently-limited account against its
+// LIVE quota and fixes the recovery time (one-shot maintenance for limits set before the
+// spend-cap-reset fix): full window → its real reset; 5h active → its real reset; 5h
+// empty → recover the account now. Returns {realigned, recovered, skipped}.
+func realignSpendLimitsHandler(svc *dispatch.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if svc == nil {
+			writeJSON(w, 500, map[string]string{"error": "dispatch unavailable"})
+			return
+		}
+		// Fresh context with a generous timeout — fetching live quota for every limited
+		// account is N sequential CPA calls and must not be cut by the request deadline.
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+		defer cancel()
+		realigned, recovered, skipped := svc.RealignSpendLimits(ctx)
+		writeJSON(w, 200, map[string]any{"realigned": realigned, "recovered": recovered, "skipped": skipped})
+	}
+}
+
 // recoverAccountHandler clears all ban/cooldown/permanent state for one account
 // (across every node it is assigned to), re-enables it, and records an event.
 func recoverAccountHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {

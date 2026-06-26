@@ -2488,6 +2488,55 @@ func (s *Service) classifyQuotaLimit(ctx context.Context, key string, cfg policy
 	return pickQuotaLimit(u, threshold, now)
 }
 
+// RealignSpendLimits re-evaluates every CURRENTLY-limited account against its LIVE
+// quota and fixes its recovery time (a one-shot maintenance op for limits set before
+// the spend-cap-reset fix). For each limited account: if a quota window is genuinely
+// full → set recovery to that window's real reset; else if the 5h window has a real
+// resets_at → align recovery to it; else (5h empty/null → real capacity available) →
+// CLEAR the limit so the account recovers now. Accounts whose quota can't be fetched
+// are left untouched. Returns counts (realigned, recovered, skipped).
+func (s *Service) RealignSpendLimits(ctx context.Context) (realigned, recovered, skipped int) {
+	if s.Q == nil || s.Store == nil {
+		return
+	}
+	now := s.Now()
+	rows, err := s.Q.ListActiveAccountLimitState(ctx, now)
+	if err != nil {
+		return
+	}
+	cfg := s.ResolveConfigForOwner(ctx, "")
+	threshold := cfg.QuotaFullThreshold
+	if threshold <= 0 {
+		threshold = 99.0
+	}
+	for _, r := range rows {
+		u := s.fetchUsage(ctx, r.Key)
+		if u == nil {
+			skipped++ // can't fetch live quota → leave the limit as-is
+			continue
+		}
+		if reason, recov := pickQuotaLimit(u, threshold, now); reason != "" {
+			s.Store.SetLimitedReason(r.Key, s.Base.MaxConcurrent, recov, reason)
+			s.persistLimit(ctx, r.Key, recov, reason)
+			realigned++
+			continue
+		}
+		if u.FiveHour != nil {
+			if recov := parseResetsAt(u.FiveHour.ResetsAt); recov > now {
+				s.Store.SetLimitedReason(r.Key, s.Base.MaxConcurrent, recov, "5h")
+				s.persistLimit(ctx, r.Key, recov, "5h")
+				realigned++
+				continue
+			}
+		}
+		// 5h empty/null → the account has real 5h capacity → recover it now.
+		s.Store.SetLimited(r.Key, s.Base.MaxConcurrent, map[string]int64{})
+		s.clearPersistedLimit(ctx, r.Key)
+		recovered++
+	}
+	return
+}
+
 // spendLimitRecovery resolves the recovery time when the SPEND CAP trips. Per design:
 // fetch the account's LIVE quota and set recovery to the real 5h-window reset time —
 // the spend budget is a per-5h-window throttle, so the account should release when its
