@@ -597,6 +597,27 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 	order, allKeys, resolver, keyOwner, keyCfg := s.buildCandidates(ctx, ownerID, model, cfg)
 	channels := s.enabledChannels(ctx, ownerID, model)
 
+	// Envelope gate (CCEnvelopeEnabled): check whether the request carries the
+	// expected three-piece envelope.  Missing pieces → fallback or inject.
+	if cfg.CCEnvelopeEnabled {
+		if miss := missingEnvelopePieces(cfg, body, requestQueryFrom(ctx), clientHeadersFrom(ctx)); len(miss) > 0 {
+			action := cfg.CCEnvelopeAction
+			if action == "" {
+				action = "fallback"
+			}
+			if action == "fallback" {
+				// Mirror the exhausted-pool fallback path — same call, reason "envelope".
+				if cfg.FallbackEnabled && len(channels) > 0 {
+					return s.viaChannels(ctx, ownerID, model, body, channels, "envelope", time.Since(start).Milliseconds(), cfg)
+				}
+				s.logErr(ctx, ownerID, model, 503, 0, "envelope_no_channel")
+				return Outcome{Status: 503, Body: `{"error":"envelope incomplete, no fallback channel"}`, Target: "none", Reason: "envelope_no_channel"}
+			}
+			// "complete": stash the inject-set so proxy.Send can apply it.
+			ctx = withEnvelopeInject(ctx, miss)
+		}
+	}
+
 	conv := session.ConvID(body)
 	nowMs := s.Now()
 
@@ -1960,6 +1981,31 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 	}
 	order, allKeysS, resolver, keyOwner, keyCfgS := s.buildCandidates(ctx, ownerID, model, cfg)
 	channels := s.enabledChannels(ctx, ownerID, model)
+
+	// Envelope gate (CCEnvelopeEnabled): mirror of the Dispatch tier — identical logic.
+	if cfg.CCEnvelopeEnabled {
+		if miss := missingEnvelopePieces(cfg, body, requestQueryFrom(ctx), clientHeadersFrom(ctx)); len(miss) > 0 {
+			action := cfg.CCEnvelopeAction
+			if action == "" {
+				action = "fallback"
+			}
+			if action == "fallback" {
+				// Mirror the exhausted-pool fallback path — same call, reason "envelope".
+				if cfg.FallbackEnabled && len(channels) > 0 {
+					exReason := "envelope"
+					if out, committed := s.streamChannels(ctx, w, channels, body, ownerID, model, exReason, cfg); committed {
+						return out
+					}
+				}
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte(`{"error":"envelope incomplete, no fallback channel"}`))
+				s.logErr(ctx, ownerID, model, 503, 0, "envelope_no_channel")
+				return Outcome{Status: 503, Target: "none", Reason: "envelope_no_channel"}
+			}
+			// "complete": stash the inject-set so proxy.Send can apply it.
+			ctx = withEnvelopeInject(ctx, miss)
+		}
+	}
 
 	conv := session.ConvID(body)
 	nowMs := s.Now()
