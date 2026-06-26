@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
@@ -84,5 +85,85 @@ func TestInjectEnvelopeBadBodyUnchanged(t *testing.T) {
 	got := injectEnvelope([]EnvelopePiece{PieceSystemPrompt}, body, http.Header{}, envelopeVals{system: "x"})
 	if string(got) != "not json" {
 		t.Fatalf("bad body must be returned unchanged, got %s", got)
+	}
+}
+
+func TestInjectEnvelopeArrayFormPreserved(t *testing.T) {
+	// I-1 regression: array-form system must have the new block prepended, not replaced.
+	body := []byte(`{"model":"x","system":[{"type":"text","text":"hello world"}]}`)
+	miss := []EnvelopePiece{PieceSystemPrompt}
+	vals := envelopeVals{system: "You are Claude Code"}
+
+	got := injectEnvelope(miss, body, http.Header{}, vals)
+
+	var result struct {
+		System []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"system"`
+	}
+	if err := json.Unmarshal(got, &result); err != nil {
+		t.Fatalf("result not valid JSON: %v — body: %s", err, got)
+	}
+	if len(result.System) != 2 {
+		t.Fatalf("expected system array length 2, got %d — body: %s", len(result.System), got)
+	}
+	if result.System[0].Text != "You are Claude Code" {
+		t.Fatalf("first block text = %q, want %q", result.System[0].Text, "You are Claude Code")
+	}
+	if result.System[1].Text != "hello world" {
+		t.Fatalf("second block text = %q, want %q (original block must be preserved)", result.System[1].Text, "hello world")
+	}
+}
+
+func TestInjectEnvelopeArrayFormAlreadyPresentNoop(t *testing.T) {
+	// If any existing block already contains v.system, body must be returned unchanged.
+	body := []byte(`{"model":"x","system":[{"type":"text","text":"You are Claude Code and more"}]}`)
+	miss := []EnvelopePiece{PieceSystemPrompt}
+	vals := envelopeVals{system: "You are Claude Code"}
+
+	got := injectEnvelope(miss, body, http.Header{}, vals)
+
+	if string(got) != string(body) {
+		t.Fatalf("body should be unchanged when system already present in array block, got: %s", got)
+	}
+}
+
+func TestInjectEnvelopeStringFormPrepend(t *testing.T) {
+	// String-form system: new text prepended with double-newline separator.
+	body := []byte(`{"system":"existing"}`)
+	miss := []EnvelopePiece{PieceSystemPrompt}
+	vals := envelopeVals{system: "You are Claude Code"}
+
+	got := injectEnvelope(miss, body, http.Header{}, vals)
+
+	var result struct {
+		System string `json:"system"`
+	}
+	if err := json.Unmarshal(got, &result); err != nil {
+		t.Fatalf("result not valid JSON: %v", err)
+	}
+	want := "You are Claude Code\n\nexisting"
+	if result.System != want {
+		t.Fatalf("system = %q, want %q", result.System, want)
+	}
+}
+
+func TestInjectEnvelopeSystemAbsent(t *testing.T) {
+	// When system field is absent, result should just be v.system.
+	body := []byte(`{"model":"x"}`)
+	miss := []EnvelopePiece{PieceSystemPrompt}
+	vals := envelopeVals{system: "You are Claude Code"}
+
+	got := injectEnvelope(miss, body, http.Header{}, vals)
+
+	var result struct {
+		System string `json:"system"`
+	}
+	if err := json.Unmarshal(got, &result); err != nil {
+		t.Fatalf("result not valid JSON: %v", err)
+	}
+	if result.System != "You are Claude Code" {
+		t.Fatalf("system = %q, want %q", result.System, "You are Claude Code")
 	}
 }

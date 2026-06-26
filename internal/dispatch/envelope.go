@@ -48,9 +48,40 @@ func injectEnvelope(miss []EnvelopePiece, body []byte, h http.Header, v envelope
 	if want(PieceSystemPrompt) && v.system != "" {
 		var m map[string]json.RawMessage
 		if json.Unmarshal(body, &m) == nil {
+			raw, hasSys := m["system"]
+			// Array-of-blocks form: unshift a text block, preserving existing content.
+			if hasSys {
+				var blocks []json.RawMessage
+				if json.Unmarshal(raw, &blocks) == nil {
+					already := false
+					for _, b := range blocks {
+						var blk struct {
+							Text string `json:"text"`
+						}
+						if json.Unmarshal(b, &blk) == nil && strings.Contains(blk.Text, v.system) {
+							already = true
+							break
+						}
+					}
+					if already {
+						return body
+					}
+					if nbk, err := json.Marshal(map[string]string{"type": "text", "text": v.system}); err == nil {
+						blocks = append([]json.RawMessage{json.RawMessage(nbk)}, blocks...)
+						if enc, err := json.Marshal(blocks); err == nil {
+							m["system"] = enc
+							if nb, err := json.Marshal(m); err == nil {
+								return nb
+							}
+						}
+					}
+					return body
+				}
+			}
+			// String form (or system absent): prepend as a string.
 			var existing string
-			if raw, ok := m["system"]; ok {
-				_ = json.Unmarshal(raw, &existing) // string form; array form falls through to replace
+			if hasSys {
+				_ = json.Unmarshal(raw, &existing)
 			}
 			combined := v.system
 			if existing != "" && !strings.Contains(existing, v.system) {
