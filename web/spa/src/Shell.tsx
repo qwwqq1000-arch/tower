@@ -305,7 +305,7 @@ export function Shell({ children }: { children: ReactNode }) {
       {/* ---- Desktop sidebar (lg+) ---- */}
       <aside className="hidden lg:flex flex-col w-56 shrink-0 border-r border-line bg-surface">
         <div className="px-4 py-5">
-          <span className="text-xl font-bold text-accent">Tower</span>
+          <span className="text-xl font-bold text-accent">CCMAX POOL</span>
         </div>
         <nav className="flex-1 overflow-y-auto px-2 space-y-0.5">
           {items.map((item) => (
@@ -340,7 +340,7 @@ export function Shell({ children }: { children: ReactNode }) {
         {/* Topbar */}
         <header className="flex items-center h-12 px-4 border-b border-line bg-surface shrink-0 gap-3">
           {/* Title (mobile only — desktop/tablet show sidebar) */}
-          <span className="md:hidden text-base font-bold text-accent mr-auto">Tower</span>
+          <span className="md:hidden text-base font-bold text-accent mr-auto">CCMAX POOL</span>
           <span className="hidden md:block text-sm font-medium text-muted mr-auto">控制台</span>
 
           {/* ⌘K button */}

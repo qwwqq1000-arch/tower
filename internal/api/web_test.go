@@ -17,7 +17,7 @@ func TestServesIndex(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
 		t.Fatalf("content-type=%q", ct)
 	}
-	if !strings.Contains(rec.Body.String(), "Tower") {
-		t.Fatal("index should contain Tower")
+	if !strings.Contains(rec.Body.String(), "CCMAX POOL") {
+		t.Fatal("index should contain CCMAX POOL")
 	}
 }

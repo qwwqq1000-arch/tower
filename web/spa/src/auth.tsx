@@ -112,7 +112,7 @@ function ForcedPasswordChange({ onDone, onLogout }: { onDone: () => void; onLogo
   return (
     <div className="min-h-screen flex items-center justify-center bg-bg px-4">
       <div className="w-full max-w-sm">
-        <h1 className="text-3xl font-bold text-accent text-center mb-2">Tower</h1>
+        <h1 className="text-3xl font-bold text-accent text-center mb-2">CCMAX POOL</h1>
         <p className="text-center text-sm text-warn mb-6">
           首次登录必须修改密码，才能继续使用。
         </p>
@@ -235,7 +235,7 @@ export function LoginGate({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen flex items-center justify-center bg-bg px-4">
       <div className="w-full max-w-sm">
-        <h1 className="text-3xl font-bold text-accent text-center mb-8">Tower</h1>
+        <h1 className="text-3xl font-bold text-accent text-center mb-8">CCMAX POOL</h1>
         <form
           onSubmit={(e) => { void handleSubmit(e); }}
           className="bg-surface border border-line rounded-xl p-8 space-y-5 shadow-lg"
