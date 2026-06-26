@@ -291,6 +291,16 @@ export default function Policies() {
   const terminalErrorKeywords = useField<string>('invalid_request_error');
   const retryDelayMs = useField<number>(0);
   const retrySameAccountMax = useField<number>(0);
+  // Claude Code 三件套 (envelope strategy)
+  const ccEnvelopeEnabled = useField<boolean>(false);
+  const ccEnforceSystemPrompt = useField<boolean>(false);
+  const ccEnforceBetaParam = useField<boolean>(false);
+  const ccEnforceCliHeaders = useField<boolean>(false);
+  const ccEnvelopeAction = useField<string>('fallback');
+  const ccSystemPromptText = useField<string>('');
+  const ccCliUserAgent = useField<string>('');
+  const ccCliAnthropicBeta = useField<string>('');
+  const ccCliXApp = useField<string>('');
 
   const [dryRunResult, setDryRunResult] = useState<PolicyDryRunResult | null>(null);
   const [previewing, setPreviewing] = useState(false);
@@ -385,6 +395,8 @@ export default function Policies() {
       modelPinEnabled, modelPinMode, modelPinTarget, modelElasticEnabled,
       serialQueueEnabled, serialQueueWaitMs,
       bodyPadEnabled, bodyPadBytesMin, bodyPadBytesMax,
+      ccEnvelopeEnabled, ccEnforceSystemPrompt, ccEnforceBetaParam, ccEnforceCliHeaders,
+      ccEnvelopeAction, ccSystemPromptText, ccCliUserAgent, ccCliAnthropicBeta, ccCliXApp,
     ];
     // Disable every enabled field
     for (const f of allFields) {
@@ -484,6 +496,16 @@ export default function Policies() {
       // Phase 4: BodyPad
       setBool(bodyPadEnabled, p, 'BodyPadEnabled');
       setRange(bodyPadBytesMin, bodyPadBytesMax, p, 'BodyPadBytes');
+      // Claude Code 三件套
+      setBool(ccEnvelopeEnabled, p, 'CCEnvelopeEnabled');
+      setBool(ccEnforceSystemPrompt, p, 'CCEnforceSystemPrompt');
+      setBool(ccEnforceBetaParam, p, 'CCEnforceBetaParam');
+      setBool(ccEnforceCliHeaders, p, 'CCEnforceCliHeaders');
+      setStr(ccEnvelopeAction, p, 'CCEnvelopeAction');
+      setStr(ccSystemPromptText, p, 'CCSystemPromptText');
+      setStr(ccCliUserAgent, p, 'CCCliUserAgent');
+      setStr(ccCliAnthropicBeta, p, 'CCCliAnthropicBeta');
+      setStr(ccCliXApp, p, 'CCCliXApp');
     };
 
     // ---- Pick the right row to hydrate from ----
@@ -615,6 +637,16 @@ export default function Policies() {
     // Phase 4: BodyPad
     if (bodyPadEnabled.enabled) patch.BodyPadEnabled = bodyPadEnabled.value;
     if (bodyPadBytesMin.enabled) patch.BodyPadBytes = { Min: bodyPadBytesMin.value, Max: bodyPadBytesMax.value };
+    // Claude Code 三件套
+    if (ccEnvelopeEnabled.enabled) patch.CCEnvelopeEnabled = ccEnvelopeEnabled.value;
+    if (ccEnforceSystemPrompt.enabled) patch.CCEnforceSystemPrompt = ccEnforceSystemPrompt.value;
+    if (ccEnforceBetaParam.enabled) patch.CCEnforceBetaParam = ccEnforceBetaParam.value;
+    if (ccEnforceCliHeaders.enabled) patch.CCEnforceCliHeaders = ccEnforceCliHeaders.value;
+    if (ccEnvelopeAction.enabled) patch.CCEnvelopeAction = ccEnvelopeAction.value;
+    if (ccSystemPromptText.enabled) patch.CCSystemPromptText = ccSystemPromptText.value;
+    if (ccCliUserAgent.enabled) patch.CCCliUserAgent = ccCliUserAgent.value;
+    if (ccCliAnthropicBeta.enabled) patch.CCCliAnthropicBeta = ccCliAnthropicBeta.value;
+    if (ccCliXApp.enabled) patch.CCCliXApp = ccCliXApp.value;
     return patch;
   }
 
@@ -702,6 +734,9 @@ export default function Policies() {
     serialQueueEnabled, serialQueueWaitMs,
     bodyPadEnabled, bodyPadBytesMin,
     directFallbackStatusCodes, directFallbackKeywords, terminalErrorKeywords, retryDelayMs, retrySameAccountMax,
+    // Claude Code 三件套
+    ccEnvelopeEnabled, ccEnforceSystemPrompt, ccEnforceBetaParam, ccEnforceCliHeaders,
+    ccEnvelopeAction, ccSystemPromptText, ccCliUserAgent, ccCliAnthropicBeta, ccCliXApp,
   ].some((f) => f.enabled);
 
   // ------------------------------------------------------------------
@@ -716,6 +751,8 @@ export default function Policies() {
       serialQueueEnabled, serialQueueWaitMs,
       modelPinEnabled, modelPinMode, modelPinTarget, modelElasticEnabled,
       bodyPadEnabled, bodyPadBytesMin,
+      ccEnvelopeEnabled, ccEnforceSystemPrompt, ccEnforceBetaParam, ccEnforceCliHeaders,
+      ccEnvelopeAction, ccSystemPromptText, ccCliUserAgent, ccCliAnthropicBeta, ccCliXApp,
     ],
     concurrency: [
       idleFirstSelection, maxConcurrent, slotCooldownMinMs,
@@ -927,6 +964,69 @@ export default function Policies() {
               <div className={bodyPadEnabled.value ? '' : 'opacity-40 pointer-events-none'}>
                 <FieldRow label="BodyPadBytes (min ~ max)" desc="每次请求随机填充字节数区间；0 ~ 0 = 不填充" enabled={bodyPadBytesMin.enabled} onToggle={bodyPadBytesMin.toggle} showOnlyConfigured={so}>
                   <RangeInput min={bodyPadBytesMin.value} max={bodyPadBytesMax.value} onChangeMin={bodyPadBytesMin.set} onChangeMax={bodyPadBytesMax.set} disabled={!bodyPadBytesMin.enabled} step={64} minLabel="min B" maxLabel="max B" />
+                </FieldRow>
+              </div>
+            </div>
+
+            {/* Group 8: Claude Code 三件套 (envelope strategy) */}
+            <div className="bg-surface border border-line rounded-xl px-4 py-2 mb-4">
+              <div className="flex items-center justify-between py-2">
+                <div>
+                  <h2 className="text-xs font-medium text-muted uppercase tracking-wide">Claude Code 三件套</h2>
+                  <p className="text-xs text-muted/70 mt-0.5">检测并补全 Claude Code 客户端特有的三件套（system prompt / beta 参数 / CLI 请求头），使流量看起来像标准 Claude Code 请求。</p>
+                </div>
+                <GroupMaster field={ccEnvelopeEnabled} />
+              </div>
+              <div className={ccEnvelopeEnabled.value ? '' : 'opacity-40 pointer-events-none'}>
+                <FieldRow label="CCEnvelopeEnabled" desc="启用三件套检测与注入总开关。关闭时以下所有子项均不生效。" enabled={ccEnvelopeEnabled.enabled} onToggle={ccEnvelopeEnabled.toggle} showOnlyConfigured={so}>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={ccEnvelopeEnabled.value} onChange={(e) => ccEnvelopeEnabled.set(e.target.checked)} disabled={!ccEnvelopeEnabled.enabled} className="accent-accent w-4 h-4" />
+                    <span className="text-sm text-ink">{ccEnvelopeEnabled.value ? '已启用' : '已禁用'}</span>
+                  </label>
+                </FieldRow>
+
+                <FieldRow label="CCEnforceSystemPrompt" desc="检测并注入 Claude Code system prompt（缺失时按 CCEnvelopeAction 处理）" enabled={ccEnforceSystemPrompt.enabled} onToggle={ccEnforceSystemPrompt.toggle} showOnlyConfigured={so}>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={ccEnforceSystemPrompt.value} onChange={(e) => ccEnforceSystemPrompt.set(e.target.checked)} disabled={!ccEnforceSystemPrompt.enabled} className="accent-accent w-4 h-4" />
+                    <span className="text-sm text-ink">{ccEnforceSystemPrompt.value ? '已启用' : '已禁用'}</span>
+                  </label>
+                </FieldRow>
+
+                <FieldRow label="CCEnforceBetaParam" desc="检测并注入 claude-code-20250219 beta 参数（缺失时按 CCEnvelopeAction 处理）" enabled={ccEnforceBetaParam.enabled} onToggle={ccEnforceBetaParam.toggle} showOnlyConfigured={so}>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={ccEnforceBetaParam.value} onChange={(e) => ccEnforceBetaParam.set(e.target.checked)} disabled={!ccEnforceBetaParam.enabled} className="accent-accent w-4 h-4" />
+                    <span className="text-sm text-ink">{ccEnforceBetaParam.value ? '已启用' : '已禁用'}</span>
+                  </label>
+                </FieldRow>
+
+                <FieldRow label="CCEnforceCliHeaders" desc="检测并注入 Claude Code CLI 请求头（User-Agent / anthropic-beta / x-app，缺失时按 CCEnvelopeAction 处理）" enabled={ccEnforceCliHeaders.enabled} onToggle={ccEnforceCliHeaders.toggle} showOnlyConfigured={so}>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={ccEnforceCliHeaders.value} onChange={(e) => ccEnforceCliHeaders.set(e.target.checked)} disabled={!ccEnforceCliHeaders.enabled} className="accent-accent w-4 h-4" />
+                    <span className="text-sm text-ink">{ccEnforceCliHeaders.value ? '已启用' : '已禁用'}</span>
+                  </label>
+                </FieldRow>
+
+                <FieldRow label="CCEnvelopeAction" desc="三件套缺失时的处理方式：走保底（fallback）= 缺失时路由到保底通道；补全（complete）= 缺失时自动注入默认值" enabled={ccEnvelopeAction.enabled} onToggle={ccEnvelopeAction.toggle} showOnlyConfigured={so}>
+                  <select value={ccEnvelopeAction.value} onChange={(e) => ccEnvelopeAction.set(e.target.value)} disabled={!ccEnvelopeAction.enabled} className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink focus:outline-none focus:border-accent transition disabled:cursor-not-allowed">
+                    <option value="fallback">走保底</option>
+                    <option value="complete">补全</option>
+                  </select>
+                </FieldRow>
+
+                <FieldRow label="CCSystemPromptText" desc="补全模式下注入的 Claude Code system prompt 文本（留空则使用内置默认值）" enabled={ccSystemPromptText.enabled} onToggle={ccSystemPromptText.toggle} showOnlyConfigured={so}>
+                  <input type="text" value={ccSystemPromptText.value} onChange={(e) => ccSystemPromptText.set(e.target.value)} disabled={!ccSystemPromptText.enabled} placeholder="（留空 = 内置默认）" className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition disabled:cursor-not-allowed" />
+                </FieldRow>
+
+                <FieldRow label="CCCliUserAgent" desc="补全模式下注入的 User-Agent 头值（留空则使用内置默认值）" enabled={ccCliUserAgent.enabled} onToggle={ccCliUserAgent.toggle} showOnlyConfigured={so}>
+                  <input type="text" value={ccCliUserAgent.value} onChange={(e) => ccCliUserAgent.set(e.target.value)} disabled={!ccCliUserAgent.enabled} placeholder="（留空 = 内置默认）" className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition disabled:cursor-not-allowed" />
+                </FieldRow>
+
+                <FieldRow label="CCCliAnthropicBeta" desc="补全模式下注入的 anthropic-beta 头值（留空则使用内置默认值）" enabled={ccCliAnthropicBeta.enabled} onToggle={ccCliAnthropicBeta.toggle} showOnlyConfigured={so}>
+                  <input type="text" value={ccCliAnthropicBeta.value} onChange={(e) => ccCliAnthropicBeta.set(e.target.value)} disabled={!ccCliAnthropicBeta.enabled} placeholder="（留空 = 内置默认）" className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition disabled:cursor-not-allowed" />
+                </FieldRow>
+
+                <FieldRow label="CCCliXApp" desc="补全模式下注入的 x-app 头值（留空则使用内置默认值）" enabled={ccCliXApp.enabled} onToggle={ccCliXApp.toggle} showOnlyConfigured={so}>
+                  <input type="text" value={ccCliXApp.value} onChange={(e) => ccCliXApp.set(e.target.value)} disabled={!ccCliXApp.enabled} placeholder="（留空 = 内置默认）" className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition disabled:cursor-not-allowed" />
                 </FieldRow>
               </div>
             </div>

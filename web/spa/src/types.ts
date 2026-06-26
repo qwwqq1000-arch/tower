@@ -204,6 +204,16 @@ export interface PolicyPatch {
   SerialQueueWaitMs?: number;
   BodyPadEnabled?: boolean;
   BodyPadBytes?: { Min: number; Max: number };
+  // Claude Code 三件套 (envelope strategy)
+  CCEnvelopeEnabled?: boolean;
+  CCEnforceSystemPrompt?: boolean;
+  CCEnforceBetaParam?: boolean;
+  CCEnforceCliHeaders?: boolean;
+  CCEnvelopeAction?: string;
+  CCSystemPromptText?: string;
+  CCCliUserAgent?: string;
+  CCCliAnthropicBeta?: string;
+  CCCliXApp?: string;
 }
 
 // policy.Config (resolved)
