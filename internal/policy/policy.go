@@ -293,6 +293,17 @@ type Config struct {
 	// above which a window is considered exhausted for reactive quota classification.
 	// Default 99.0.
 	QuotaFullThreshold float64
+
+	// Claude Code envelope enforcement. Default off (behavior-neutral). See #2 spec.
+	CCEnvelopeEnabled     bool
+	CCEnforceSystemPrompt bool
+	CCEnforceBetaParam    bool
+	CCEnforceCliHeaders   bool
+	CCEnvelopeAction      string // "fallback" | "complete"
+	CCSystemPromptText    string
+	CCCliUserAgent        string
+	CCCliAnthropicBeta    string
+	CCCliXApp             string
 }
 
 // Defaults returns sane baseline configuration.
@@ -389,6 +400,15 @@ func Defaults() Config {
 		// Return it immediately; never retry or fall over.
 		TerminalErrorKeywords: []string{"invalid_request_error"},
 		QuotaFullThreshold:    99.0,
+		CCEnvelopeEnabled:     false,
+		CCEnforceSystemPrompt: false,
+		CCEnforceBetaParam:    false,
+		CCEnforceCliHeaders:   false,
+		CCEnvelopeAction:      "fallback",
+		CCSystemPromptText:    "You are Claude Code, Anthropic's official CLI for Claude.",
+		CCCliUserAgent:        "claude-cli/1.0.119 (external, cli)",
+		CCCliAnthropicBeta:    "oauth-2025-04-20",
+		CCCliXApp:             "cli",
 	}
 }
 
@@ -473,6 +493,16 @@ type Patch struct {
 	RetrySameAccountMax       *int
 
 	QuotaFullThreshold *float64
+
+	CCEnvelopeEnabled     *bool
+	CCEnforceSystemPrompt *bool
+	CCEnforceBetaParam    *bool
+	CCEnforceCliHeaders   *bool
+	CCEnvelopeAction      *string
+	CCSystemPromptText    *string
+	CCCliUserAgent        *string
+	CCCliAnthropicBeta    *string
+	CCCliXApp             *string
 }
 
 func apply(c *Config, p Patch) {
@@ -692,6 +722,33 @@ func apply(c *Config, p Patch) {
 	if p.QuotaFullThreshold != nil {
 		c.QuotaFullThreshold = *p.QuotaFullThreshold
 	}
+	if p.CCEnvelopeEnabled != nil {
+		c.CCEnvelopeEnabled = *p.CCEnvelopeEnabled
+	}
+	if p.CCEnforceSystemPrompt != nil {
+		c.CCEnforceSystemPrompt = *p.CCEnforceSystemPrompt
+	}
+	if p.CCEnforceBetaParam != nil {
+		c.CCEnforceBetaParam = *p.CCEnforceBetaParam
+	}
+	if p.CCEnforceCliHeaders != nil {
+		c.CCEnforceCliHeaders = *p.CCEnforceCliHeaders
+	}
+	if p.CCEnvelopeAction != nil {
+		c.CCEnvelopeAction = *p.CCEnvelopeAction
+	}
+	if p.CCSystemPromptText != nil {
+		c.CCSystemPromptText = *p.CCSystemPromptText
+	}
+	if p.CCCliUserAgent != nil {
+		c.CCCliUserAgent = *p.CCCliUserAgent
+	}
+	if p.CCCliAnthropicBeta != nil {
+		c.CCCliAnthropicBeta = *p.CCCliAnthropicBeta
+	}
+	if p.CCCliXApp != nil {
+		c.CCCliXApp = *p.CCCliXApp
+	}
 }
 
 // MaxTokensFor returns the configured output-token ceiling for model, matching the
@@ -708,6 +765,11 @@ func (c Config) MaxTokensFor(model string) int {
 		}
 	}
 	return best
+}
+
+// Apply applies a single patch to the config in place.
+func (c *Config) Apply(p Patch) {
+	apply(c, p)
 }
 
 // Resolve applies patches in order onto base (later patches win).
@@ -816,5 +878,15 @@ func DryRun(base Config, patches ...Patch) (Config, []Diff) {
 	add("RetrySameAccountMax", base.RetrySameAccountMax, final.RetrySameAccountMax)
 	// Phase 5: reactive quota
 	add("QuotaFullThreshold", base.QuotaFullThreshold, final.QuotaFullThreshold)
+	// Sub-project #2: CC envelope enforcement
+	add("CCEnvelopeEnabled", base.CCEnvelopeEnabled, final.CCEnvelopeEnabled)
+	add("CCEnforceSystemPrompt", base.CCEnforceSystemPrompt, final.CCEnforceSystemPrompt)
+	add("CCEnforceBetaParam", base.CCEnforceBetaParam, final.CCEnforceBetaParam)
+	add("CCEnforceCliHeaders", base.CCEnforceCliHeaders, final.CCEnforceCliHeaders)
+	add("CCEnvelopeAction", base.CCEnvelopeAction, final.CCEnvelopeAction)
+	add("CCSystemPromptText", base.CCSystemPromptText, final.CCSystemPromptText)
+	add("CCCliUserAgent", base.CCCliUserAgent, final.CCCliUserAgent)
+	add("CCCliAnthropicBeta", base.CCCliAnthropicBeta, final.CCCliAnthropicBeta)
+	add("CCCliXApp", base.CCCliXApp, final.CCCliXApp)
 	return final, diffs
 }

@@ -206,6 +206,23 @@ func TestSpendCapPatch(t *testing.T) {
 	}
 }
 
+func TestCCEnvelopeDefaultsAndApply(t *testing.T) {
+	d := Defaults()
+	if d.CCEnvelopeEnabled || d.CCEnforceSystemPrompt || d.CCEnforceBetaParam || d.CCEnforceCliHeaders {
+		t.Fatal("CC envelope toggles must default false")
+	}
+	if d.CCSystemPromptText == "" || d.CCCliXApp == "" {
+		t.Fatal("CC value defaults must be set")
+	}
+	on := true
+	act := "complete"
+	c := Defaults()
+	c.Apply(Patch{CCEnvelopeEnabled: &on, CCEnforceBetaParam: &on, CCEnvelopeAction: &act})
+	if !c.CCEnvelopeEnabled || !c.CCEnforceBetaParam || c.CCEnvelopeAction != "complete" {
+		t.Fatalf("Apply did not patch CC fields: %+v", c)
+	}
+}
+
 func TestQuietWindowOvernight(t *testing.T) {
 	// 21:00-04:00 跨夜: 23:00(=1380) 命中, 12:00(=720) 不命中
 	windows := []TimeWindow{{StartMin: 1260, EndMin: 240}}
