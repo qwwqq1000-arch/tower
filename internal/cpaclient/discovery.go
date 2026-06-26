@@ -179,6 +179,10 @@ func Sync(ctx context.Context, q syncQuerier, node sqlc.Node, rot *RotateConfig)
 	if err != nil {
 		return 0, err
 	}
+	acctOwner := node.AccountOwnerID
+	if acctOwner == "" {
+		acctOwner = node.OwnerID
+	}
 	for _, a := range accounts {
 		aid := accountID(node.ID, a)
 		email := a.Email
@@ -187,7 +191,7 @@ func Sync(ctx context.Context, q syncQuerier, node sqlc.Node, rot *RotateConfig)
 		}
 		if err := q.UpsertCpaAccount(ctx, sqlc.UpsertCpaAccountParams{
 			ID:               aid,
-			OwnerID:          node.OwnerID,
+			OwnerID:          acctOwner,
 			Email:            email,
 			SubscriptionType: a.AccountType,
 			Status:           statusFor(a),
