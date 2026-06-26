@@ -536,25 +536,21 @@ func (s *Service) recordSpend(ctx context.Context, ownerID, key string, cost flo
 	s.spendLimitedAt.Store(key, T) // remember which T triggered this
 
 	fetchCtx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-	reason, recovMs := s.classifyQuotaLimit(fetchCtx, key, cfg, now)
+	reason, recovMs, src := s.spendLimitRecovery(fetchCtx, key, cfg, now)
 	cancel()
-	if reason != "" {
-		s.Store.SetLimitedReason(key, s.Base.MaxConcurrent, recovMs, reason)
-		s.persistLimit(ctx, key, recovMs, reason)
-		_ = events.Record(ctx, s.Q, now, events.Event{
-			Type: "quota_limited", Target: key, OwnerID: ownerID,
-			Detail: map[string]any{"account": key, "resetsAt": recovMs, "source": reason},
-		})
-	} else {
-		// Quota classify unavailable → fallback recovery: +5h.
-		fallbackRecov := now + spendFallbackRecoveryMs
-		s.Store.SetLimitedReason(key, s.Base.MaxConcurrent, fallbackRecov, "5h")
-		s.persistLimit(ctx, key, fallbackRecov, "5h")
-		_ = events.Record(ctx, s.Q, now, events.Event{
-			Type: "quota_limited", Target: key, OwnerID: ownerID,
-			Detail: map[string]any{"account": key, "resetsAt": fallbackRecov, "source": "spend5h_fallback"},
-		})
+	if reason == "" {
+		// Quota couldn't be fetched → fixed +5h fallback (last resort only).
+		reason, recovMs, src = "5h", now+spendFallbackRecoveryMs, "spend5h_fixedfallback"
 	}
+	// recovMs is the account's REAL 5h-window reset (design: spend-cap recovery aligns to
+	// the live quota's 5h reset, not a fixed +5h), or a genuinely-full window's reset, or
+	// the fixed fallback only when the quota couldn't be fetched at all.
+	s.Store.SetLimitedReason(key, s.Base.MaxConcurrent, recovMs, reason)
+	s.persistLimit(ctx, key, recovMs, reason)
+	_ = events.Record(ctx, s.Q, now, events.Event{
+		Type: "quota_limited", Target: key, OwnerID: ownerID,
+		Detail: map[string]any{"account": key, "resetsAt": recovMs, "source": src},
+	})
 }
 
 // insertLog stamps the ctx request id onto the row so every log row of a request
@@ -2438,20 +2434,20 @@ func pickQuotaLimit(u *cpaclient.Usage, threshold float64, now int64) (string, i
 	return "", 0
 }
 
-// classifyQuotaLimit fetches the cpa account's live quota and returns a typed limit if
-// a window is exhausted. Returns ("",0) for non-cpa nodes, missing mgmt_key, fetch
-// errors, or when no window is full. Never panics — the dispatch hot path is safe.
-func (s *Service) classifyQuotaLimit(ctx context.Context, key string, cfg policy.Config, now int64) (string, int64) {
+// fetchUsage fetches a cpa account's live subscription quota (5h/7d windows) from the
+// CPA usage API. Returns nil for non-cpa nodes, missing mgmt_key, or fetch errors.
+// Never panics — the dispatch hot path is safe.
+func (s *Service) fetchUsage(ctx context.Context, key string) *cpaclient.Usage {
 	if s.Q == nil {
-		return "", 0
+		return nil
 	}
 	nodeID, profileID, ok := splitKey(key)
 	if !ok {
-		return "", 0
+		return nil
 	}
 	node, err := s.Q.GetNode(ctx, nodeID)
 	if err != nil || node.Kind != "cpa" || node.MgmtKey == "" {
-		return "", 0
+		return nil
 	}
 	mgmtKey := node.MgmtKey
 	if s.Cipher != nil {
@@ -2472,6 +2468,17 @@ func (s *Service) classifyQuotaLimit(ctx context.Context, key string, cfg policy
 	}
 	u, err := c.Usage(ctx, authIndex, profileID)
 	if err != nil {
+		return nil
+	}
+	return u
+}
+
+// classifyQuotaLimit fetches the cpa account's live quota and returns a typed limit if
+// a window is exhausted. Returns ("",0) for non-cpa nodes, missing mgmt_key, fetch
+// errors, or when no window is full. Never panics — the dispatch hot path is safe.
+func (s *Service) classifyQuotaLimit(ctx context.Context, key string, cfg policy.Config, now int64) (string, int64) {
+	u := s.fetchUsage(ctx, key)
+	if u == nil {
 		return "", 0
 	}
 	threshold := cfg.QuotaFullThreshold
@@ -2479,6 +2486,34 @@ func (s *Service) classifyQuotaLimit(ctx context.Context, key string, cfg policy
 		threshold = 99.0
 	}
 	return pickQuotaLimit(u, threshold, now)
+}
+
+// spendLimitRecovery resolves the recovery time when the SPEND CAP trips. Per design:
+// fetch the account's LIVE quota and set recovery to the real 5h-window reset time —
+// the spend budget is a per-5h-window throttle, so the account should release when its
+// real 5h window rolls over, NOT a fixed +5h from trip time (which drifts and holds a
+// quota-fine account needlessly). If a 7d/5h window is genuinely FULL, that real quota
+// limit takes precedence (its own reset). Returns (reason, recovMs, source); ("",0,"")
+// when the quota fetch fails so the caller falls back to a fixed +5h.
+func (s *Service) spendLimitRecovery(ctx context.Context, key string, cfg policy.Config, now int64) (string, int64, string) {
+	u := s.fetchUsage(ctx, key)
+	if u == nil {
+		return "", 0, ""
+	}
+	threshold := cfg.QuotaFullThreshold
+	if threshold <= 0 {
+		threshold = 99.0
+	}
+	if reason, recov := pickQuotaLimit(u, threshold, now); reason != "" {
+		return reason, recov, reason // a window is genuinely full → real quota limit
+	}
+	// No window full — the spend cap is the trigger. Align recovery to the real 5h reset.
+	if u.FiveHour != nil {
+		if recov := parseResetsAt(u.FiveHour.ResetsAt); recov > now {
+			return "5h", recov, "spend5h"
+		}
+	}
+	return "", 0, ""
 }
 
 // acctOwnerOf returns the ownerID of the account associated with the dispatch
