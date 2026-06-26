@@ -75,27 +75,31 @@ function NodeKindBadge({ kind }: { kind?: string }) {
   );
 }
 
+// Node status is derived from enabled/banned/loggedIn in ONE place so the badge, the
+// status sort, and the status filter never drift apart (tenant-shared-codepath rule).
+type NodeStatus = 'ok' | 'banned' | 'noauth' | 'disabled';
+
+function nodeStatusValue(node: NodeRecord): NodeStatus {
+  if (!node.enabled) return 'disabled';
+  if (node.banned) return 'banned';
+  if (node.loggedIn === false) return 'noauth';
+  return 'ok';
+}
+
+// order drives the 状态 sort: asc = 正常 first, desc surfaces 封号 first.
+const NODE_STATUS_META: Record<NodeStatus, { label: string; dot: string; text: string; order: number }> = {
+  ok: { label: '正常', dot: 'bg-ok', text: 'text-ok', order: 0 },
+  disabled: { label: '停用', dot: 'bg-muted', text: 'text-muted', order: 1 },
+  noauth: { label: '未上传凭证', dot: 'bg-orange-400', text: 'text-orange-400', order: 2 },
+  banned: { label: '封号', dot: 'bg-err', text: 'text-err', order: 3 },
+};
+
 function NodeStatusBadge({ node }: { node: NodeRecord }) {
-  if (!node.enabled) {
-    return (
-      <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted">
-        <span className="w-1.5 h-1.5 rounded-full bg-muted" />
-        停用
-      </span>
-    );
-  }
-  if (node.loggedIn === false) {
-    return (
-      <span className="inline-flex items-center gap-1.5 text-xs font-medium text-orange-400">
-        <span className="w-1.5 h-1.5 rounded-full bg-orange-400" />
-        未上传凭证
-      </span>
-    );
-  }
+  const m = NODE_STATUS_META[nodeStatusValue(node)];
   return (
-    <span className="inline-flex items-center gap-1.5 text-xs font-medium text-ok">
-      <span className="w-1.5 h-1.5 rounded-full bg-ok" />
-      正常
+    <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${m.text}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${m.dot}`} />
+      {m.label}
     </span>
   );
 }
@@ -767,9 +771,7 @@ type SortKey = 'name' | 'createdAt' | 'status';
 type SortDir = 'asc' | 'desc';
 
 function statusOrder(node: NodeRecord): number {
-  if (!node.enabled) return 2;
-  if (node.loggedIn === false) return 1;
-  return 0;
+  return NODE_STATUS_META[nodeStatusValue(node)].order;
 }
 
 function sortNodes(nodes: NodeRecord[], key: SortKey, dir: SortDir): NodeRecord[] {
@@ -1064,6 +1066,9 @@ export default function Nodes() {
   // Search
   const [search, setSearch] = useState('');
 
+  // Status filter ('' = all)
+  const [statusFilter, setStatusFilter] = useState<NodeStatus | ''>('');
+
   // Sort
   const [sortKey, setSortKey] = useState<SortKey>('name');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
@@ -1098,6 +1103,7 @@ export default function Nodes() {
 
   // Derived: filtered + sorted + paginated
   const filtered = nodes.filter((n) => {
+    if (statusFilter && nodeStatusValue(n) !== statusFilter) return false;
     if (!search.trim()) return true;
     const q = search.trim().toLowerCase();
     return (
@@ -1115,7 +1121,7 @@ export default function Nodes() {
   // Reset to page 1 when filter changes
   useEffect(() => {
     setPage(1);
-  }, [search, sortKey, sortDir]);
+  }, [search, statusFilter, sortKey, sortDir]);
 
   function handleSort(col: SortKey) {
     if (sortKey === col) {
@@ -1233,6 +1239,17 @@ export default function Nodes() {
           className="w-full max-w-sm bg-surface border border-line rounded-lg px-3 py-2 text-sm text-ink
                      placeholder:text-muted focus:outline-none focus:border-accent transition"
         />
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value as NodeStatus | '')}
+          className="bg-surface border border-line rounded-lg px-3 py-2 text-sm text-ink focus:outline-none focus:border-accent transition"
+        >
+          <option value="">全部状态</option>
+          <option value="ok">正常</option>
+          <option value="banned">封号</option>
+          <option value="noauth">未上传凭证</option>
+          <option value="disabled">停用</option>
+        </select>
         {search && (
           <button
             onClick={() => setSearch('')}

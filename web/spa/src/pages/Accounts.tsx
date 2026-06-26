@@ -87,7 +87,7 @@ function LimitedBadge({ until }: { until?: number }) {
   const cd = until && until > 0 ? fmtCountdown(until - now) : null;
   return (
     <span className={`inline-flex items-center mt-1 px-1.5 py-0.5 rounded border text-[10px] font-mono ${statusColor('limited')}`}>
-      限额{cd ? `(恢复倒计时 ${cd})` : '(配额)'}
+      限额{cd ? `(${cd})` : '(配额)'}
     </span>
   );
 }
@@ -766,8 +766,9 @@ function AdminAccounts() {
   const [toast, setToast] = useState<string | null>(null);
   const [refreshingAll, setRefreshingAll] = useState(false);
 
-  // Search / sort / page
+  // Search / status filter / sort / page
   const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'' | 'active' | 'limited' | 'banned' | 'cooldown'>('');
   const [sortKey, setSortKey] = useState<SortKey>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [page, setPage] = useState(1);
@@ -835,7 +836,7 @@ function AdminAccounts() {
   }, [accounts, fetchAll]);
 
   // Reset page when search changes
-  useEffect(() => { setPage(1); }, [search]);
+  useEffect(() => { setPage(1); }, [search, statusFilter]);
 
   function handleUnassign(nodeId: string, accountId: string) {
     setAccounts((prev) =>
@@ -846,18 +847,23 @@ function AdminAccounts() {
   // Filtering + sorting + pagination
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    let list = q
-      ? accounts.filter(
-          (a) =>
-            (a.email || '').toLowerCase().includes(q) ||
-            (a.nodeName || '').toLowerCase().includes(q) ||
-            (() => {
-              if (!a.ownerId) return '超级管理员'.includes(q);
-              const u = users.find((u) => u.id === a.ownerId);
-              return (u ? u.username : a.ownerId).toLowerCase().includes(q);
-            })(),
-        )
-      : accounts;
+    const inStatus = (s?: string) => {
+      if (!statusFilter) return true;
+      const banned = s === 'banned' || s === 'permanent' || s === 'half_open' || s === 'disabled';
+      if (statusFilter === 'banned') return banned;
+      if (statusFilter === 'limited') return s === 'limited';
+      if (statusFilter === 'cooldown') return s === 'cooldown';
+      return !banned && s !== 'limited' && s !== 'cooldown'; // 'active' (含 待命/亲和)
+    };
+    let list = accounts.filter((a) => {
+      if (!inStatus(a.status)) return false;
+      if (!q) return true;
+      if ((a.email || '').toLowerCase().includes(q)) return true;
+      if ((a.nodeName || '').toLowerCase().includes(q)) return true;
+      if (!a.ownerId) return '超级管理员'.includes(q);
+      const u = users.find((u) => u.id === a.ownerId);
+      return (u ? u.username : a.ownerId).toLowerCase().includes(q);
+    });
 
     if (sortKey) {
       list = [...list].sort((a, b) => {
@@ -875,7 +881,7 @@ function AdminAccounts() {
       list = [...list].sort((a, b) => statusRank(a.status) - statusRank(b.status));
     }
     return list;
-  }, [accounts, search, sortKey, sortDir, users]);
+  }, [accounts, search, statusFilter, sortKey, sortDir, users]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -908,6 +914,17 @@ function AdminAccounts() {
           className="w-full sm:w-72 bg-surface border border-line rounded-lg px-3 py-2 text-sm text-ink
                      placeholder:text-muted focus:outline-none focus:border-accent transition"
         />
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value as '' | 'active' | 'limited' | 'banned' | 'cooldown')}
+          className="bg-surface border border-line rounded-lg px-3 py-2 text-sm text-ink focus:outline-none focus:border-accent transition"
+        >
+          <option value="">全部状态</option>
+          <option value="active">活跃</option>
+          <option value="limited">限额</option>
+          <option value="banned">封号</option>
+          <option value="cooldown">冷却</option>
+        </select>
         {search && (
           <button
             onClick={() => setSearch('')}

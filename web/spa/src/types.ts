@@ -24,6 +24,7 @@ export interface NodeRecord {
   loggedIn?: boolean;
   email?: string;
   liveVersion?: string;
+  banned?: boolean;
 }
 
 // --- Keys (号库) ---

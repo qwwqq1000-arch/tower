@@ -87,7 +87,7 @@ export function ConcurrencyPanel({ accounts }: { accounts: DispatchAccountSnapsh
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-line text-left text-xs text-muted">
+            <tr className="border-b border-line text-left text-xs text-muted whitespace-nowrap">
               <th className="px-4 py-2 font-medium">邮箱 / 账户</th>
               <th className="px-4 py-2 font-medium">状态</th>
               <th className="px-4 py-2 font-medium">模型</th>
@@ -106,7 +106,7 @@ export function ConcurrencyPanel({ accounts }: { accounts: DispatchAccountSnapsh
             {pageRows.map((a) => (
               <tr key={a.key} className="border-b border-line/50 hover:bg-line/30 transition">
                 <td className="px-4 py-2">
-                  <p className="text-sm text-ink font-medium">{a.label || '—'}</p>
+                  <p className="text-sm text-ink font-medium">{(a.label || '—').split('@')[0]}</p>
                 </td>
                 <td className="px-4 py-2">
                   <StatusBadge status={a.status} limitedUntil={a.limitedUntil} limitReason={a.limitReason} />
