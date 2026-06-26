@@ -43,7 +43,7 @@ func nextNodeName(ctx context.Context, q *sqlc.Queries) string {
 func createNodeHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Name, BaseUrl, ApiKey, OwnerId, Kind, MgmtKey string
+			Name, BaseUrl, ApiKey, OwnerId, Kind, MgmtKey, AccountOwnerId string
 			Passthrough bool
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.BaseUrl == "" {
@@ -70,13 +70,20 @@ func createNodeHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc 
 		if owner, all := scope(r); !all {
 			body.OwnerId = owner
 		}
+		// Resolve account owner: use body value if present, else default to "test" tenant.
+		acctOwner := strings.TrimSpace(body.AccountOwnerId)
+		if acctOwner == "" {
+			if tn, terr := q.GetTenantByUsername(r.Context(), "test"); terr == nil {
+				acctOwner = tn.ID
+			}
+		}
 		// Encrypt secrets at rest (vault-crypto-3). The meridian api_key and the
 		// CPA mgmt_key are stored as ciphertext; read paths decrypt transparently
 		// via cipher.DecryptOrPlaintext. A nil cipher (plaintext-mode) is a no-op.
 		n, err := q.CreateNode(r.Context(), sqlc.CreateNodeParams{
 			ID: randHex("n_"), Name: body.Name, BaseUrl: body.BaseUrl, ApiKey: cipher.EncryptStr(body.ApiKey),
 			MgmtKey: cipher.EncryptStr(body.MgmtKey), OwnerID: body.OwnerId, Kind: kind,
-			Passthrough: body.Passthrough,
+			Passthrough: body.Passthrough, AccountOwnerID: acctOwner,
 		})
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})

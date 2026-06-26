@@ -154,6 +154,59 @@ func TestCreateNodeForceOwner(t *testing.T) {
 	}
 }
 
+// TestCreateNodeAccountOwner verifies that POST /api/admin/nodes stores the
+// supplied accountOwnerId on the node row and leaves owner_id empty (global node).
+func TestCreateNodeAccountOwner(t *testing.T) {
+	url := os.Getenv("TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	if err := db.Migrate(ctx, url); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	pool, err := db.Connect(ctx, url)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer pool.Close()
+	q := sqlc.New(pool)
+
+	const secret = "test-secret-padding-to-32-chars!"
+	router := NewRouter(pool, secret, nil, q, false, nil, "")
+	ck := adminCookie(t, ctx, q, secret)
+
+	// POST as superadmin with explicit accountOwnerId.
+	body := `{"baseUrl":"http://1.2.3.4:8080/","kind":"cpa","accountOwnerId":"u_test"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/nodes", strings.NewReader(body))
+	req.AddCookie(ck)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create node status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var nodeResp struct{ ID string }
+	if err := json.NewDecoder(rec.Body).Decode(&nodeResp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if nodeResp.ID == "" {
+		t.Fatal("expected node ID in response")
+	}
+
+	// Read back the node row directly and assert account_owner_id and owner_id.
+	node, err := q.GetNode(ctx, nodeResp.ID)
+	if err != nil {
+		t.Fatalf("GetNode: %v", err)
+	}
+	if node.AccountOwnerID != "u_test" {
+		t.Fatalf("expected account_owner_id=u_test, got %q", node.AccountOwnerID)
+	}
+	if node.OwnerID != "" {
+		t.Fatalf("expected owner_id empty (superadmin global node), got %q", node.OwnerID)
+	}
+}
+
 // TestDeleteNodeClearsAccountState verifies that deleting a node also removes
 // its account_state rows so ghost accounts don't resurrect on restart.
 func TestDeleteNodeClearsAccountState(t *testing.T) {
