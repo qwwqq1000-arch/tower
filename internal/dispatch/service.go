@@ -419,6 +419,24 @@ func (s *Service) applyReactiveLimit(ctx context.Context, ownerID, key string, r
 	})
 }
 
+// markNo1M flags an account as not supporting 1M / extra-usage, persisting a recovery
+// deadline (now + No1MRecoveryMs; <=0 → permanent). buildCandidates then skips it for
+// long-context requests until the deadline elapses or it is manually cleared.
+func (s *Service) markNo1M(ctx context.Context, key string, cfg policy.Config) {
+	accountID := ""
+	if v, ok := s.keyAccount.Load(key); ok {
+		accountID, _ = v.(string)
+	}
+	if accountID == "" {
+		return
+	}
+	until := s.Now() + cfg.No1MRecoveryMs
+	if cfg.No1MRecoveryMs <= 0 {
+		until = permanentNo1M
+	}
+	_ = s.Q.SetAccountNo1MUntil(ctx, sqlc.SetAccountNo1MUntilParams{ID: accountID, No1MUntil: until})
+}
+
 // persistLimit persists a quota-limit state to the DB so it survives restart.
 // Best-effort: DB errors are logged and never bubble up to the caller.
 func (s *Service) persistLimit(ctx context.Context, key string, untilMs int64, reason string) {
@@ -722,6 +740,9 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 					// rotate the account out until the reset time parsed from it.
 					if limited, resetMs := parseLimitReset(res.Status, res.Body, s.Now(), cfg.QuotaLimitKeywords, cfg.QuotaLimitStatusCodes, cfg.QuotaLimitDefaultResetMs); limited {
 						s.applyReactiveLimit(ctx, acctOwnerOf(keyOwner, key, ownerID), key, resetMs)
+					}
+					if longCtx && cfg.LongContextGateEnabled && isExtraUsageNo1M(res.Status, res.Body, cfg) {
+						s.markNo1M(ctx, key, cfg)
 					}
 				}
 			},
@@ -2192,6 +2213,9 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 		// Reactive quota rotation on the stream path too (account-limit-reactive).
 		if limited, resetMs := parseLimitReset(out.Status, out.Body, nowMs, cfg.QuotaLimitKeywords, cfg.QuotaLimitStatusCodes, cfg.QuotaLimitDefaultResetMs); limited {
 			s.applyReactiveLimit(ctx, acctOwnerOf(keyOwner, key, ownerID), key, resetMs)
+		}
+		if longCtx && cfg.LongContextGateEnabled && isExtraUsageNo1M(out.Status, out.Body, cfg) {
+			s.markNo1M(ctx, key, cfg)
 		}
 		// Terminal 400: deterministic invalid_request_error — return immediately to
 		// client, no further accounts tried, no fallback channel.
