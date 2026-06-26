@@ -91,10 +91,40 @@ func main() {
 	}
 
 	// Restore persisted spend thresholds so the raising-threshold bar survives restart.
-	// todaySpend resets to 0 on restart (intended); threshold is restored so the account
-	// doesn't restart from T₀ mid-cycle (would re-fire too early if the bar was raised).
-	// On day change the threshold is re-anchored automatically in recordSpend.
+	// The threshold is restored so the account doesn't restart from T₀ mid-cycle (would
+	// re-fire too early if the bar was raised). On day change the threshold is re-anchored
+	// automatically in recordSpend.
 	svc.RestoreSpendThresholds(ctx)
+
+	// Restore each account's cumulative spend for TODAY so the daily spend cap counts the
+	// full day across restarts. Previously todaySpend reset to 0 on every restart, which
+	// re-granted each account a full cap window — on a frequent-deploy day the daily cap
+	// never actually bounded daily spend (an account at $360 with a $130 cap kept getting
+	// fresh $130 windows). Seed from dispatch_logs (billed local-node rows since the start
+	// of today UTC); later AddSpend calls accumulate on top of the restored total.
+	{
+		dayStart := (nowMs() / 86_400_000) * 86_400_000
+		if rows, err := pool.Query(ctx, `SELECT target, COALESCE(SUM(cost_usd),0)::float8 FROM dispatch_logs WHERE ts >= $1 AND target LIKE 'n\_%' GROUP BY target`, dayStart); err != nil {
+			log.Printf("restore today spend: %v", err)
+		} else {
+			n := 0
+			for rows.Next() {
+				var key string
+				var total float64
+				if scanErr := rows.Scan(&key, &total); scanErr != nil {
+					continue
+				}
+				if total > 0 {
+					store.SeedSpendToday(key, total, nowMs())
+					n++
+				}
+			}
+			rows.Close()
+			if n > 0 {
+				log.Printf("restored today spend for %d account(s)", n)
+			}
+		}
+	}
 
 	// Periodically persist account_state so warm-start after restart has data.
 	go func() {

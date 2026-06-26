@@ -217,6 +217,16 @@ func (a *Account) SpendToday(now int64) float64 {
 	return a.todayTotal
 }
 
+// SeedSpendToday warm-restores the today-bucket to total for the current calendar
+// day (bucket = now/86400000), so the daily spend cap counts the full day across
+// restarts instead of resetting to 0. Overwrites any existing today total; later
+// AddSpend calls accumulate on top. A no-op for past/future days is the caller's
+// concern — callers pass the current clock.
+func (a *Account) SeedSpendToday(now int64, total float64) {
+	a.todayDay = now / 86_400_000
+	a.todayTotal = total
+}
+
 // BurstTick increments the burst counter by one (called on each successful dispatch
 // when SessionSim is enabled). Thread-safety is the caller's responsibility (Store
 // wrappers hold the store lock before calling this).

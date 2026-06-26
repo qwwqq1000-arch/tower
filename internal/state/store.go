@@ -371,6 +371,18 @@ func (s *Store) SpendToday(key string, now int64) float64 {
 	return a.SpendToday(now)
 }
 
+// SeedSpendToday warm-restores key's cumulative spend for the current calendar day
+// from persisted history (dispatch_logs), creating the account if absent. This makes
+// the daily spend cap survive restarts: without it the in-memory today-total resets
+// to 0 on every restart, re-granting each account a full cap window (a frequent-deploy
+// day would never enforce the daily cap). Subsequent AddSpend calls accumulate on top.
+func (s *Store) SeedSpendToday(key string, total float64, now int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.ensureLocked(key, 1) // capacity irrelevant to spend; 1 is the safe default
+	a.SeedSpendToday(now, total)
+}
+
 // SetLimited replaces an account's model-class rate-limit map (creating it if absent).
 // It clears LimitReason so a stale typed reason ("5h"/"7d") does not linger after a
 // reactive/spend limit replaces it. SetLimitedReason still sets it explicitly.

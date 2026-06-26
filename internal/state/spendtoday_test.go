@@ -67,3 +67,41 @@ func TestSpendTodayUnknownKeyReturnsZero(t *testing.T) {
 		t.Fatalf("expected 0 for unknown key, got %f", got)
 	}
 }
+
+// TestSeedSpendTodaySetsTotal verifies a warm-restore seed sets the day's total so
+// SpendToday returns it on the same calendar day (spend survives restart — without
+// this the in-memory total resets to 0 and the daily cap re-grants a full window).
+func TestSeedSpendTodaySetsTotal(t *testing.T) {
+	now := int64(86_400_000)
+	store := NewStore(func() int64 { return now }, func(min, max int64) int64 { return min })
+
+	store.SeedSpendToday("k1", 362.5, now)
+	if got := store.SpendToday("k1", now+1000); got != 362.5 {
+		t.Fatalf("expected seeded 362.5, got %f", got)
+	}
+}
+
+// TestSeedSpendTodayThenAddAccumulates verifies post-seed AddSpend adds on top of the
+// restored total (not from 0), so the cap counts pre- + post-restart spend together.
+func TestSeedSpendTodayThenAddAccumulates(t *testing.T) {
+	now := int64(86_400_000)
+	store := NewStore(func() int64 { return now }, func(min, max int64) int64 { return min })
+
+	store.SeedSpendToday("k1", 100.0, now)
+	store.AddSpend("k1", 25.0, now+1000)
+	if got := store.SpendToday("k1", now+1000); got != 125.0 {
+		t.Fatalf("expected 125.0 (seed+add), got %f", got)
+	}
+}
+
+// TestSeedSpendTodayDifferentDayIgnored verifies a seed anchored to an old day is not
+// returned once the clock has rolled to a new day (the cap re-anchors on day change).
+func TestSeedSpendTodayDifferentDayIgnored(t *testing.T) {
+	dayMs := int64(86_400_000)
+	store := NewStore(func() int64 { return dayMs }, func(min, max int64) int64 { return min })
+
+	store.SeedSpendToday("k1", 500.0, dayMs) // seeded on day 1
+	if got := store.SpendToday("k1", dayMs*2); got != 0 {
+		t.Fatalf("expected 0 on day 2 (seed was day 1), got %f", got)
+	}
+}
