@@ -217,9 +217,9 @@ func TestCCEnvelopeDefaultsAndApply(t *testing.T) {
 	on := true
 	act := "complete"
 	c := Defaults()
-	c.Apply(Patch{CCEnvelopeEnabled: &on, CCEnforceBetaParam: &on, CCEnvelopeAction: &act})
+	apply(&c, Patch{CCEnvelopeEnabled: &on, CCEnforceBetaParam: &on, CCEnvelopeAction: &act})
 	if !c.CCEnvelopeEnabled || !c.CCEnforceBetaParam || c.CCEnvelopeAction != "complete" {
-		t.Fatalf("Apply did not patch CC fields: %+v", c)
+		t.Fatalf("apply did not patch CC fields: %+v", c)
 	}
 }
 

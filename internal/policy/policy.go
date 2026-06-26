@@ -767,11 +767,6 @@ func (c Config) MaxTokensFor(model string) int {
 	return best
 }
 
-// Apply applies a single patch to the config in place.
-func (c *Config) Apply(p Patch) {
-	apply(c, p)
-}
-
 // Resolve applies patches in order onto base (later patches win).
 func Resolve(base Config, patches ...Patch) Config {
 	c := base
