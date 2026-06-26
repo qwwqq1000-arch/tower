@@ -3,6 +3,7 @@ package dispatch
 import (
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/qwwqq1000-arch/tower/internal/policy"
@@ -59,5 +60,29 @@ func TestMissingEnvelopePieces(t *testing.T) {
 	}
 	if got := missingEnvelopePieces(c, noSys, q(""), hdr("claude-cli/1.0", "oauth-2025-04-20", "cli")); got != nil {
 		t.Fatalf("full cli headers should be nil, got %v", got)
+	}
+}
+
+func TestInjectEnvelope(t *testing.T) {
+	body := []byte(`{"model":"claude-opus-4-8","messages":[]}`)
+	vals := envelopeVals{system: "You are Claude Code, Anthropic's official CLI for Claude.", ua: "claude-cli/1.0", beta: "oauth-2025-04-20", xapp: "cli"}
+	miss := []EnvelopePiece{PieceSystemPrompt, PieceCliHeaders}
+
+	h := http.Header{}
+	newBody := injectEnvelope(miss, body, h, vals)
+
+	if h.Get("User-Agent") != "claude-cli/1.0" || h.Get("x-app") != "cli" || h.Get("anthropic-beta") != "oauth-2025-04-20" {
+		t.Fatalf("headers not injected: %v", h)
+	}
+	if !strings.Contains(string(newBody), "You are Claude Code") {
+		t.Fatalf("system prompt not injected: %s", newBody)
+	}
+}
+
+func TestInjectEnvelopeBadBodyUnchanged(t *testing.T) {
+	body := []byte(`not json`)
+	got := injectEnvelope([]EnvelopePiece{PieceSystemPrompt}, body, http.Header{}, envelopeVals{system: "x"})
+	if string(got) != "not json" {
+		t.Fatalf("bad body must be returned unchanged, got %s", got)
 	}
 }

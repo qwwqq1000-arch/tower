@@ -733,7 +733,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 			RetryDelayMs:        cfg.RetryDelayMs,
 			RetrySameAccountMax: cfg.RetrySameAccountMax,
 		}
-		np := &NodeProxy{Body: body, Resolve: resolver, BanSignals: cfg.BanSignals, BanKeywords: cfg.BanKeywords, IdleTimeout: time.Duration(cfg.StreamIdleTimeoutSec) * time.Second, UpstreamTimeoutSec: cfg.UpstreamTimeoutSec}
+		np := &NodeProxy{Body: body, Resolve: resolver, BanSignals: cfg.BanSignals, BanKeywords: cfg.BanKeywords, IdleTimeout: time.Duration(cfg.StreamIdleTimeoutSec) * time.Second, UpstreamTimeoutSec: cfg.UpstreamTimeoutSec, EnvVals: envelopeVals{system: cfg.CCSystemPromptText, ua: cfg.CCCliUserAgent, beta: cfg.CCCliAnthropicBeta, xapp: cfg.CCCliXApp}}
 		res, winKey, ok := orch.Dispatch(ctx, model, order, np)
 		if ok {
 			// Response exile: if the response body contains a safety-refusal keyword,
@@ -2283,7 +2283,7 @@ func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, 
 	}
 	defer func() { settle(false) }()
 
-	np := &NodeProxy{Body: body, Resolve: resolver, BanSignals: cfg.BanSignals, BanKeywords: cfg.BanKeywords, IdleTimeout: time.Duration(cfg.StreamIdleTimeoutSec) * time.Second}
+	np := &NodeProxy{Body: body, Resolve: resolver, BanSignals: cfg.BanSignals, BanKeywords: cfg.BanKeywords, IdleTimeout: time.Duration(cfg.StreamIdleTimeoutSec) * time.Second, EnvVals: envelopeVals{system: cfg.CCSystemPromptText, ua: cfg.CCCliUserAgent, beta: cfg.CCCliAnthropicBeta, xapp: cfg.CCCliXApp}}
 	st, err := np.OpenStream(ctx, key)
 	sendReturned = true
 	if err != nil {

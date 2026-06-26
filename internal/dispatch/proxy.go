@@ -170,6 +170,9 @@ type NodeProxy struct {
 	// UpstreamTimeoutSec is the total HTTP client timeout for upstream requests.
 	// Zero falls back to the default of 300 seconds.
 	UpstreamTimeoutSec int
+	// EnvVals holds the cli config values used by envelope injection. Injection
+	// only fires when envelopeInjectFrom(ctx) returns a non-empty miss set.
+	EnvVals envelopeVals
 }
 
 func (p *NodeProxy) client() *http.Client {
@@ -189,7 +192,12 @@ func (p *NodeProxy) Send(ctx context.Context, key string) (ProxyResult, error) {
 	if !ok {
 		return ProxyResult{}, fmt.Errorf("unknown account %q", key)
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", msgURL(ref.BaseURL), bytes.NewReader(p.Body))
+	miss := envelopeInjectFrom(ctx)
+	u := msgURL(ref.BaseURL)
+	if len(miss) > 0 && betaWanted(miss) {
+		u += "?beta=true"
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", u, bytes.NewReader(p.Body))
 	if err != nil {
 		return ProxyResult{}, err
 	}
@@ -202,6 +210,14 @@ func (p *NodeProxy) Send(ctx context.Context, key string) (ProxyResult, error) {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	setNodeAuthHeaders(req.Header, ref)
+	if len(miss) > 0 {
+		body := p.Body
+		newBody := injectEnvelope(miss, body, req.Header, p.EnvVals)
+		if len(newBody) != len(body) || string(newBody) != string(body) {
+			req.Body = io.NopCloser(bytes.NewReader(newBody))
+			req.ContentLength = int64(len(newBody))
+		}
+	}
 	resp, err := p.client().Do(req)
 	if err != nil {
 		return ProxyResult{}, err
@@ -295,7 +311,12 @@ func (p *NodeProxy) OpenStream(ctx context.Context, key string) (*Stream, error)
 	if !ok {
 		return nil, fmt.Errorf("unknown account %q", key)
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", msgURL(ref.BaseURL), bytes.NewReader(p.Body))
+	miss := envelopeInjectFrom(ctx)
+	u := msgURL(ref.BaseURL)
+	if len(miss) > 0 && betaWanted(miss) {
+		u += "?beta=true"
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", u, bytes.NewReader(p.Body))
 	if err != nil {
 		return nil, err
 	}
@@ -308,6 +329,14 @@ func (p *NodeProxy) OpenStream(ctx context.Context, key string) (*Stream, error)
 		req.Header.Set("Content-Type", "application/json")
 	}
 	setNodeAuthHeaders(req.Header, ref)
+	if len(miss) > 0 {
+		body := p.Body
+		newBody := injectEnvelope(miss, body, req.Header, p.EnvVals)
+		if len(newBody) != len(body) || string(newBody) != string(body) {
+			req.Body = io.NopCloser(bytes.NewReader(newBody))
+			req.ContentLength = int64(len(newBody))
+		}
+	}
 	resp, err := streamClient.Do(req)
 	if err != nil {
 		return nil, err

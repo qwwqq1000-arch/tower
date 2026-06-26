@@ -9,6 +9,64 @@ import (
 	"github.com/qwwqq1000-arch/tower/internal/policy"
 )
 
+// envelopeVals holds the cli config values needed for injection.
+type envelopeVals struct{ system, ua, beta, xapp string }
+
+// betaWanted reports whether PieceBetaParam is in the miss set.
+func betaWanted(miss []EnvelopePiece) bool {
+	for _, m := range miss {
+		if m == PieceBetaParam {
+			return true
+		}
+	}
+	return false
+}
+
+// injectEnvelope sets the missing cli headers on h and prepends the system prompt to
+// body for the requested pieces. Best-effort: a body that is not JSON is returned
+// unchanged. (BetaParam is applied at the URL, not here.)
+func injectEnvelope(miss []EnvelopePiece, body []byte, h http.Header, v envelopeVals) []byte {
+	want := func(p EnvelopePiece) bool {
+		for _, m := range miss {
+			if m == p {
+				return true
+			}
+		}
+		return false
+	}
+	if want(PieceCliHeaders) {
+		if v.ua != "" {
+			h.Set("User-Agent", v.ua)
+		}
+		if v.beta != "" {
+			h.Set("anthropic-beta", v.beta)
+		}
+		if v.xapp != "" {
+			h.Set("x-app", v.xapp)
+		}
+	}
+	if want(PieceSystemPrompt) && v.system != "" {
+		var m map[string]json.RawMessage
+		if json.Unmarshal(body, &m) == nil {
+			var existing string
+			if raw, ok := m["system"]; ok {
+				_ = json.Unmarshal(raw, &existing) // string form; array form falls through to replace
+			}
+			combined := v.system
+			if existing != "" && !strings.Contains(existing, v.system) {
+				combined = v.system + "\n\n" + existing
+			}
+			if enc, err := json.Marshal(combined); err == nil {
+				m["system"] = enc
+				if nb, err := json.Marshal(m); err == nil {
+					return nb
+				}
+			}
+		}
+	}
+	return body
+}
+
 type EnvelopePiece int
 
 const (
