@@ -141,8 +141,8 @@ func pushNodeHandler(pool *pgxpool.Pool, q *sqlc.Queries, cipher *crypto.Cipher,
 		passthrough := kind == "cpa" // 透传仅 cpa,默认开
 		if overwritten {
 			if _, uerr := pool.Exec(r.Context(),
-				`UPDATE nodes SET base_url=$2, api_key=$3, mgmt_key=$4, owner_id='', kind=$5, passthrough=$6, enabled=TRUE WHERE id=$1`,
-				nodeID, baseURL, cipher.EncryptStr(apiKey), cipher.EncryptStr(mgmtKey), kind, passthrough); uerr != nil {
+				`UPDATE nodes SET base_url=$2, api_key=$3, mgmt_key=$4, owner_id='', kind=$5, passthrough=$6, account_owner_id=$7, enabled=TRUE WHERE id=$1`,
+				nodeID, baseURL, cipher.EncryptStr(apiKey), cipher.EncryptStr(mgmtKey), kind, passthrough, tenant.ID); uerr != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": uerr.Error()})
 				return
 			}
@@ -150,7 +150,7 @@ func pushNodeHandler(pool *pgxpool.Pool, q *sqlc.Queries, cipher *crypto.Cipher,
 			n, cerr := q.CreateNode(r.Context(), sqlc.CreateNodeParams{
 				ID: randHex("n_"), Name: nextNodeName(r.Context(), q), BaseUrl: baseURL,
 				ApiKey: cipher.EncryptStr(apiKey), MgmtKey: cipher.EncryptStr(mgmtKey),
-				OwnerID: "", Kind: kind, Passthrough: passthrough,
+				OwnerID: "", Kind: kind, Passthrough: passthrough, AccountOwnerID: tenant.ID,
 			})
 			if cerr != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": cerr.Error()})
@@ -165,8 +165,6 @@ func pushNodeHandler(pool *pgxpool.Pool, q *sqlc.Queries, cipher *crypto.Cipher,
 				rot := &cpaclient.RotateConfig{Store: svc.Store, BaseCapacity: svc.Base.MaxConcurrent, DefaultTTLMs: 3600000, Cipher: cipher}
 				registered, _ = cpaclient.Sync(r.Context(), q, node, rot)
 			}
-			// CPA accounts inherit the node owner (""); override to the tenant.
-			_, _ = pool.Exec(r.Context(), `UPDATE accounts SET owner_id=$1 WHERE id LIKE 'cpa:' || $2 || ':%'`, tenant.ID, nodeID)
 		} else {
 			existing, _ := q.ListNodeAccountsByNode(r.Context(), nodeID)
 			have := make(map[string]bool, len(existing))
