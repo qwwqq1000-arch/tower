@@ -63,3 +63,26 @@ func TestMigrate_CreatesTenants(t *testing.T) {
 		t.Fatal("tenants table not created")
 	}
 }
+
+func TestAccountNo1MColumn(t *testing.T) {
+	url := testURL(t)
+	ctx := context.Background()
+
+	if err := Migrate(ctx, url); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	pool, err := Connect(ctx, url)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer pool.Close()
+
+	var n int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM information_schema.columns WHERE table_name='accounts' AND column_name='no_1m_until'`).Scan(&n); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("no_1m_until column missing (got %d)", n)
+	}
+}

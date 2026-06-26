@@ -20,6 +20,7 @@ type Account struct {
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	OnboardedAt      int64              `json:"onboarded_at"`
 	BannedAt         int64              `json:"banned_at"`
+	No1MUntil        int64              `json:"no_1m_until"`
 }
 
 type AccountLimitState struct {

@@ -12,7 +12,7 @@ import (
 const createAccount = `-- name: CreateAccount :one
 INSERT INTO accounts (id, owner_id, email, subscription_type, oauth_access_enc, oauth_refresh_enc, expires_at, onboarded_at)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-RETURNING id, owner_id, email, subscription_type, oauth_access_enc, oauth_refresh_enc, expires_at, status, created_at, onboarded_at, banned_at
+RETURNING id, owner_id, email, subscription_type, oauth_access_enc, oauth_refresh_enc, expires_at, status, created_at, onboarded_at, banned_at, no_1m_until
 `
 
 type CreateAccountParams struct {
@@ -50,12 +50,13 @@ func (q *Queries) CreateAccount(ctx context.Context, arg CreateAccountParams) (A
 		&i.CreatedAt,
 		&i.OnboardedAt,
 		&i.BannedAt,
+		&i.No1MUntil,
 	)
 	return i, err
 }
 
 const getAccount = `-- name: GetAccount :one
-SELECT id, owner_id, email, subscription_type, oauth_access_enc, oauth_refresh_enc, expires_at, status, created_at, onboarded_at, banned_at FROM accounts WHERE id = $1
+SELECT id, owner_id, email, subscription_type, oauth_access_enc, oauth_refresh_enc, expires_at, status, created_at, onboarded_at, banned_at, no_1m_until FROM accounts WHERE id = $1
 `
 
 func (q *Queries) GetAccount(ctx context.Context, id string) (Account, error) {
@@ -73,6 +74,7 @@ func (q *Queries) GetAccount(ctx context.Context, id string) (Account, error) {
 		&i.CreatedAt,
 		&i.OnboardedAt,
 		&i.BannedAt,
+		&i.No1MUntil,
 	)
 	return i, err
 }
@@ -107,7 +109,7 @@ func (q *Queries) ListAccountOwners(ctx context.Context) ([]ListAccountOwnersRow
 }
 
 const listAccountsByOwner = `-- name: ListAccountsByOwner :many
-SELECT id, owner_id, email, subscription_type, oauth_access_enc, oauth_refresh_enc, expires_at, status, created_at, onboarded_at, banned_at FROM accounts WHERE owner_id = $1 ORDER BY created_at DESC
+SELECT id, owner_id, email, subscription_type, oauth_access_enc, oauth_refresh_enc, expires_at, status, created_at, onboarded_at, banned_at, no_1m_until FROM accounts WHERE owner_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListAccountsByOwner(ctx context.Context, ownerID string) ([]Account, error) {
@@ -131,6 +133,7 @@ func (q *Queries) ListAccountsByOwner(ctx context.Context, ownerID string) ([]Ac
 			&i.CreatedAt,
 			&i.OnboardedAt,
 			&i.BannedAt,
+			&i.No1MUntil,
 		); err != nil {
 			return nil, err
 		}
@@ -233,5 +236,28 @@ func (q *Queries) UpsertCpaAccount(ctx context.Context, arg UpsertCpaAccountPara
 		arg.SubscriptionType,
 		arg.Status,
 	)
+	return err
+}
+
+const setAccountNo1MUntil = `-- name: SetAccountNo1MUntil :exec
+UPDATE accounts SET no_1m_until = $2 WHERE id = $1
+`
+
+type SetAccountNo1MUntilParams struct {
+	ID        string `json:"id"`
+	No1MUntil int64  `json:"no_1m_until"`
+}
+
+func (q *Queries) SetAccountNo1MUntil(ctx context.Context, arg SetAccountNo1MUntilParams) error {
+	_, err := q.db.Exec(ctx, setAccountNo1MUntil, arg.ID, arg.No1MUntil)
+	return err
+}
+
+const clearAccountNo1M = `-- name: ClearAccountNo1M :exec
+UPDATE accounts SET no_1m_until = 0 WHERE id = $1
+`
+
+func (q *Queries) ClearAccountNo1M(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, clearAccountNo1M, id)
 	return err
 }
