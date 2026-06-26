@@ -1184,6 +1184,25 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 		inflightOf[sn.Key] = sn.Inflight
 	}
 
+	// Drop permanently-banned accounts from the elastic working set: a dead account
+	// must never occupy a baseline slot — it can't serve and is hidden from the pool,
+	// so it would shrink the effective active set and hold healthy reserve accounts
+	// back. Transient states (cooldown/half_open) keep their slot since they recover.
+	// Mirrored in ReserveKeys so the 待命/活跃 status partition matches dispatch.
+	if cfg.ElasticEnabled {
+		statusOf := make(map[string]string, len(snap))
+		for _, sn := range snap {
+			statusOf[sn.Key] = sn.Status
+		}
+		kept := cands[:0]
+		for _, c := range cands {
+			if statusOf[c.key] != "permanent" {
+				kept = append(kept, c)
+			}
+		}
+		cands = kept
+	}
+
 	// Build allKeys: every eligible candidate in weight-desc order, BEFORE elastic
 	// partitioning. Used by callers to resolve affinity pins against the full
 	// candidate set — so a pinned reserve account is reachable even when elastic
@@ -1417,6 +1436,16 @@ func (s *Service) ReserveKeys(ctx context.Context, ownerID string, cfg policy.Co
 		createdAt int64
 	}
 	var cands []cand
+
+	// Build a dead set from the store snapshot so permanently-banned accounts are
+	// excluded from the partition — mirrors the buildCandidates filter above.
+	deadPermanent := map[string]bool{}
+	for _, sn := range s.Store.Snapshot(nowMs) {
+		if sn.Status == "permanent" {
+			deadPermanent[sn.Key] = true
+		}
+	}
+
 	nodes, _ := s.Q.ListNodes(ctx)
 	acctOwner := map[string]string{}
 	if ownerRows, err := s.Q.ListAccountOwners(ctx); err == nil {
@@ -1450,6 +1479,9 @@ func (s *Service) ReserveKeys(ctx context.Context, ownerID string, cfg policy.Co
 				// Unknown slot_id or disabled slot → treat as always-active (don't skip).
 			}
 			key := n.ID + ":" + na.ProfileID
+			if deadPermanent[key] {
+				continue // exclude permanently-banned from the baseline/reserve partition (mirrors buildCandidates)
+			}
 			// Rate-governor + quiet-hours RPM filter: mirror buildCandidates (lines
 			// ~1047-1077) so an account currently rate-limited OUT of dispatch is also
 			// excluded from the baseline/reserve partition — otherwise the 待命/活跃

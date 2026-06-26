@@ -540,3 +540,116 @@ func TestBuildCandidates_OwnerIsolation(t *testing.T) {
 		}
 	})
 }
+
+// TestReserveKeys_ExcludesPermanentFromBaseline verifies that a permanently-banned
+// account is excluded from the elastic baseline/reserve partition in BOTH
+// ReserveKeys and buildCandidates. Before the fix, the most-senior (permanent)
+// account would occupy the only baseline slot, pushing all healthy accounts into
+// reserve — capping non-affinity throughput.
+//
+// Setup: 3 accounts A (most senior, permanent), B (second senior, healthy),
+// C (newest, healthy). ElasticBaselineCount=1.
+//
+// Expected after fix:
+//   - A is excluded entirely (not in dispatch order, not in reserve map)
+//   - B is the baseline (healthy and most-senior after excluding A) → NOT in reserve
+//   - C is reserve → in reserve map
+//
+// Before fix: A would occupy baseline, B+C would both be reserve.
+func TestReserveKeys_ExcludesPermanentFromBaseline(t *testing.T) {
+	q, closeDB := setupDB(t)
+	defer closeDB()
+	ctx := context.Background()
+
+	sfx := suffixDispatch(t)
+	nodeID := "n_perm_" + sfx
+	if _, err := q.CreateNode(ctx, sqlc.CreateNodeParams{
+		ID: nodeID, Name: "perm-node-" + sfx, BaseUrl: "http://unused", ApiKey: "k", OwnerID: "",
+	}); err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+
+	owner := "owner_perm_" + sfx
+	// Three accounts: all equal weight so seniority (createdAt) determines baseline order.
+	for _, acc := range []string{"acc_a_perm_" + sfx, "acc_b_perm_" + sfx, "acc_c_perm_" + sfx} {
+		if _, err := q.CreateAccount(ctx, sqlc.CreateAccountParams{ID: acc, OwnerID: owner}); err != nil {
+			t.Fatalf("create account %s: %v", acc, err)
+		}
+	}
+
+	if _, err := q.AssignAccount(ctx, sqlc.AssignAccountParams{
+		NodeID: nodeID, AccountID: "acc_a_perm_" + sfx, ProfileID: "profA", Weight: 100, Role: "baseline",
+	}); err != nil {
+		t.Fatalf("assign A: %v", err)
+	}
+	if _, err := q.AssignAccount(ctx, sqlc.AssignAccountParams{
+		NodeID: nodeID, AccountID: "acc_b_perm_" + sfx, ProfileID: "profB", Weight: 100, Role: "baseline",
+	}); err != nil {
+		t.Fatalf("assign B: %v", err)
+	}
+	if _, err := q.AssignAccount(ctx, sqlc.AssignAccountParams{
+		NodeID: nodeID, AccountID: "acc_c_perm_" + sfx, ProfileID: "profC", Weight: 100, Role: "baseline",
+	}); err != nil {
+		t.Fatalf("assign C: %v", err)
+	}
+
+	keyA := nodeID + ":profA"
+	keyB := nodeID + ":profB"
+	keyC := nodeID + ":profC"
+
+	nowMs := int64(12 * 3600 * 1000) // noon UTC
+	store := state.NewStore(func() int64 { return nowMs }, func(min, max int64) int64 { return min })
+	svc := &Service{Q: q, Store: store, Base: policy.Defaults(), Now: func() int64 { return nowMs }, scaledUp: make(map[string]bool)}
+
+	// Ensure all three keys are tracked in the store so Snapshot sees them.
+	store.Ensure(keyA, 10)
+	store.Ensure(keyB, 10)
+	store.Ensure(keyC, 10)
+
+	// Drive A to permanent-ban status by hitting PermStreak signals.
+	// Use PermStreak=1 so a single signal is enough.
+	breakerCfg := state.BreakerCfg{PersistStreak: 1, PermStreak: 1, BaseMs: 1000, MaxMs: 99999, Mult: 2}
+	store.OnBanSignal(keyA, breakerCfg)
+
+	// Sanity: confirm A is now permanent in the store.
+	if !store.IsPermanent(keyA) {
+		t.Fatal("precondition: keyA must be permanent after ban signal with PermStreak=1")
+	}
+
+	cfg := policy.Defaults()
+	cfg.ElasticEnabled = true
+	cfg.ElasticBaselineCount = 1
+	cfg.ElasticScaleUpUtil = 0.8
+	cfg.ElasticScaleDownUtil = 0.3
+
+	// --- ReserveKeys assertion ---
+	reserveKeys := svc.ReserveKeys(ctx, owner, cfg)
+
+	// A is permanent → excluded entirely; must not appear in reserve.
+	if reserveKeys[keyA] {
+		t.Errorf("ReserveKeys: permanent keyA=%s must NOT appear in reserve set (should be excluded entirely), got reserve=%v", keyA, reserveKeys)
+	}
+	// B is the next-senior healthy account → should be baseline (not reserve).
+	if reserveKeys[keyB] {
+		t.Errorf("ReserveKeys: healthy keyB=%s should be baseline (not reserve), got reserve=%v — permanent A is wrongly occupying the baseline slot", keyB, reserveKeys)
+	}
+	// C is the newest → should be reserve.
+	if !reserveKeys[keyC] {
+		t.Errorf("ReserveKeys: healthy keyC=%s should be reserve (beyond baseline), got reserve=%v", keyC, reserveKeys)
+	}
+
+	// --- buildCandidates assertion ---
+	// With elastic on and baseline=1, the dispatch order should contain B (baseline);
+	// A must not appear (permanent, excluded), C may appear as reserve expansion.
+	order, _, _, _, _ := svc.buildCandidates(ctx, owner, "claude-3", cfg, false)
+	dispatchKeys := make(map[string]bool, len(order))
+	for _, k := range order {
+		dispatchKeys[k] = true
+	}
+	if dispatchKeys[keyA] {
+		t.Errorf("buildCandidates: permanent keyA=%s must NOT appear in dispatch order, got %v", keyA, order)
+	}
+	if !dispatchKeys[keyB] {
+		t.Errorf("buildCandidates: healthy keyB=%s must appear in dispatch order (baseline), got %v", keyB, order)
+	}
+}
