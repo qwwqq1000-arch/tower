@@ -106,6 +106,17 @@ func envelopeInjectFrom(ctx context.Context) []EnvelopePiece {
 	return p
 }
 
+type envelopeOverrideKeyT struct{}
+
+func withEnvelopeOverride(ctx context.Context) context.Context {
+	return context.WithValue(ctx, envelopeOverrideKeyT{}, true)
+}
+
+func envelopeOverrideFrom(ctx context.Context) bool {
+	v, _ := ctx.Value(envelopeOverrideKeyT{}).(bool)
+	return v
+}
+
 var noCopy = map[string]bool{
 	"Host": true, "Content-Length": true, "X-Api-Key": true, "Authorization": true,
 }

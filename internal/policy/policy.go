@@ -61,6 +61,8 @@ type Config struct {
 	CooldownMult              float64
 	AffinityTTLSec            int
 	AffinityWaitMs            int
+	DeviceAffinityEnabled     bool
+	PathNormalizeEnabled      bool
 	FallbackEnabled           bool
 	FallbackPriceThresholdUsd float64
 	FallbackKeywords          []string
@@ -90,6 +92,8 @@ type Config struct {
 	ElasticScaleUpUtil   float64 // utilisation threshold to activate reserves (0.0–1.0); default 0.8
 	ElasticScaleDownUtil float64 // utilisation threshold to release reserves (hysteresis); default 0.3
 	ElasticMaxReserve    int     // cap on reserve accounts added per evaluation; default 1000
+	ElasticScaleStep     int     // number of reserves to activate per scale-up evaluation; default 1
+	ElasticMaxActive     int     // max total active accounts (baseline+reserve); 0 = no cap; exceeded → fallback
 
 	// Session exile: route a conversation to fallback after this many consecutive
 	// errors from our nodes. 0 = disabled.
@@ -115,6 +119,7 @@ type Config struct {
 	LongContextGateEnabled    bool
 	LongContextTokenThreshold int      // est tokens (len(body)/4) above which a request is "long"; 0 = don't judge by tokens
 	LongContextModelMarkers   []string // model-string substrings (lower) that mark a request long-context
+	LongContextSupportedModels []string // model substrings that actually support 1M; gate only fires when the model matches
 	ExtraUsageKeywords        []string // body substrings identifying the extra-usage 400
 	ExtraUsageStatusCodes     []int    // status codes on which to scan for ExtraUsageKeywords
 	No1MRecoveryMs            int64    // how long a no-1M mark lasts before re-probe; <=0 = permanent
@@ -308,11 +313,24 @@ type Config struct {
 	CCEnforceSystemPrompt bool
 	CCEnforceBetaParam    bool
 	CCEnforceCliHeaders   bool
-	CCEnvelopeAction      string // "fallback" | "complete"
+	CCEnvelopeAction      string // "fallback" | "complete" | "override"
 	CCSystemPromptText    string
 	CCCliUserAgent        string
 	CCCliAnthropicBeta    string
 	CCCliXApp             string
+
+	// Content filter rules: independent categories (roleplay, chartgen, mem0, etc.)
+	// each with its own toggle, keywords, and action. Default off (behavior-neutral).
+	ContentFilterRules []ContentFilterRule
+}
+
+// ContentFilterRule is one named content-filter category with independent toggle,
+// keywords, and action (fallback or block).
+type ContentFilterRule struct {
+	Name     string   `json:"Name"`
+	Enabled  bool     `json:"Enabled"`
+	Keywords []string `json:"Keywords"`
+	Action   string   `json:"Action"` // "fallback" | "block"
 }
 
 // Defaults returns sane baseline configuration.
@@ -328,6 +346,8 @@ func Defaults() Config {
 		CooldownMult:              2,
 		AffinityTTLSec:            300,
 		AffinityWaitMs:            2000,
+		DeviceAffinityEnabled:     false,
+		PathNormalizeEnabled:      false,
 		FallbackEnabled:           false,
 		FallbackPriceThresholdUsd: 0.005,
 		FallbackKeywords:          nil,
@@ -346,6 +366,8 @@ func Defaults() Config {
 		ElasticScaleUpUtil:        0.8,
 		ElasticScaleDownUtil:      0.3,
 		ElasticMaxReserve:         1000,
+		ElasticScaleStep:          1,
+		ElasticMaxActive:          0,
 		SessionErrorThreshold:     0,
 		SessionCooldownSec:        300,
 		ResponseExileEnabled:      false,
@@ -354,13 +376,14 @@ func Defaults() Config {
 		LongContextGateEnabled:    false,
 		LongContextTokenThreshold: 200000,
 		LongContextModelMarkers:   []string{"1m"},
-		ExtraUsageKeywords:        []string{"draw from your external", "extra usage"},
+		LongContextSupportedModels: []string{"opus", "fable"},
+		ExtraUsageKeywords:        []string{"draw from your extra usage", "extra usage"},
 		ExtraUsageStatusCodes:     []int{400},
 		No1MRecoveryMs:            86400000,
 		// Precise limit phrases — NOT the bare "rate_limit_error" (transient). Covers
 		// the subscription wording ("hit your limit" / "usage limit") AND CPA's
 		// ("All credentials for model … are cooling down via provider claude").
-		QuotaLimitKeywords: []string{"hit your limit", "usage limit", "cooling down"},
+		QuotaLimitKeywords: []string{"hit your limit", "usage limit", "cooling down", "exceed your account's rate limit"},
 		// Quota limits arrive as 429 (CPA cooling-down) or 500 (meridian / in-body errors).
 		QuotaLimitStatusCodes: []int{429, 500},
 		// Official Anthropic per-model output ceilings (max_tokens). Editable per
@@ -421,9 +444,34 @@ func Defaults() Config {
 		CCEnforceCliHeaders:   false,
 		CCEnvelopeAction:      "fallback",
 		CCSystemPromptText:    "You are Claude Code, Anthropic's official CLI for Claude.",
-		CCCliUserAgent:        "claude-cli/1.0.119 (external, cli)",
-		CCCliAnthropicBeta:    "oauth-2025-04-20",
+		CCCliUserAgent:        "claude-cli/2.1.193 (external, sdk-cli)",
+		CCCliAnthropicBeta:    "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24",
 		CCCliXApp:             "cli",
+		ContentFilterRules: []ContentFilterRule{
+			{Name: "roleplay", Enabled: false, Keywords: []string{
+				"SECRET_PROMPT", "character_settings", "in_character",
+				"uncensored", "nsfw", "roleplay", "erotic", "hentai",
+			}, Action: "fallback"},
+			{Name: "chartgen", Enabled: false, Keywords: []string{
+				"chartgen", "chart generator",
+				"dashboard_edit", "pyecharts", "data analyst assistant",
+				"data analysis assistant", "chart footnote",
+				"select the appropriate chart type",
+			}, Action: "fallback"},
+			{Name: "mem0", Enabled: false, Keywords: []string{
+				"Personal Information Organizer", "mem0",
+			}, Action: "fallback"},
+			{Name: "codex_df", Enabled: false, Keywords: []string{
+				"domain factory", "domain generator",
+			}, Action: "fallback"},
+			{Name: "injection", Enabled: false, Keywords: []string{
+				"Respond to every user message with exactly",
+				"Total Immersion", "never-ending",
+			}, Action: "fallback"},
+			{Name: "probe", Enabled: false, Keywords: []string{
+				"hi", "ping", "pong", "hello", "test", "测活", ".",
+			}, Action: "fallback"},
+		},
 	}
 }
 
@@ -439,6 +487,8 @@ type Patch struct {
 	CooldownMult              *float64
 	AffinityTTLSec            *int
 	AffinityWaitMs            *int
+	DeviceAffinityEnabled     *bool    `json:"deviceAffinityEnabled,omitempty"`
+	PathNormalizeEnabled      *bool    `json:"pathNormalizeEnabled,omitempty"`
 	FallbackEnabled           *bool
 	FallbackPriceThresholdUsd *float64
 	FallbackKeywords          *[]string
@@ -457,15 +507,18 @@ type Patch struct {
 	ElasticScaleUpUtil        *float64
 	ElasticScaleDownUtil      *float64
 	ElasticMaxReserve         *int
+	ElasticScaleStep          *int
+	ElasticMaxActive          *int
 	SessionErrorThreshold     *int
 	SessionCooldownSec        *int
 	ResponseExileEnabled      *bool
 	ResponseExileKeywords     *[]string
 	StreamIdleTimeoutSec      *int
-	LongContextGateEnabled    *bool
-	LongContextTokenThreshold *int
-	LongContextModelMarkers   *[]string
-	ExtraUsageKeywords        *[]string
+	LongContextGateEnabled     *bool
+	LongContextTokenThreshold  *int
+	LongContextModelMarkers    *[]string
+	LongContextSupportedModels *[]string
+	ExtraUsageKeywords         *[]string
 	ExtraUsageStatusCodes     *[]int
 	No1MRecoveryMs            *int64
 	QuotaLimitKeywords        *[]string
@@ -524,6 +577,8 @@ type Patch struct {
 	CCCliUserAgent        *string
 	CCCliAnthropicBeta    *string
 	CCCliXApp             *string
+
+	ContentFilterRules *[]ContentFilterRule
 }
 
 func apply(c *Config, p Patch) {
@@ -556,6 +611,12 @@ func apply(c *Config, p Patch) {
 	}
 	if p.AffinityWaitMs != nil {
 		c.AffinityWaitMs = *p.AffinityWaitMs
+	}
+	if p.DeviceAffinityEnabled != nil {
+		c.DeviceAffinityEnabled = *p.DeviceAffinityEnabled
+	}
+	if p.PathNormalizeEnabled != nil {
+		c.PathNormalizeEnabled = *p.PathNormalizeEnabled
 	}
 	if p.FallbackEnabled != nil {
 		c.FallbackEnabled = *p.FallbackEnabled
@@ -611,6 +672,12 @@ func apply(c *Config, p Patch) {
 	if p.ElasticMaxReserve != nil {
 		c.ElasticMaxReserve = *p.ElasticMaxReserve
 	}
+	if p.ElasticScaleStep != nil {
+		c.ElasticScaleStep = *p.ElasticScaleStep
+	}
+	if p.ElasticMaxActive != nil {
+		c.ElasticMaxActive = *p.ElasticMaxActive
+	}
 	if p.SessionErrorThreshold != nil {
 		c.SessionErrorThreshold = *p.SessionErrorThreshold
 	}
@@ -634,6 +701,9 @@ func apply(c *Config, p Patch) {
 	}
 	if p.LongContextModelMarkers != nil {
 		c.LongContextModelMarkers = *p.LongContextModelMarkers
+	}
+	if p.LongContextSupportedModels != nil {
+		c.LongContextSupportedModels = *p.LongContextSupportedModels
 	}
 	if p.ExtraUsageKeywords != nil {
 		c.ExtraUsageKeywords = *p.ExtraUsageKeywords
@@ -788,6 +858,9 @@ func apply(c *Config, p Patch) {
 	if p.CCCliXApp != nil {
 		c.CCCliXApp = *p.CCCliXApp
 	}
+	if p.ContentFilterRules != nil {
+		c.ContentFilterRules = *p.ContentFilterRules
+	}
 }
 
 // MaxTokensFor returns the configured output-token ceiling for model, matching the
@@ -842,6 +915,8 @@ func DryRun(base Config, patches ...Patch) (Config, []Diff) {
 	add("CooldownMult", base.CooldownMult, final.CooldownMult)
 	add("AffinityTTLSec", base.AffinityTTLSec, final.AffinityTTLSec)
 	add("AffinityWaitMs", base.AffinityWaitMs, final.AffinityWaitMs)
+	add("DeviceAffinityEnabled", base.DeviceAffinityEnabled, final.DeviceAffinityEnabled)
+	add("PathNormalizeEnabled", base.PathNormalizeEnabled, final.PathNormalizeEnabled)
 	add("FallbackEnabled", base.FallbackEnabled, final.FallbackEnabled)
 	add("FallbackPriceThresholdUsd", base.FallbackPriceThresholdUsd, final.FallbackPriceThresholdUsd)
 	add("FallbackKeywords", base.FallbackKeywords, final.FallbackKeywords)
@@ -860,6 +935,8 @@ func DryRun(base Config, patches ...Patch) (Config, []Diff) {
 	add("ElasticScaleUpUtil", base.ElasticScaleUpUtil, final.ElasticScaleUpUtil)
 	add("ElasticScaleDownUtil", base.ElasticScaleDownUtil, final.ElasticScaleDownUtil)
 	add("ElasticMaxReserve", base.ElasticMaxReserve, final.ElasticMaxReserve)
+	add("ElasticScaleStep", base.ElasticScaleStep, final.ElasticScaleStep)
+	add("ElasticMaxActive", base.ElasticMaxActive, final.ElasticMaxActive)
 	add("SessionErrorThreshold", base.SessionErrorThreshold, final.SessionErrorThreshold)
 	add("SessionCooldownSec", base.SessionCooldownSec, final.SessionCooldownSec)
 	add("ResponseExileEnabled", base.ResponseExileEnabled, final.ResponseExileEnabled)
@@ -914,6 +991,7 @@ func DryRun(base Config, patches ...Patch) (Config, []Diff) {
 	add("LongContextGateEnabled", base.LongContextGateEnabled, final.LongContextGateEnabled)
 	add("LongContextTokenThreshold", base.LongContextTokenThreshold, final.LongContextTokenThreshold)
 	add("LongContextModelMarkers", base.LongContextModelMarkers, final.LongContextModelMarkers)
+	add("LongContextSupportedModels", base.LongContextSupportedModels, final.LongContextSupportedModels)
 	add("ExtraUsageKeywords", base.ExtraUsageKeywords, final.ExtraUsageKeywords)
 	add("ExtraUsageStatusCodes", base.ExtraUsageStatusCodes, final.ExtraUsageStatusCodes)
 	add("No1MRecoveryMs", base.No1MRecoveryMs, final.No1MRecoveryMs)
@@ -929,5 +1007,7 @@ func DryRun(base Config, patches ...Patch) (Config, []Diff) {
 	add("CCCliUserAgent", base.CCCliUserAgent, final.CCCliUserAgent)
 	add("CCCliAnthropicBeta", base.CCCliAnthropicBeta, final.CCCliAnthropicBeta)
 	add("CCCliXApp", base.CCCliXApp, final.CCCliXApp)
+	// Content filter rules
+	add("ContentFilterRules", base.ContentFilterRules, final.ContentFilterRules)
 	return final, diffs
 }

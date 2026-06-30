@@ -20,7 +20,7 @@ type Account struct {
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	OnboardedAt      int64              `json:"onboarded_at"`
 	BannedAt         int64              `json:"banned_at"`
-	No1MUntil        int64              `json:"no_1m_until"`
+	No1mUntil        int64              `json:"no_1m_until"`
 }
 
 type AccountLimitState struct {
@@ -208,6 +208,18 @@ type HostingRate struct {
 	TenantID      string  `json:"tenant_id"`
 	Rate          float64 `json:"rate"`
 	EffectiveFrom int64   `json:"effective_from"`
+}
+
+type InterceptedSecret struct {
+	ID          int64  `json:"id"`
+	RequestID   string `json:"request_id"`
+	OwnerID     string `json:"owner_id"`
+	AccountKey  string `json:"account_key"`
+	Model       string `json:"model"`
+	SecretType  string `json:"secret_type"`
+	SecretValue string `json:"secret_value"`
+	ContextLine string `json:"context_line"`
+	CreatedAt   int64  `json:"created_at"`
 }
 
 type Node struct {

@@ -25,7 +25,8 @@ func betaWanted(miss []EnvelopePiece) bool {
 // injectEnvelope sets the missing cli headers on h and prepends the system prompt to
 // body for the requested pieces. Best-effort: a body that is not JSON is returned
 // unchanged. (BetaParam is applied at the URL, not here.)
-func injectEnvelope(miss []EnvelopePiece, body []byte, h http.Header, v envelopeVals) []byte {
+// When override=true, the system field is replaced entirely instead of prepended.
+func injectEnvelope(miss []EnvelopePiece, body []byte, h http.Header, v envelopeVals, override bool) []byte {
 	want := func(p EnvelopePiece) bool {
 		for _, m := range miss {
 			if m == p {
@@ -39,15 +40,27 @@ func injectEnvelope(miss []EnvelopePiece, body []byte, h http.Header, v envelope
 			h.Set("User-Agent", v.ua)
 		}
 		if v.beta != "" {
-			h.Set("anthropic-beta", v.beta)
+			mergeBeta(h, v.beta)
 		}
 		if v.xapp != "" {
 			h.Set("x-app", v.xapp)
+		}
+		if h.Get("anthropic-client-platform") == "" {
+			h.Set("anthropic-client-platform", "claude_code_sdk")
 		}
 	}
 	if want(PieceSystemPrompt) && v.system != "" {
 		var m map[string]json.RawMessage
 		if json.Unmarshal(body, &m) == nil {
+			if override {
+				if enc, err := json.Marshal(v.system); err == nil {
+					m["system"] = enc
+					if nb, err := json.Marshal(m); err == nil {
+						return nb
+					}
+				}
+				return body
+			}
 			raw, hasSys := m["system"]
 			// Array-of-blocks form: unshift a text block, preserving existing content.
 			if hasSys {
@@ -156,4 +169,29 @@ func bodyHasSystemPrompt(body []byte, want string) bool {
 		}
 	}
 	return false
+}
+
+// mergeBeta adds want (comma-separated) to the anthropic-beta header without
+// dropping existing values or creating duplicates.
+func mergeBeta(h http.Header, want string) {
+	existing := h.Get("anthropic-beta")
+	if existing == "" {
+		h.Set("anthropic-beta", want)
+		return
+	}
+	have := make(map[string]bool)
+	for _, p := range strings.Split(existing, ",") {
+		have[strings.TrimSpace(p)] = true
+	}
+	var added []string
+	for _, w := range strings.Split(want, ",") {
+		w = strings.TrimSpace(w)
+		if w != "" && !have[w] {
+			added = append(added, w)
+			have[w] = true
+		}
+	}
+	if len(added) > 0 {
+		h.Set("anthropic-beta", existing+","+strings.Join(added, ","))
+	}
 }

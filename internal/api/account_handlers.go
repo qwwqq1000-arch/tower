@@ -296,12 +296,25 @@ func listAccountsHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFun
 			}
 			var quota map[string]any
 			if qr, ok := quotaByAccount[a.AccountID]; ok {
+				now := time.Now()
+				fhUtil, fhReset := qr.FiveHourUtil, qr.FiveHourResetsAt
+				sdUtil, sdReset := qr.SevenDayUtil, qr.SevenDayResetsAt
+				ssUtil, ssReset := qr.SevenDaySonnetUtil, qr.SevenDaySonnetResetsAt
+				if t, err := time.Parse(time.RFC3339, fhReset); err == nil && t.Before(now) {
+					fhUtil, fhReset = 0, ""
+				}
+				if t, err := time.Parse(time.RFC3339, sdReset); err == nil && t.Before(now) {
+					sdUtil, sdReset = 0, ""
+				}
+				if t, err := time.Parse(time.RFC3339, ssReset); err == nil && t.Before(now) {
+					ssUtil, ssReset = 0, ""
+				}
 				quota = map[string]any{
-					"fiveHourUtil": qr.FiveHourUtil, "fiveHourResetsAt": qr.FiveHourResetsAt,
-					"sevenDayUtil": qr.SevenDayUtil, "sevenDayResetsAt": qr.SevenDayResetsAt,
-					"sevenDaySonnetUtil": qr.SevenDaySonnetUtil, "sevenDaySonnetResetsAt": qr.SevenDaySonnetResetsAt,
+					"fiveHourUtil": fhUtil, "fiveHourResetsAt": fhReset,
+					"sevenDayUtil": sdUtil, "sevenDayResetsAt": sdReset,
+					"sevenDaySonnetUtil": ssUtil, "sevenDaySonnetResetsAt": ssReset,
 					"updatedAt":  qr.UpdatedAt,
-					"fetchError": qr.QuotaFetchError, // non-empty when the last quota fetch failed (cpa-3)
+					"fetchError": qr.QuotaFetchError,
 				}
 			}
 			out = append(out, map[string]any{
@@ -323,7 +336,7 @@ func listAccountsHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFun
 				"subscriptionType": a.SubscriptionType,
 				"ownerId":          a.AcctOwnerID,
 				"cpaQuota":         quota,
-				"no1mUntil":        a.No1MUntil,
+				"no1mUntil":        a.No1mUntil,
 			})
 		}
 		writeJSON(w, 200, out)

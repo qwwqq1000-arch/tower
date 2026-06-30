@@ -70,7 +70,7 @@ func TestInjectEnvelope(t *testing.T) {
 	miss := []EnvelopePiece{PieceSystemPrompt, PieceCliHeaders}
 
 	h := http.Header{}
-	newBody := injectEnvelope(miss, body, h, vals)
+	newBody := injectEnvelope(miss, body, h, vals, false)
 
 	if h.Get("User-Agent") != "claude-cli/1.0" || h.Get("x-app") != "cli" || h.Get("anthropic-beta") != "oauth-2025-04-20" {
 		t.Fatalf("headers not injected: %v", h)
@@ -82,7 +82,7 @@ func TestInjectEnvelope(t *testing.T) {
 
 func TestInjectEnvelopeBadBodyUnchanged(t *testing.T) {
 	body := []byte(`not json`)
-	got := injectEnvelope([]EnvelopePiece{PieceSystemPrompt}, body, http.Header{}, envelopeVals{system: "x"})
+	got := injectEnvelope([]EnvelopePiece{PieceSystemPrompt}, body, http.Header{}, envelopeVals{system: "x"}, false)
 	if string(got) != "not json" {
 		t.Fatalf("bad body must be returned unchanged, got %s", got)
 	}
@@ -94,7 +94,7 @@ func TestInjectEnvelopeArrayFormPreserved(t *testing.T) {
 	miss := []EnvelopePiece{PieceSystemPrompt}
 	vals := envelopeVals{system: "You are Claude Code"}
 
-	got := injectEnvelope(miss, body, http.Header{}, vals)
+	got := injectEnvelope(miss, body, http.Header{}, vals, false)
 
 	var result struct {
 		System []struct {
@@ -122,7 +122,7 @@ func TestInjectEnvelopeArrayFormAlreadyPresentNoop(t *testing.T) {
 	miss := []EnvelopePiece{PieceSystemPrompt}
 	vals := envelopeVals{system: "You are Claude Code"}
 
-	got := injectEnvelope(miss, body, http.Header{}, vals)
+	got := injectEnvelope(miss, body, http.Header{}, vals, false)
 
 	if string(got) != string(body) {
 		t.Fatalf("body should be unchanged when system already present in array block, got: %s", got)
@@ -135,7 +135,7 @@ func TestInjectEnvelopeStringFormPrepend(t *testing.T) {
 	miss := []EnvelopePiece{PieceSystemPrompt}
 	vals := envelopeVals{system: "You are Claude Code"}
 
-	got := injectEnvelope(miss, body, http.Header{}, vals)
+	got := injectEnvelope(miss, body, http.Header{}, vals, false)
 
 	var result struct {
 		System string `json:"system"`
@@ -155,7 +155,7 @@ func TestInjectEnvelopeSystemAbsent(t *testing.T) {
 	miss := []EnvelopePiece{PieceSystemPrompt}
 	vals := envelopeVals{system: "You are Claude Code"}
 
-	got := injectEnvelope(miss, body, http.Header{}, vals)
+	got := injectEnvelope(miss, body, http.Header{}, vals, false)
 
 	var result struct {
 		System string `json:"system"`

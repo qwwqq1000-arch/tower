@@ -10,6 +10,28 @@ import (
 	"sync"
 )
 
+// DeviceID extracts the device_id from the request body's metadata.user_id
+// field. Claude Code embeds a JSON object as a string inside metadata.user_id
+// containing device_id, account_uuid, and session_id. Returns "" if not found.
+func DeviceID(body []byte) string {
+	var req struct {
+		Metadata struct {
+			UserID string `json:"user_id"`
+		} `json:"metadata"`
+	}
+	if json.Unmarshal(body, &req) != nil || req.Metadata.UserID == "" {
+		return ""
+	}
+	// user_id may be a plain string or a JSON object encoded as a string.
+	var inner struct {
+		DeviceID string `json:"device_id"`
+	}
+	if json.Unmarshal([]byte(req.Metadata.UserID), &inner) != nil || inner.DeviceID == "" {
+		return ""
+	}
+	return inner.DeviceID
+}
+
 // ConvID derives a stable 16-hex-char conversation id from the request body.
 // It hashes the concatenation of the system prompt and the content of the
 // first user message. Returns "" if the body cannot be parsed or carries no

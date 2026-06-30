@@ -725,6 +725,7 @@ interface BatchBarProps {
   onEnableAll: () => void;
   onDisableAll: () => void;
   onRefreshAll: () => void;
+  onDeleteAll: () => void;
   batchRunning: boolean;
   batchResult: string | null;
   batchHasError: boolean;
@@ -735,6 +736,7 @@ function BatchBar({
   onEnableAll,
   onDisableAll,
   onRefreshAll,
+  onDeleteAll,
   batchRunning,
   batchResult,
   batchHasError,
@@ -766,6 +768,14 @@ function BatchBar({
                      hover:bg-line/30 disabled:opacity-50 disabled:cursor-not-allowed transition"
         >
           批量刷新 token
+        </button>
+        <button
+          onClick={() => { if (confirm(`确认删除选中的 ${selectedCount} 个节点？此操作不可撤回。`)) onDeleteAll(); }}
+          disabled={batchRunning}
+          className="px-3 py-1.5 text-xs font-medium bg-red-700 text-white rounded-lg
+                     hover:bg-red-800 disabled:opacity-50 disabled:cursor-not-allowed transition"
+        >
+          批量删除
         </button>
       </div>
       {batchRunning && (
@@ -1210,6 +1220,14 @@ export default function Nodes() {
     void runBatch((id) => refreshNode(id), '批量刷新');
   }
 
+  function handleBatchDelete() {
+    void runBatch(async (id) => {
+      await deleteNode(id);
+      handleDelete(id);
+    }, '批量删除');
+    setSelected(new Set());
+  }
+
   function handleToggleEnabled(node: NodeRecord) {
     void setNodeEnabled(node.id, !node.enabled).then(() => {
       setNodes((prev) =>
@@ -1281,6 +1299,7 @@ export default function Nodes() {
           onEnableAll={handleBatchEnable}
           onDisableAll={handleBatchDisable}
           onRefreshAll={handleBatchRefresh}
+          onDeleteAll={handleBatchDelete}
           batchRunning={batchRunning}
           batchResult={batchResult}
           batchHasError={batchHasError}

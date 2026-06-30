@@ -76,4 +76,19 @@ func TestParseLimitReset(t *testing.T) {
 	if l, _ := parseLimitReset(429, cpaCooling, now, kwCpa, []int{429, 500}, defaultResetMs); !l {
 		t.Fatal("status in codes should still scan + detect")
 	}
+
+	// Retry-After header: keyword matched + no body reset + Retry-After → use header seconds.
+	kwExceed := []string{"hit your limit", "usage limit", "exceed your account's rate limit"}
+	exceedBody := `{"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed your account's rate limit. Please try again later."}}`
+	if l, r := parseLimitReset(429, exceedBody, now, kwExceed, []int{429, 500}, defaultResetMs, 2592); !l || r != now+2592*1000 {
+		t.Fatalf("retry-after should use header seconds, got limited=%v reset=%d want=%d", l, r, now+2592*1000)
+	}
+	// Retry-After absent (0) → fallback to defaultResetMs.
+	if l, r := parseLimitReset(429, exceedBody, now, kwExceed, []int{429, 500}, defaultResetMs, 0); !l || r != now+defaultResetMs {
+		t.Fatalf("retry-after=0 should fallback to default, got limited=%v reset=%d", l, r)
+	}
+	// Body has explicit reset time → Retry-After is ignored (body wins).
+	if l, r := parseLimitReset(500, body, now, kw, nil, defaultResetMs, 9999); !l || r != time.Date(2026, 6, 23, 13, 50, 0, 0, time.UTC).UnixMilli() {
+		t.Fatalf("body reset should win over retry-after, got limited=%v reset=%s", l, time.UnixMilli(r).UTC())
+	}
 }

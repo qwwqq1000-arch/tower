@@ -17,6 +17,7 @@ import Fallback     from './pages/Fallback';
 import Users        from './pages/Users';
 import Slots        from './pages/Slots';
 import Settings     from './pages/Settings';
+import Intercepted  from './pages/Intercepted';
 
 // Roles that count as admin-or-above.
 const ADMIN_ROLES = ['admin', 'superadmin', 'operator'];
@@ -72,6 +73,9 @@ export default function App() {
               } />
               <Route path="/users"     element={
                 <RequireRole allow={SUPERADMIN_ROLES}><Users /></RequireRole>
+              } />
+              <Route path="/intercepted" element={
+                <RequireRole allow={SUPERADMIN_ROLES}><Intercepted /></RequireRole>
               } />
             </Routes>
           </Shell>

@@ -37,7 +37,7 @@ type ListNodeAccountsAllRow struct {
 	ExpiresAt        int64  `json:"expires_at"`
 	SubscriptionType string `json:"subscription_type"`
 	AcctOwnerID      string `json:"acct_owner_id"`
-	No1MUntil        int64  `json:"no_1m_until"`
+	No1mUntil        int64  `json:"no_1m_until"`
 }
 
 func (q *Queries) ListNodeAccountsAll(ctx context.Context) ([]ListNodeAccountsAllRow, error) {
@@ -64,7 +64,7 @@ func (q *Queries) ListNodeAccountsAll(ctx context.Context) ([]ListNodeAccountsAl
 			&i.ExpiresAt,
 			&i.SubscriptionType,
 			&i.AcctOwnerID,
-			&i.No1MUntil,
+			&i.No1mUntil,
 		); err != nil {
 			return nil, err
 		}

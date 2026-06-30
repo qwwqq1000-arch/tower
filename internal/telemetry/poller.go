@@ -69,11 +69,6 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 				continue
 			}
 			key := n.ID + ":" + a.ProfileID
-			// Offline is node-level only: the quota endpoint is NO LONGER polled here
-			// (account-limit-reactive — quota reads are manual-only, "所有刷新都关了").
-			// A reachable node ⇒ accounts online; a down/unhealthy node ⇒ all its
-			// accounts offline. Per-account quota-limit + auth/ban are detected
-			// reactively (dispatch responses) and on the manual 刷新 button — not here.
 			p.Store.SetOffline(key, p.Capacity, nodeDown)
 			p.Store.SetCapacity(key, mc)
 		}

@@ -162,7 +162,7 @@ function DiffTable({ result }: { result: PolicyDryRunResult }) {
 type Scope = 'global' | 'account';
 
 // Category IDs
-type CatId = 'cadence' | 'concurrency' | 'limits' | 'fallback' | 'signals';
+type CatId = 'dispatch' | 'cadence' | 'filter' | 'limits' | 'fallback' | 'signals';
 
 interface Category {
   id: CatId;
@@ -170,11 +170,12 @@ interface Category {
 }
 
 const CATEGORIES: Category[] = [
+  { id: 'dispatch', label: '调度与并发' },
   { id: 'cadence', label: '拟人节奏' },
-  { id: 'concurrency', label: '并发与预热' },
+  { id: 'filter', label: '流量过滤' },
   { id: 'limits', label: '限额自保' },
-  { id: 'fallback', label: '保底与故障转移' },
-  { id: 'signals', label: '封号识别与恢复' },
+  { id: 'fallback', label: '保底与重试' },
+  { id: 'signals', label: '封号与恢复' },
 ];
 
 export default function Policies() {
@@ -190,7 +191,7 @@ export default function Policies() {
   const [policyRows, setPolicyRows] = useState<Array<{ scopeType: string; scopeId?: string; params: Record<string, unknown> }>>([]);
 
   // Category nav + filter state
-  const [cat, setCat] = useState<CatId>('cadence');
+  const [cat, setCat] = useState<CatId>('dispatch');
   const [onlyConfigured, setOnlyConfigured] = useState(false);
 
   // Integer fields
@@ -204,6 +205,8 @@ export default function Policies() {
   const cooldownMaxMs = useField<number>(600000);
   const affinityTTLSec = useField<number>(300);
   const affinityWaitMs = useField<number>(2000);
+  const deviceAffinityEnabled = useField<boolean>(false);
+  const pathNormalizeEnabled = useField<boolean>(false);
   // Float field
   const cooldownMult = useField<number>(2);
   const fallbackPriceThresholdUsd = useField<number>(0.005);
@@ -229,6 +232,8 @@ export default function Policies() {
   const elasticScaleUpUtil = useField<number>(0.8);
   const elasticScaleDownUtil = useField<number>(0.3);
   const elasticMaxReserve = useField<number>(1000);
+  const elasticScaleStep = useField<number>(1);
+  const elasticMaxActive = useField<number>(0);
   const elasticBaselineCount = useField<number>(1);
   // SpendCap (cumulative today-spend vs raising threshold)
   const spendCap5hEnabled = useField<boolean>(false);
@@ -301,11 +306,31 @@ export default function Policies() {
   const ccCliUserAgent = useField<string>('');
   const ccCliAnthropicBeta = useField<string>('');
   const ccCliXApp = useField<string>('');
+  // 内容过滤 (NSFW/roleplay/第三方拦截)
+  const cfRoleplayEnabled = useField<boolean>(false);
+  const cfRoleplayKeywords = useField<string>('SECRET_PROMPT,character_settings,in_character,uncensored,nsfw,roleplay,erotic,hentai');
+  const cfRoleplayAction = useField<string>('fallback');
+  const cfChartgenEnabled = useField<boolean>(false);
+  const cfChartgenKeywords = useField<string>('chartgen,chart generator');
+  const cfChartgenAction = useField<string>('fallback');
+  const cfMem0Enabled = useField<boolean>(false);
+  const cfMem0Keywords = useField<string>('Personal Information Organizer,mem0');
+  const cfMem0Action = useField<string>('fallback');
+  const cfCodexDFEnabled = useField<boolean>(false);
+  const cfCodexDFKeywords = useField<string>('domain factory,domain generator');
+  const cfCodexDFAction = useField<string>('fallback');
+  const cfInjectionEnabled = useField<boolean>(false);
+  const cfInjectionKeywords = useField<string>('Respond to every user message with exactly,Total Immersion,never-ending');
+  const cfInjectionAction = useField<string>('fallback');
+  const cfProbeEnabled = useField<boolean>(false);
+  const cfProbeKeywords = useField<string>('hi,ping,pong,hello,test,测活,.');
+  const cfProbeAction = useField<string>('fallback');
   // 1M 长上下文门控 (#143)
   const longContextGateEnabled = useField<boolean>(false);
   const longContextTokenThreshold = useField<number>(200000);
   const longContextModelMarkers = useField<string>('1m');
-  const extraUsageKeywords = useField<string>('draw from your external,extra usage');
+  const longContextSupportedModels = useField<string>('opus,fable');
+  const extraUsageKeywords = useField<string>('draw from your extra usage,extra usage');
   const extraUsageStatusCodes = useField<string>('400');
   const no1MRecoveryMs = useField<number>(86400000);
 
@@ -384,7 +409,7 @@ export default function Policies() {
     const allFields: Array<{ enabled: boolean; toggle: () => void }> = [
       idleFirstSelection, maxConcurrent, slotCooldownMinMs, slotCooldownMaxMs,
       banPersistStreak, permanentBanStreak, cooldownBaseMs, cooldownMaxMs, cooldownMult,
-      affinityTTLSec, affinityWaitMs,
+      affinityTTLSec, affinityWaitMs, deviceAffinityEnabled, pathNormalizeEnabled, pathNormalizeEnabled,
       fallbackEnabled, fallbackPriceThresholdUsd, fallbackKeywords, fallbackModels, fallbackProbeEnabled,
       banSignals, banKeywords, cooldownSignals, cooldownSignalSec,
       maxFailover,
@@ -393,7 +418,7 @@ export default function Policies() {
       warmupHours, warmupMaxConcurrent, warmupBlockOpus,
       sessionErrorThreshold, sessionCooldownSec, responseExileEnabled, responseExileKeywords,
       quotaLimitKeywords, quotaLimitCodes,
-      elasticEnabled, elasticScaleUpUtil, elasticScaleDownUtil, elasticMaxReserve, elasticBaselineCount,
+      elasticEnabled, elasticScaleUpUtil, elasticScaleDownUtil, elasticMaxReserve, elasticScaleStep, elasticMaxActive, elasticBaselineCount,
       spendCap5hEnabled, spendCap5hMin, spendCap5hMax,
       humanDelayEnabled, humanDelayDist, humanDelayP50Min, humanDelayP50Max, humanDelayP95Min, humanDelayP95Max,
       rateGovEnabled, rateRPMMin, rateRPMMax, rateRPHMin, rateRPHMax, rateRPDMin, rateRPDMax, rateExceedAction,
@@ -404,8 +429,15 @@ export default function Policies() {
       bodyPadEnabled, bodyPadBytesMin, bodyPadBytesMax,
       ccEnvelopeEnabled, ccEnforceSystemPrompt, ccEnforceBetaParam, ccEnforceCliHeaders,
       ccEnvelopeAction, ccSystemPromptText, ccCliUserAgent, ccCliAnthropicBeta, ccCliXApp,
+      // 内容过滤
+      cfRoleplayEnabled, cfRoleplayKeywords, cfRoleplayAction,
+      cfChartgenEnabled, cfChartgenKeywords, cfChartgenAction,
+      cfMem0Enabled, cfMem0Keywords, cfMem0Action,
+      cfCodexDFEnabled, cfCodexDFKeywords, cfCodexDFAction,
+      cfInjectionEnabled, cfInjectionKeywords, cfInjectionAction,
+      cfProbeEnabled, cfProbeKeywords, cfProbeAction,
       // 1M 长上下文门控
-      longContextGateEnabled, longContextTokenThreshold, longContextModelMarkers,
+      longContextGateEnabled, longContextTokenThreshold, longContextModelMarkers, longContextSupportedModels,
       extraUsageKeywords, extraUsageStatusCodes, no1MRecoveryMs,
     ];
     // Disable every enabled field
@@ -426,6 +458,8 @@ export default function Policies() {
       setNum(cooldownMult, p, 'CooldownMult');
       setNum(affinityTTLSec, p, 'AffinityTTLSec');
       setNum(affinityWaitMs, p, 'AffinityWaitMs');
+      setBool(deviceAffinityEnabled, p, 'DeviceAffinityEnabled');
+      setBool(pathNormalizeEnabled, p, 'PathNormalizeEnabled');
       setBool(fallbackEnabled, p, 'FallbackEnabled');
       setNum(fallbackPriceThresholdUsd, p, 'FallbackPriceThresholdUsd');
       setArr(fallbackKeywords, p, 'FallbackKeywords');
@@ -464,6 +498,8 @@ export default function Policies() {
       setNum(elasticScaleUpUtil, p, 'ElasticScaleUpUtil');
       setNum(elasticScaleDownUtil, p, 'ElasticScaleDownUtil');
       setNum(elasticMaxReserve, p, 'ElasticMaxReserve');
+      setNum(elasticScaleStep, p, 'ElasticScaleStep');
+      setNum(elasticMaxActive, p, 'ElasticMaxActive');
       setNum(elasticBaselineCount, p, 'ElasticBaselineCount');
       // Phase 2: SpendCap (cumulative today-spend vs raising threshold)
       setBool(spendCap5hEnabled, p, 'SpendCap5hEnabled');
@@ -516,10 +552,27 @@ export default function Policies() {
       setStr(ccCliUserAgent, p, 'CCCliUserAgent');
       setStr(ccCliAnthropicBeta, p, 'CCCliAnthropicBeta');
       setStr(ccCliXApp, p, 'CCCliXApp');
+      // 内容过滤 (多类别独立规则)
+      if (p.ContentFilterRules) {
+        const findR = (n: string) => (p.ContentFilterRules as any[])?.find((r: any) => r.Name === n);
+        const loadR = (r: any, en: typeof cfRoleplayEnabled, kw: typeof cfRoleplayKeywords, act: typeof cfRoleplayAction) => {
+          if (!r) return;
+          en.toggle(); en.set(r.Enabled ?? false);
+          kw.toggle(); kw.set((r.Keywords ?? []).join(','));
+          act.toggle(); act.set(r.Action ?? 'fallback');
+        };
+        loadR(findR('roleplay'), cfRoleplayEnabled, cfRoleplayKeywords, cfRoleplayAction);
+        loadR(findR('chartgen'), cfChartgenEnabled, cfChartgenKeywords, cfChartgenAction);
+        loadR(findR('mem0'), cfMem0Enabled, cfMem0Keywords, cfMem0Action);
+        loadR(findR('codex_df'), cfCodexDFEnabled, cfCodexDFKeywords, cfCodexDFAction);
+        loadR(findR('injection'), cfInjectionEnabled, cfInjectionKeywords, cfInjectionAction);
+        loadR(findR('probe'), cfProbeEnabled, cfProbeKeywords, cfProbeAction);
+      }
       // 1M 长上下文门控
       setBool(longContextGateEnabled, p, 'LongContextGateEnabled');
       setNum(longContextTokenThreshold, p, 'LongContextTokenThreshold');
       setArr(longContextModelMarkers, p, 'LongContextModelMarkers');
+      setArr(longContextSupportedModels, p, 'LongContextSupportedModels');
       setArr(extraUsageKeywords, p, 'ExtraUsageKeywords');
       setArr(extraUsageStatusCodes, p, 'ExtraUsageStatusCodes');
       setNum(no1MRecoveryMs, p, 'No1MRecoveryMs');
@@ -562,6 +615,8 @@ export default function Policies() {
     if (cooldownMult.enabled) patch.CooldownMult = cooldownMult.value;
     if (affinityTTLSec.enabled) patch.AffinityTTLSec = affinityTTLSec.value;
     if (affinityWaitMs.enabled) patch.AffinityWaitMs = affinityWaitMs.value;
+    if (deviceAffinityEnabled.enabled) patch.DeviceAffinityEnabled = deviceAffinityEnabled.value;
+    if (pathNormalizeEnabled.enabled) patch.PathNormalizeEnabled = pathNormalizeEnabled.value;
     if (fallbackEnabled.enabled) patch.FallbackEnabled = fallbackEnabled.value;
     if (fallbackPriceThresholdUsd.enabled) patch.FallbackPriceThresholdUsd = fallbackPriceThresholdUsd.value;
     if (fallbackKeywords.enabled) patch.FallbackKeywords = fallbackKeywords.value.split(',').map(s => s.trim()).filter(Boolean);
@@ -619,6 +674,8 @@ export default function Policies() {
     if (elasticScaleUpUtil.enabled) patch.ElasticScaleUpUtil = elasticScaleUpUtil.value;
     if (elasticScaleDownUtil.enabled) patch.ElasticScaleDownUtil = elasticScaleDownUtil.value;
     if (elasticMaxReserve.enabled) patch.ElasticMaxReserve = elasticMaxReserve.value;
+    if (elasticScaleStep.enabled) patch.ElasticScaleStep = elasticScaleStep.value;
+    if (elasticMaxActive.enabled) patch.ElasticMaxActive = elasticMaxActive.value;
     if (elasticBaselineCount.enabled) patch.ElasticBaselineCount = elasticBaselineCount.value;
     // SpendCap: cumulative today-spend vs raising threshold
     if (spendCap5hEnabled.enabled) patch.SpendCap5hEnabled = spendCap5hEnabled.value;
@@ -664,10 +721,25 @@ export default function Policies() {
     if (ccCliUserAgent.enabled) patch.CCCliUserAgent = ccCliUserAgent.value;
     if (ccCliAnthropicBeta.enabled) patch.CCCliAnthropicBeta = ccCliAnthropicBeta.value;
     if (ccCliXApp.enabled) patch.CCCliXApp = ccCliXApp.value;
+    // 内容过滤
+    if ([cfRoleplayEnabled, cfChartgenEnabled, cfMem0Enabled, cfCodexDFEnabled, cfInjectionEnabled, cfProbeEnabled].some(f => f.enabled)) {
+      const mkRule = (name: string, en: typeof cfRoleplayEnabled, kw: typeof cfRoleplayKeywords, act: typeof cfRoleplayAction) => ({
+        Name: name, Enabled: en.value, Keywords: kw.value.split(',').map(s => s.trim()).filter(Boolean), Action: act.value,
+      });
+      patch.ContentFilterRules = [
+        mkRule('roleplay', cfRoleplayEnabled, cfRoleplayKeywords, cfRoleplayAction),
+        mkRule('chartgen', cfChartgenEnabled, cfChartgenKeywords, cfChartgenAction),
+        mkRule('mem0', cfMem0Enabled, cfMem0Keywords, cfMem0Action),
+        mkRule('codex_df', cfCodexDFEnabled, cfCodexDFKeywords, cfCodexDFAction),
+        mkRule('injection', cfInjectionEnabled, cfInjectionKeywords, cfInjectionAction),
+        mkRule('probe', cfProbeEnabled, cfProbeKeywords, cfProbeAction),
+      ];
+    }
     // 1M 长上下文门控
     if (longContextGateEnabled.enabled) patch.LongContextGateEnabled = longContextGateEnabled.value;
     if (longContextTokenThreshold.enabled) patch.LongContextTokenThreshold = longContextTokenThreshold.value;
     if (longContextModelMarkers.enabled) patch.LongContextModelMarkers = longContextModelMarkers.value.split(',').map(s => s.trim()).filter(Boolean);
+    if (longContextSupportedModels.enabled) patch.LongContextSupportedModels = longContextSupportedModels.value.split(',').map(s => s.trim()).filter(Boolean);
     if (extraUsageKeywords.enabled) patch.ExtraUsageKeywords = extraUsageKeywords.value.split(',').map(s => s.trim()).filter(Boolean);
     if (extraUsageStatusCodes.enabled) patch.ExtraUsageStatusCodes = extraUsageStatusCodes.value.split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
     if (no1MRecoveryMs.enabled) patch.No1MRecoveryMs = no1MRecoveryMs.value;
@@ -741,12 +813,12 @@ export default function Policies() {
 
   const anyEnabled = [
     idleFirstSelection, maxConcurrent, slotCooldownMinMs, banPersistStreak, permanentBanStreak,
-    cooldownBaseMs, cooldownMaxMs, cooldownMult, affinityTTLSec, affinityWaitMs,
+    cooldownBaseMs, cooldownMaxMs, cooldownMult, affinityTTLSec, affinityWaitMs, deviceAffinityEnabled, pathNormalizeEnabled,
     fallbackEnabled, fallbackPriceThresholdUsd, fallbackKeywords, fallbackModels, fallbackProbeEnabled, banSignals, banKeywords, cooldownSignals, cooldownSignalSec,
     maxFailover,
     warmupHours, warmupMaxConcurrent, warmupBlockOpus,
     sessionErrorThreshold, sessionCooldownSec, responseExileEnabled, responseExileKeywords, quotaLimitKeywords, quotaLimitCodes,
-    elasticEnabled, elasticScaleUpUtil, elasticScaleDownUtil, elasticMaxReserve, elasticBaselineCount,
+    elasticEnabled, elasticScaleUpUtil, elasticScaleDownUtil, elasticMaxReserve, elasticScaleStep, elasticMaxActive, elasticBaselineCount,
     spendCap5hEnabled, spendCap5hMin, spendCap5hMax,
     // Phase 3
     humanDelayEnabled, humanDelayDist, humanDelayP50Min, humanDelayP95Min,
@@ -761,8 +833,15 @@ export default function Policies() {
     // Claude Code 三件套
     ccEnvelopeEnabled, ccEnforceSystemPrompt, ccEnforceBetaParam, ccEnforceCliHeaders,
     ccEnvelopeAction, ccSystemPromptText, ccCliUserAgent, ccCliAnthropicBeta, ccCliXApp,
+    // 内容过滤 (5 类别)
+    cfRoleplayEnabled, cfRoleplayKeywords, cfRoleplayAction,
+    cfChartgenEnabled, cfChartgenKeywords, cfChartgenAction,
+    cfMem0Enabled, cfMem0Keywords, cfMem0Action,
+    cfCodexDFEnabled, cfCodexDFKeywords, cfCodexDFAction,
+    cfInjectionEnabled, cfInjectionKeywords, cfInjectionAction,
+    cfProbeEnabled, cfProbeKeywords, cfProbeAction,
     // 1M 长上下文门控
-    longContextGateEnabled, longContextTokenThreshold, longContextModelMarkers,
+    longContextGateEnabled, longContextTokenThreshold, longContextModelMarkers, longContextSupportedModels,
     extraUsageKeywords, extraUsageStatusCodes, no1MRecoveryMs,
   ].some((f) => f.enabled);
 
@@ -770,34 +849,42 @@ export default function Policies() {
   // Per-category field membership (for badge counts)
   // ------------------------------------------------------------------
   const catFields: Record<CatId, Array<{ enabled: boolean }>> = {
+    dispatch: [
+      idleFirstSelection, maxConcurrent, slotCooldownMinMs,
+      affinityTTLSec, affinityWaitMs, deviceAffinityEnabled, pathNormalizeEnabled,
+      elasticEnabled, elasticScaleUpUtil, elasticScaleDownUtil, elasticMaxReserve, elasticScaleStep, elasticMaxActive, elasticBaselineCount,
+      serialQueueEnabled, serialQueueWaitMs,
+      warmupHours, warmupMaxConcurrent, warmupBlockOpus,
+    ],
     cadence: [
       humanDelayEnabled, humanDelayDist, humanDelayP50Min, humanDelayP95Min,
       rateGovEnabled, rateRPMMin, rateRPHMin, rateRPDMin, rateExceedAction,
       sessionSimEnabled, sessionBurstCountMin, sessionPauseMsMin,
       quietHoursEnabled, quietHoursStartMin, quietHoursRPMMin, quietHoursConcurrency,
-      serialQueueEnabled, serialQueueWaitMs,
-      modelPinEnabled, modelPinMode, modelPinTarget, modelElasticEnabled,
       bodyPadEnabled, bodyPadBytesMin,
+      modelPinEnabled, modelPinMode, modelPinTarget, modelElasticEnabled,
+    ],
+    filter: [
       ccEnvelopeEnabled, ccEnforceSystemPrompt, ccEnforceBetaParam, ccEnforceCliHeaders,
       ccEnvelopeAction, ccSystemPromptText, ccCliUserAgent, ccCliAnthropicBeta, ccCliXApp,
-    ],
-    concurrency: [
-      idleFirstSelection, maxConcurrent, slotCooldownMinMs,
-      affinityTTLSec, affinityWaitMs,
-      warmupHours, warmupMaxConcurrent, warmupBlockOpus,
+      cfRoleplayEnabled, cfRoleplayKeywords, cfRoleplayAction,
+      cfChartgenEnabled, cfChartgenKeywords, cfChartgenAction,
+      cfMem0Enabled, cfMem0Keywords, cfMem0Action,
+      cfCodexDFEnabled, cfCodexDFKeywords, cfCodexDFAction,
+      cfInjectionEnabled, cfInjectionKeywords, cfInjectionAction,
+      cfProbeEnabled, cfProbeKeywords, cfProbeAction,
     ],
     limits: [
       spendCap5hEnabled, spendCap5hMin,
       quotaLimitKeywords, quotaLimitCodes,
       limitOpus48, limitOpus47, limitSonnet46, limitHaiku45,
-      longContextGateEnabled, longContextTokenThreshold, longContextModelMarkers,
+      longContextGateEnabled, longContextTokenThreshold, longContextModelMarkers, longContextSupportedModels,
       extraUsageKeywords, extraUsageStatusCodes, no1MRecoveryMs,
     ],
     fallback: [
       fallbackEnabled, fallbackPriceThresholdUsd, fallbackKeywords, fallbackModels, fallbackProbeEnabled,
       maxFailover,
       directFallbackStatusCodes, directFallbackKeywords, terminalErrorKeywords, retryDelayMs, retrySameAccountMax,
-      elasticEnabled, elasticScaleUpUtil, elasticScaleDownUtil, elasticMaxReserve, elasticBaselineCount,
     ],
     signals: [
       banSignals, banKeywords,
@@ -819,6 +906,130 @@ export default function Policies() {
 
   function CatContent() {
     switch (cat) {
+      case 'dispatch':
+        return (
+          <>
+            {/* Group: 并发 / 冷却 */}
+            <div className="bg-surface border border-line rounded-xl px-4 py-2 mb-4">
+              <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2">并发 / 冷却</h2>
+
+              <FieldRow label="IdleFirstSelection" desc="空闲优先选号:按当前并发数从低到高排候选号(相同空闲随机打散),让流量铺满所有号。关闭则按权重固定顺序。" enabled={idleFirstSelection.enabled} onToggle={idleFirstSelection.toggle} showOnlyConfigured={so}>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={idleFirstSelection.value} onChange={(e) => idleFirstSelection.set(e.target.checked)} disabled={!idleFirstSelection.enabled} className="accent-accent w-4 h-4" />
+                  <span className="text-sm text-muted">{idleFirstSelection.value ? '空闲优先(开)' : '固定权重顺序(关)'}</span>
+                </label>
+              </FieldRow>
+
+              <FieldRow label="MaxConcurrent" desc="每账号最大并发槽位数(节点总并发 = 账号数 × 此值)" enabled={maxConcurrent.enabled} onToggle={maxConcurrent.toggle} showOnlyConfigured={so}>
+                <NumInput value={maxConcurrent.value} onChange={maxConcurrent.set} disabled={!maxConcurrent.enabled} min={1} />
+              </FieldRow>
+
+              <FieldRow label="SlotCooldownMs (min ~ max)" desc="槽位冷却时长区间 (ms)：每次随机取 [min, max] 内的值" enabled={slotCooldownMinMs.enabled} onToggle={slotCooldownMinMs.toggle} showOnlyConfigured={so}>
+                <RangeInput min={slotCooldownMinMs.value} max={slotCooldownMaxMs.value} onChangeMin={slotCooldownMinMs.set} onChangeMax={slotCooldownMaxMs.set} disabled={!slotCooldownMinMs.enabled} step={100} />
+              </FieldRow>
+            </div>
+
+            {/* Group: 亲和性 */}
+            <div className="bg-surface border border-line rounded-xl px-4 py-2 mb-4">
+              <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2">亲和性</h2>
+
+              <FieldRow label="AffinityTTLSec" desc="亲和性缓存 TTL (秒)" enabled={affinityTTLSec.enabled} onToggle={affinityTTLSec.toggle} showOnlyConfigured={so}>
+                <NumInput value={affinityTTLSec.value} onChange={affinityTTLSec.set} disabled={!affinityTTLSec.enabled} min={0} step={60} />
+              </FieldRow>
+
+              <FieldRow label="AffinityWaitMs" desc="亲和号忙时排队等位上限(ms);0=不等待直接转保底" enabled={affinityWaitMs.enabled} onToggle={affinityWaitMs.toggle} showOnlyConfigured={so}>
+                <NumInput value={affinityWaitMs.value} onChange={affinityWaitMs.set} disabled={!affinityWaitMs.enabled} min={0} step={500} />
+              </FieldRow>
+
+              <FieldRow label="DeviceAffinityEnabled" desc="设备亲和:同一 device_id 确定性路由到同一批号,减少单号关联设备数" enabled={deviceAffinityEnabled.enabled} onToggle={deviceAffinityEnabled.toggle} showOnlyConfigured={so}>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={deviceAffinityEnabled.value} onChange={(e) => deviceAffinityEnabled.set(e.target.checked)} disabled={!deviceAffinityEnabled.enabled} className="accent-accent w-4 h-4" />
+                  <span className="text-sm text-muted">{deviceAffinityEnabled.value ? '开' : '关'}</span>
+                </label>
+              </FieldRow>
+
+              <FieldRow label="PathNormalizeEnabled" desc="路径归一化:将请求中的用户路径(/Users/xxx, /home/xxx)统一替换为 /home/user,消除多用户指纹;响应自动反替换" enabled={pathNormalizeEnabled.enabled} onToggle={pathNormalizeEnabled.toggle} showOnlyConfigured={so}>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={pathNormalizeEnabled.value} onChange={(e) => pathNormalizeEnabled.set(e.target.checked)} disabled={!pathNormalizeEnabled.enabled} className="accent-accent w-4 h-4" />
+                  <span className="text-sm text-muted">{pathNormalizeEnabled.value ? '开' : '关'}</span>
+                </label>
+              </FieldRow>
+            </div>
+
+            {/* Group: 弹性伸缩 */}
+            <div className="bg-surface border border-line rounded-xl px-4 py-2 mb-4">
+              <div className="flex items-center justify-between py-2">
+                <div>
+                  <h2 className="text-xs font-medium text-muted uppercase tracking-wide">弹性伸缩</h2>
+                  <p className="text-xs text-muted/70 mt-0.5">基线号打满后按步长激活待命号；超出最大活跃数则直走保底。</p>
+                </div>
+                <GroupMaster field={elasticEnabled} />
+              </div>
+              <div className={elasticEnabled.value ? '' : 'opacity-40 pointer-events-none'}>
+                <FieldRow label="默认活跃账户数(基线)" desc="弹性扩容触发前默认保持活跃的账户数量" enabled={elasticBaselineCount.enabled} onToggle={elasticBaselineCount.toggle} showOnlyConfigured={so}>
+                  <NumInput value={elasticBaselineCount.value} onChange={elasticBaselineCount.set} disabled={!elasticBaselineCount.enabled} min={1} />
+                </FieldRow>
+
+                <FieldRow label="扩容利用率阈值" desc="基线利用率 ≥ 此值时触发扩容（0.0–1.0）" enabled={elasticScaleUpUtil.enabled} onToggle={elasticScaleUpUtil.toggle} showOnlyConfigured={so}>
+                  <NumInput value={elasticScaleUpUtil.value} onChange={elasticScaleUpUtil.set} disabled={!elasticScaleUpUtil.enabled} min={0} max={1} step={0.05} />
+                </FieldRow>
+
+                <FieldRow label="缩容利用率阈值" desc="利用率 ≤ 此值时释放待命号（与扩容阈值形成迟滞区间）" enabled={elasticScaleDownUtil.enabled} onToggle={elasticScaleDownUtil.toggle} showOnlyConfigured={so}>
+                  <NumInput value={elasticScaleDownUtil.value} onChange={elasticScaleDownUtil.set} disabled={!elasticScaleDownUtil.enabled} min={0} max={1} step={0.05} />
+                </FieldRow>
+
+                <FieldRow label="每次扩容步长" desc="每次评估激活几个待命号（默认 1 = 逐个扩容）" enabled={elasticScaleStep.enabled} onToggle={elasticScaleStep.toggle} showOnlyConfigured={so}>
+                  <NumInput value={elasticScaleStep.value} onChange={elasticScaleStep.set} disabled={!elasticScaleStep.enabled} min={1} />
+                </FieldRow>
+
+                <FieldRow label="最大活跃数" desc="基线 + 已激活待命总数上限；超出不再扩、直走保底。0 = 不限" enabled={elasticMaxActive.enabled} onToggle={elasticMaxActive.toggle} showOnlyConfigured={so}>
+                  <NumInput value={elasticMaxActive.value} onChange={elasticMaxActive.set} disabled={!elasticMaxActive.enabled} min={0} />
+                </FieldRow>
+
+                <FieldRow label="待命池上限" desc="最多可激活的待命号数量（默认 1000 ≈ 不限）" enabled={elasticMaxReserve.enabled} onToggle={elasticMaxReserve.toggle} showOnlyConfigured={so}>
+                  <NumInput value={elasticMaxReserve.value} onChange={elasticMaxReserve.set} disabled={!elasticMaxReserve.enabled} min={0} />
+                </FieldRow>
+              </div>
+            </div>
+
+            {/* Group: 串行队列 */}
+            <div className="bg-surface border border-line rounded-xl px-4 py-2 mb-4">
+              <div className="flex items-center justify-between py-2">
+                <div>
+                  <h2 className="text-xs font-medium text-muted uppercase tracking-wide">串行队列（SerialQueue）</h2>
+                  <p className="text-xs text-muted/70 mt-0.5">强制账号内请求串行执行（同一账号同时只跑一个请求），模拟单用户行为。超时后自动放弃等位。</p>
+                </div>
+                <GroupMaster field={serialQueueEnabled} />
+              </div>
+              <div className={serialQueueEnabled.value ? '' : 'opacity-40 pointer-events-none'}>
+                <FieldRow label="SerialQueueWaitMs" desc="等位超时 (ms)：超时后放弃排队，换号或返回 503" enabled={serialQueueWaitMs.enabled} onToggle={serialQueueWaitMs.toggle} showOnlyConfigured={so}>
+                  <NumInput value={serialQueueWaitMs.value} onChange={serialQueueWaitMs.set} disabled={!serialQueueWaitMs.enabled} min={0} step={1000} />
+                </FieldRow>
+              </div>
+            </div>
+
+            {/* Group: 预热 */}
+            <div className="bg-surface border border-line rounded-xl px-4 py-2 mb-4">
+              <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2">预热</h2>
+
+              <FieldRow label="WarmupHours" desc="预热时长(小时,0=关)" enabled={warmupHours.enabled} onToggle={warmupHours.toggle} showOnlyConfigured={so}>
+                <NumInput value={warmupHours.value} onChange={warmupHours.set} disabled={!warmupHours.enabled} min={0} />
+              </FieldRow>
+
+              <FieldRow label="WarmupMaxConcurrent" desc="预热期最大并发" enabled={warmupMaxConcurrent.enabled} onToggle={warmupMaxConcurrent.toggle} showOnlyConfigured={so}>
+                <NumInput value={warmupMaxConcurrent.value} onChange={warmupMaxConcurrent.set} disabled={!warmupMaxConcurrent.enabled} min={1} />
+              </FieldRow>
+
+              <FieldRow label="WarmupBlockOpus" desc="预热期挡 opus" enabled={warmupBlockOpus.enabled} onToggle={warmupBlockOpus.toggle} showOnlyConfigured={so}>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={warmupBlockOpus.value} onChange={(e) => warmupBlockOpus.set(e.target.checked)} disabled={!warmupBlockOpus.enabled} className="accent-accent w-4 h-4" />
+                  <span className="text-sm text-ink">{warmupBlockOpus.value ? '已启用' : '已禁用'}</span>
+                </label>
+              </FieldRow>
+            </div>
+          </>
+        );
+
       case 'cadence':
         return (
           <>
@@ -933,23 +1144,7 @@ export default function Policies() {
               </div>
             </div>
 
-            {/* Group 5: SerialQueue (串行队列) */}
-            <div className="bg-surface border border-line rounded-xl px-4 py-2 mb-4">
-              <div className="flex items-center justify-between py-2">
-                <div>
-                  <h2 className="text-xs font-medium text-muted uppercase tracking-wide">串行队列（SerialQueue）</h2>
-                  <p className="text-xs text-muted/70 mt-0.5">强制账号内请求串行执行（同一账号同时只跑一个请求），模拟单用户行为。超时后自动放弃等位。</p>
-                </div>
-                <GroupMaster field={serialQueueEnabled} />
-              </div>
-              <div className={serialQueueEnabled.value ? '' : 'opacity-40 pointer-events-none'}>
-                <FieldRow label="SerialQueueWaitMs" desc="等位超时 (ms)：超时后放弃排队，换号或返回 503" enabled={serialQueueWaitMs.enabled} onToggle={serialQueueWaitMs.toggle} showOnlyConfigured={so}>
-                  <NumInput value={serialQueueWaitMs.value} onChange={serialQueueWaitMs.set} disabled={!serialQueueWaitMs.enabled} min={0} step={1000} />
-                </FieldRow>
-              </div>
-            </div>
-
-            {/* Group 6: ModelPin (模型锁定) */}
+            {/* Group: ModelPin (模型锁定) */}
             <div className="bg-surface border border-line rounded-xl px-4 py-2 mb-4">
               <div className="flex items-center justify-between py-2">
                 <div>
@@ -997,7 +1192,13 @@ export default function Policies() {
               </div>
             </div>
 
-            {/* Group 8: Claude Code 三件套 (envelope strategy) */}
+          </>
+        );
+
+      case 'filter':
+        return (
+          <>
+            {/* Group: Claude Code 三件套 (envelope strategy) */}
             <div className="bg-surface border border-line rounded-xl px-4 py-2 mb-4">
               <div className="flex items-center justify-between py-2">
                 <div>
@@ -1007,120 +1208,81 @@ export default function Policies() {
                 <GroupMaster field={ccEnvelopeEnabled} />
               </div>
               <div className={ccEnvelopeEnabled.value ? '' : 'opacity-40 pointer-events-none'}>
-                <FieldRow label="CCEnvelopeEnabled" desc="启用三件套检测与注入总开关。关闭时以下所有子项均不生效。" enabled={ccEnvelopeEnabled.enabled} onToggle={ccEnvelopeEnabled.toggle} showOnlyConfigured={so}>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" checked={ccEnvelopeEnabled.value} onChange={(e) => ccEnvelopeEnabled.set(e.target.checked)} disabled={!ccEnvelopeEnabled.enabled} className="accent-accent w-4 h-4" />
-                    <span className="text-sm text-ink">{ccEnvelopeEnabled.value ? '已启用' : '已禁用'}</span>
-                  </label>
-                </FieldRow>
-
-                <FieldRow label="CCEnforceSystemPrompt" desc="检测并注入 Claude Code system prompt（缺失时按 CCEnvelopeAction 处理）" enabled={ccEnforceSystemPrompt.enabled} onToggle={ccEnforceSystemPrompt.toggle} showOnlyConfigured={so}>
+                <FieldRow label="CCEnforceSystemPrompt" desc="检测并注入 Claude Code system prompt" enabled={ccEnforceSystemPrompt.enabled} onToggle={ccEnforceSystemPrompt.toggle} showOnlyConfigured={so}>
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={ccEnforceSystemPrompt.value} onChange={(e) => ccEnforceSystemPrompt.set(e.target.checked)} disabled={!ccEnforceSystemPrompt.enabled} className="accent-accent w-4 h-4" />
                     <span className="text-sm text-ink">{ccEnforceSystemPrompt.value ? '已启用' : '已禁用'}</span>
                   </label>
                 </FieldRow>
 
-                <FieldRow label="CCEnforceBetaParam" desc="检测并注入 claude-code-20250219 beta 参数（缺失时按 CCEnvelopeAction 处理）" enabled={ccEnforceBetaParam.enabled} onToggle={ccEnforceBetaParam.toggle} showOnlyConfigured={so}>
+                <FieldRow label="CCEnforceBetaParam" desc="检测并注入 beta 参数" enabled={ccEnforceBetaParam.enabled} onToggle={ccEnforceBetaParam.toggle} showOnlyConfigured={so}>
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={ccEnforceBetaParam.value} onChange={(e) => ccEnforceBetaParam.set(e.target.checked)} disabled={!ccEnforceBetaParam.enabled} className="accent-accent w-4 h-4" />
                     <span className="text-sm text-ink">{ccEnforceBetaParam.value ? '已启用' : '已禁用'}</span>
                   </label>
                 </FieldRow>
 
-                <FieldRow label="CCEnforceCliHeaders" desc="检测并注入 Claude Code CLI 请求头（User-Agent / anthropic-beta / x-app，缺失时按 CCEnvelopeAction 处理）" enabled={ccEnforceCliHeaders.enabled} onToggle={ccEnforceCliHeaders.toggle} showOnlyConfigured={so}>
+                <FieldRow label="CCEnforceCliHeaders" desc="检测并注入 CLI 请求头（User-Agent / anthropic-beta / x-app）" enabled={ccEnforceCliHeaders.enabled} onToggle={ccEnforceCliHeaders.toggle} showOnlyConfigured={so}>
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={ccEnforceCliHeaders.value} onChange={(e) => ccEnforceCliHeaders.set(e.target.checked)} disabled={!ccEnforceCliHeaders.enabled} className="accent-accent w-4 h-4" />
                     <span className="text-sm text-ink">{ccEnforceCliHeaders.value ? '已启用' : '已禁用'}</span>
                   </label>
                 </FieldRow>
 
-                <FieldRow label="CCEnvelopeAction" desc="三件套缺失时的处理方式：走保底（fallback）= 缺失时路由到保底通道；补全（complete）= 缺失时自动注入默认值" enabled={ccEnvelopeAction.enabled} onToggle={ccEnvelopeAction.toggle} showOnlyConfigured={so}>
+                <FieldRow label="CCEnvelopeAction" desc="走保底 = 缺失时路由保底；补全 = 自动注入默认值；覆盖 = 强制替换" enabled={ccEnvelopeAction.enabled} onToggle={ccEnvelopeAction.toggle} showOnlyConfigured={so}>
                   <select value={ccEnvelopeAction.value} onChange={(e) => ccEnvelopeAction.set(e.target.value)} disabled={!ccEnvelopeAction.enabled} className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink focus:outline-none focus:border-accent transition disabled:cursor-not-allowed">
                     <option value="fallback">走保底</option>
                     <option value="complete">补全</option>
+                    <option value="override">覆盖</option>
                   </select>
                 </FieldRow>
 
-                <FieldRow label="CCSystemPromptText" desc="补全模式下注入的 Claude Code system prompt 文本（留空则使用内置默认值）" enabled={ccSystemPromptText.enabled} onToggle={ccSystemPromptText.toggle} showOnlyConfigured={so}>
+                <FieldRow label="CCSystemPromptText" desc="注入的 system prompt（留空 = 内置默认）" enabled={ccSystemPromptText.enabled} onToggle={ccSystemPromptText.toggle} showOnlyConfigured={so}>
                   <input type="text" value={ccSystemPromptText.value} onChange={(e) => ccSystemPromptText.set(e.target.value)} disabled={!ccSystemPromptText.enabled} placeholder="（留空 = 内置默认）" className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition disabled:cursor-not-allowed" />
                 </FieldRow>
 
-                <FieldRow label="CCCliUserAgent" desc="补全模式下注入的 User-Agent 头值（留空则使用内置默认值）" enabled={ccCliUserAgent.enabled} onToggle={ccCliUserAgent.toggle} showOnlyConfigured={so}>
+                <FieldRow label="CCCliUserAgent" desc="注入的 User-Agent（留空 = 内置默认）" enabled={ccCliUserAgent.enabled} onToggle={ccCliUserAgent.toggle} showOnlyConfigured={so}>
                   <input type="text" value={ccCliUserAgent.value} onChange={(e) => ccCliUserAgent.set(e.target.value)} disabled={!ccCliUserAgent.enabled} placeholder="（留空 = 内置默认）" className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition disabled:cursor-not-allowed" />
                 </FieldRow>
 
-                <FieldRow label="CCCliAnthropicBeta" desc="补全模式下注入的 anthropic-beta 头值（留空则使用内置默认值）" enabled={ccCliAnthropicBeta.enabled} onToggle={ccCliAnthropicBeta.toggle} showOnlyConfigured={so}>
+                <FieldRow label="CCCliAnthropicBeta" desc="注入的 anthropic-beta（留空 = 内置默认）" enabled={ccCliAnthropicBeta.enabled} onToggle={ccCliAnthropicBeta.toggle} showOnlyConfigured={so}>
                   <input type="text" value={ccCliAnthropicBeta.value} onChange={(e) => ccCliAnthropicBeta.set(e.target.value)} disabled={!ccCliAnthropicBeta.enabled} placeholder="（留空 = 内置默认）" className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition disabled:cursor-not-allowed" />
                 </FieldRow>
 
-                <FieldRow label="CCCliXApp" desc="补全模式下注入的 x-app 头值（留空则使用内置默认值）" enabled={ccCliXApp.enabled} onToggle={ccCliXApp.toggle} showOnlyConfigured={so}>
+                <FieldRow label="CCCliXApp" desc="注入的 x-app（留空 = 内置默认）" enabled={ccCliXApp.enabled} onToggle={ccCliXApp.toggle} showOnlyConfigured={so}>
                   <input type="text" value={ccCliXApp.value} onChange={(e) => ccCliXApp.set(e.target.value)} disabled={!ccCliXApp.enabled} placeholder="（留空 = 内置默认）" className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition disabled:cursor-not-allowed" />
                 </FieldRow>
               </div>
             </div>
-          </>
-        );
 
-      case 'concurrency':
-        return (
-          <>
-            {/* Group: 并发 / 冷却 */}
-            <div className="bg-surface border border-line rounded-xl px-4 py-2 mb-4">
-              <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2">并发 / 冷却</h2>
-
-              <FieldRow label="IdleFirstSelection" desc="空闲优先选号:按当前并发数从低到高排候选号(相同空闲随机打散),让流量铺满所有号。关闭则按权重固定顺序。" enabled={idleFirstSelection.enabled} onToggle={idleFirstSelection.toggle} showOnlyConfigured={so}>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={idleFirstSelection.value} onChange={(e) => idleFirstSelection.set(e.target.checked)} disabled={!idleFirstSelection.enabled} className="accent-accent w-4 h-4" />
-                  <span className="text-sm text-muted">{idleFirstSelection.value ? '空闲优先(开)' : '固定权重顺序(关)'}</span>
-                </label>
-              </FieldRow>
-
-              <FieldRow label="MaxConcurrent" desc="每账号最大并发槽位数(节点总并发 = 账号数 × 此值)" enabled={maxConcurrent.enabled} onToggle={maxConcurrent.toggle} showOnlyConfigured={so}>
-                <NumInput value={maxConcurrent.value} onChange={maxConcurrent.set} disabled={!maxConcurrent.enabled} min={1} />
-              </FieldRow>
-
-              {/* SlotCooldown rendered as a single RangeInput widget.
-                  Backend still stores SlotCooldownMinMs / SlotCooldownMaxMs separately;
-                  buildPatch() maps Min→SlotCooldownMinMs, Max→SlotCooldownMaxMs.
-                  Both fields share the same enabled toggle (slotCooldownMinMs). */}
-              <FieldRow label="SlotCooldownMs (min ~ max)" desc="槽位冷却时长区间 (ms)：每次随机取 [min, max] 内的值" enabled={slotCooldownMinMs.enabled} onToggle={slotCooldownMinMs.toggle} showOnlyConfigured={so}>
-                <RangeInput min={slotCooldownMinMs.value} max={slotCooldownMaxMs.value} onChangeMin={slotCooldownMinMs.set} onChangeMax={slotCooldownMaxMs.set} disabled={!slotCooldownMinMs.enabled} step={100} />
-              </FieldRow>
-            </div>
-
-            {/* Group: 亲和性 */}
-            <div className="bg-surface border border-line rounded-xl px-4 py-2 mb-4">
-              <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2">亲和性</h2>
-
-              <FieldRow label="AffinityTTLSec" desc="亲和性缓存 TTL (秒)" enabled={affinityTTLSec.enabled} onToggle={affinityTTLSec.toggle} showOnlyConfigured={so}>
-                <NumInput value={affinityTTLSec.value} onChange={affinityTTLSec.set} disabled={!affinityTTLSec.enabled} min={0} step={60} />
-              </FieldRow>
-
-              <FieldRow label="AffinityWaitMs" desc="亲和号忙时排队等位上限(ms);0=不等待直接转保底" enabled={affinityWaitMs.enabled} onToggle={affinityWaitMs.toggle} showOnlyConfigured={so}>
-                <NumInput value={affinityWaitMs.value} onChange={affinityWaitMs.set} disabled={!affinityWaitMs.enabled} min={0} step={500} />
-              </FieldRow>
-            </div>
-
-            {/* Group: 预热 */}
-            <div className="bg-surface border border-line rounded-xl px-4 py-2 mb-4">
-              <h2 className="text-xs font-medium text-muted uppercase tracking-wide py-2">预热</h2>
-
-              <FieldRow label="WarmupHours" desc="预热时长(小时,0=关)" enabled={warmupHours.enabled} onToggle={warmupHours.toggle} showOnlyConfigured={so}>
-                <NumInput value={warmupHours.value} onChange={warmupHours.set} disabled={!warmupHours.enabled} min={0} />
-              </FieldRow>
-
-              <FieldRow label="WarmupMaxConcurrent" desc="预热期最大并发" enabled={warmupMaxConcurrent.enabled} onToggle={warmupMaxConcurrent.toggle} showOnlyConfigured={so}>
-                <NumInput value={warmupMaxConcurrent.value} onChange={warmupMaxConcurrent.set} disabled={!warmupMaxConcurrent.enabled} min={1} />
-              </FieldRow>
-
-              <FieldRow label="WarmupBlockOpus" desc="预热期挡 opus" enabled={warmupBlockOpus.enabled} onToggle={warmupBlockOpus.toggle} showOnlyConfigured={so}>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={warmupBlockOpus.value} onChange={(e) => warmupBlockOpus.set(e.target.checked)} disabled={!warmupBlockOpus.enabled} className="accent-accent w-4 h-4" />
-                  <span className="text-sm text-ink">{warmupBlockOpus.value ? '已启用' : '已禁用'}</span>
-                </label>
-              </FieldRow>
-            </div>
+            {/* 内容过滤 (6 独立规则) */}
+            {([
+              { label: '角色扮演 / NSFW', desc: '第三方应用通过裸 API 发的角色扮演请求', en: cfRoleplayEnabled, kw: cfRoleplayKeywords, act: cfRoleplayAction },
+              { label: 'ChartGen 图表应用', desc: '第三方图表生成工具', en: cfChartgenEnabled, kw: cfChartgenKeywords, act: cfChartgenAction },
+              { label: 'Mem0 个人信息提取', desc: '第三方记忆/信息管理工具', en: cfMem0Enabled, kw: cfMem0Keywords, act: cfMem0Action },
+              { label: 'Codex Domain Factory', desc: '自动化域名代码生成', en: cfCodexDFEnabled, kw: cfCodexDFKeywords, act: cfCodexDFAction },
+              { label: 'Prompt Injection', desc: '注入指令拦截', en: cfInjectionEnabled, kw: cfInjectionKeywords, act: cfInjectionAction },
+              { label: '探活 / Probe', desc: '短消息探测（精确匹配 ≤12字符）', en: cfProbeEnabled, kw: cfProbeKeywords, act: cfProbeAction },
+            ] as const).map(({ label, desc, en, kw, act }) => (
+              <div key={label} className="bg-surface border border-line rounded-xl px-4 py-2 mb-4">
+                <GroupMaster field={en} label={label} />
+                <FieldRow label={label} desc={desc + ' — 启用后命中关键词即触发'} enabled={en.enabled} onToggle={en.toggle} showOnlyConfigured={so}>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={en.value} onChange={(e) => en.set(e.target.checked)} disabled={!en.enabled} className="accent-accent w-4 h-4" />
+                    <span className="text-sm text-ink">{en.value ? '已启用' : '已禁用'}</span>
+                  </label>
+                </FieldRow>
+                <FieldRow label="关键词" desc="逗号分隔，大小写不敏感；命中任一即触发" enabled={kw.enabled} onToggle={kw.toggle} showOnlyConfigured={so}>
+                  <textarea value={kw.value} onChange={(e) => kw.set(e.target.value)} disabled={!kw.enabled} rows={3} className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition disabled:cursor-not-allowed font-mono" />
+                </FieldRow>
+                <FieldRow label="动作" desc="命中时：走保底 = 路由到保底通道；拒绝 = 返回 403" enabled={act.enabled} onToggle={act.toggle} showOnlyConfigured={so}>
+                  <select value={act.value} onChange={(e) => act.set(e.target.value)} disabled={!act.enabled} className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink focus:outline-none focus:border-accent transition disabled:cursor-not-allowed">
+                    <option value="fallback">走保底</option>
+                    <option value="block">拒绝 (403)</option>
+                  </select>
+                </FieldRow>
+              </div>
+            ))}
           </>
         );
 
@@ -1191,6 +1353,10 @@ export default function Policies() {
 
                 <FieldRow label="长上下文模型标记(逗号分隔)" desc="model 名含任一标记(逗号分隔)视为长上下文,如 1m" enabled={longContextModelMarkers.enabled} onToggle={longContextModelMarkers.toggle} showOnlyConfigured={so}>
                   <input type="text" value={longContextModelMarkers.value} onChange={(e) => longContextModelMarkers.set(e.target.value)} disabled={!longContextModelMarkers.enabled} placeholder="1m" className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition disabled:cursor-not-allowed" />
+                </FieldRow>
+
+                <FieldRow label="支持1M的模型(逗号分隔)" desc="只有模型名含这些子串才启用门控;空=所有模型;如 opus,fable" enabled={longContextSupportedModels.enabled} onToggle={longContextSupportedModels.toggle} showOnlyConfigured={so}>
+                  <input type="text" value={longContextSupportedModels.value} onChange={(e) => longContextSupportedModels.set(e.target.value)} disabled={!longContextSupportedModels.enabled} placeholder="opus,fable" className="w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition disabled:cursor-not-allowed" />
                 </FieldRow>
 
                 <FieldRow label="extra-usage 关键词(逗号分隔)" desc="错误响应命中即把该号标记不支持1M(extra-usage)" enabled={extraUsageKeywords.enabled} onToggle={extraUsageKeywords.toggle} showOnlyConfigured={so}>
@@ -1271,32 +1437,6 @@ export default function Policies() {
               </FieldRow>
             </div>
 
-            {/* Group: 弹性伸缩 */}
-            <div className="bg-surface border border-line rounded-xl px-4 py-2 mb-4">
-              <div className="flex items-center justify-between py-2">
-                <div>
-                  <h2 className="text-xs font-medium text-muted uppercase tracking-wide">弹性伸缩</h2>
-                </div>
-                <GroupMaster field={elasticEnabled} />
-              </div>
-              <div className={elasticEnabled.value ? '' : 'opacity-40 pointer-events-none'}>
-                <FieldRow label="ElasticScaleUpUtil" desc="扩容利用率阈值" enabled={elasticScaleUpUtil.enabled} onToggle={elasticScaleUpUtil.toggle} showOnlyConfigured={so}>
-                  <NumInput value={elasticScaleUpUtil.value} onChange={elasticScaleUpUtil.set} disabled={!elasticScaleUpUtil.enabled} min={0} max={1} step={0.05} />
-                </FieldRow>
-
-                <FieldRow label="缩容利用率阈值(利用率≤此值才释放备用号)" desc="利用率持续低于此阈值时才释放备用号（与扩容阈值形成迟滞区间）" enabled={elasticScaleDownUtil.enabled} onToggle={elasticScaleDownUtil.toggle} showOnlyConfigured={so}>
-                  <NumInput value={elasticScaleDownUtil.value} onChange={elasticScaleDownUtil.set} disabled={!elasticScaleDownUtil.enabled} min={0} max={1} step={0.05} />
-                </FieldRow>
-
-                <FieldRow label="ElasticMaxReserve" desc="最大备用数" enabled={elasticMaxReserve.enabled} onToggle={elasticMaxReserve.toggle} showOnlyConfigured={so}>
-                  <NumInput value={elasticMaxReserve.value} onChange={elasticMaxReserve.set} disabled={!elasticMaxReserve.enabled} min={0} />
-                </FieldRow>
-
-                <FieldRow label="默认活跃账户数(打满后才按弹性扩容)" desc="弹性扩容触发前默认保持活跃的账户数量" enabled={elasticBaselineCount.enabled} onToggle={elasticBaselineCount.toggle} showOnlyConfigured={so}>
-                  <NumInput value={elasticBaselineCount.value} onChange={elasticBaselineCount.set} disabled={!elasticBaselineCount.enabled} min={1} />
-                </FieldRow>
-              </div>
-            </div>
           </>
         );
 
@@ -1508,12 +1648,11 @@ export default function Policies() {
       </div>
 
       {/* ================================================================
-          Main body: left-rail nav + right content pane
+          Top tabs + content
           ================================================================ */}
-      <div className="flex flex-col md:flex-row flex-1 min-h-0 px-4 md:px-6 pt-4 pb-6 gap-4">
-
-        {/* Left rail */}
-        <nav className="md:w-48 shrink-0 flex flex-row md:flex-col gap-1 overflow-x-auto md:overflow-x-visible">
+      <div className="flex-1 min-h-0 px-4 md:px-6 pt-2 pb-6">
+        {/* Tab bar */}
+        <nav className="flex gap-1 overflow-x-auto pb-3 border-b border-line mb-4">
           {CATEGORIES.map((c) => {
             const count = catCount(c.id);
             const active = cat === c.id;
@@ -1521,10 +1660,10 @@ export default function Policies() {
               <button
                 key={c.id}
                 onClick={() => setCat(c.id)}
-                className={`flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition text-left
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition
                   ${active
                     ? 'bg-accent text-white'
-                    : 'text-muted hover:bg-surface hover:text-ink border border-transparent hover:border-line'
+                    : 'text-muted hover:bg-surface hover:text-ink'
                   }`}
               >
                 <span>{c.label}</span>
@@ -1538,8 +1677,8 @@ export default function Policies() {
           })}
         </nav>
 
-        {/* Right content pane */}
-        <fieldset disabled={!isSuperadmin} className="flex-1 min-w-0">
+        {/* Content pane */}
+        <fieldset disabled={!isSuperadmin} className="min-w-0">
           {CatContent()}
         </fieldset>
       </div>

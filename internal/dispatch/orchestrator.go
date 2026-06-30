@@ -10,9 +10,10 @@ import (
 
 // ProxyResult is the outcome of forwarding a request to one account.
 type ProxyResult struct {
-	Status int
-	Body   string
-	Banned bool // ban signal (401/403/keyword) classified by the proxy
+	Status         int
+	Body           string
+	Banned         bool // ban signal (401/403/keyword) classified by the proxy
+	RetryAfterSec  int  // parsed Retry-After header (seconds); 0 = absent
 }
 
 // Proxy forwards a request to the account identified by key.
@@ -162,6 +163,7 @@ func (o *Orchestrator) Dispatch(ctx context.Context, model string, order []strin
 		if o.NowMs != nil && o.SerialWaitKeys[key] {
 			if waitMs := o.SerialWaitMs[key]; waitMs > 0 {
 				if !o.Store.WaitForSlot(ctx, key, o.NowMs()+waitMs, o.NowMs) {
+					attempts++
 					continue
 				}
 			}

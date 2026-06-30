@@ -132,6 +132,13 @@ export interface Policy {
   params: Record<string, unknown>;
 }
 
+export interface ContentFilterRule {
+  Name: string;
+  Enabled: boolean;
+  Keywords: string[];
+  Action: string; // "fallback" | "block"
+}
+
 // policy.Patch fields (all optional, pointer-like)
 export interface PolicyPatch {
   IdleFirstSelection?: boolean;
@@ -145,6 +152,8 @@ export interface PolicyPatch {
   CooldownMult?: number;
   AffinityTTLSec?: number;
   AffinityWaitMs?: number;
+  DeviceAffinityEnabled?: boolean;
+  PathNormalizeEnabled?: boolean;
   FallbackEnabled?: boolean;
   FallbackPriceThresholdUsd?: number;
   FallbackKeywords?: string[];
@@ -174,6 +183,8 @@ export interface PolicyPatch {
   ElasticScaleUpUtil?: number;
   ElasticScaleDownUtil?: number;
   ElasticMaxReserve?: number;
+  ElasticScaleStep?: number;
+  ElasticMaxActive?: number;
   ElasticBaselineCount?: number;
   // Spend-cap (cumulative today-spend vs raising threshold)
   SpendCap5hEnabled?: boolean;
@@ -214,10 +225,13 @@ export interface PolicyPatch {
   CCCliUserAgent?: string;
   CCCliAnthropicBeta?: string;
   CCCliXApp?: string;
+  // 内容过滤 (多类别独立规则)
+  ContentFilterRules?: ContentFilterRule[];
   // 1M 长上下文门控 (#143)
   LongContextGateEnabled?: boolean;
   LongContextTokenThreshold?: number;
   LongContextModelMarkers?: string[];
+  LongContextSupportedModels?: string[];
   ExtraUsageKeywords?: string[];
   ExtraUsageStatusCodes?: number[];
   No1MRecoveryMs?: number;
@@ -234,6 +248,8 @@ export interface PolicyConfig {
   CooldownMaxMs: number;
   CooldownMult: number;
   AffinityTTLSec: number;
+  DeviceAffinityEnabled: boolean;
+  PathNormalizeEnabled: boolean;
   FallbackEnabled: boolean;
   FallbackPriceThresholdUsd: number;
   BanSignals: number[];

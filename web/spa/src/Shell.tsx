@@ -147,6 +147,7 @@ const NAV_ITEMS: NavItem[] = [
   { path: '/accounts',  label: '号库',     icon: '⚿' },
   { path: '/fallback',  label: '保底', icon: '⤵', adminOnly: true },
   { path: '/logs',      label: '日志',     icon: '≡' },
+  { path: '/intercepted', label: '拦截', icon: '🛡', adminOnly: true },
   { path: '/billing',   label: '计费',     icon: '₿', adminOnly: true },
   { path: '/settings',  label: '设置',     icon: '⚙', adminOnly: true },
 ];
@@ -169,6 +170,7 @@ const SETTINGS_ITEMS: NavItem[] = [
   { path: '/desired',     label: '配置对账', icon: '⇌', adminOnly: true },
   { path: '/keys',        label: '调度密钥', icon: '🔑', adminOnly: true },
   { path: '/ban-analysis',label: '封号分析', icon: '⚠', adminOnly: true },
+  { path: '/intercepted', label: '信息拦截', icon: '🛡', adminOnly: true },
   { path: '/users',       label: '用户',     icon: '👤', adminOnly: true },
 ];
 

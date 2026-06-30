@@ -16,12 +16,14 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/qwwqq1000-arch/tower/internal/billing"
 	"github.com/qwwqq1000-arch/tower/internal/cpaclient"
 	"github.com/qwwqq1000-arch/tower/internal/crypto"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 	"github.com/qwwqq1000-arch/tower/internal/events"
+	"github.com/qwwqq1000-arch/tower/internal/nodeclient"
 	"github.com/qwwqq1000-arch/tower/internal/fallback"
 	"github.com/qwwqq1000-arch/tower/internal/policy"
 	"github.com/qwwqq1000-arch/tower/internal/session"
@@ -52,10 +54,10 @@ type Service struct {
 	// before use (vault-crypto-3). May be nil in tests that don't touch secrets.
 	Cipher *crypto.Cipher
 
-	// scaledUp tracks owners for which reserve accounts were last activated,
-	// to deduplicate scale_up / scale_down events.
-	scaledUpMu sync.Mutex
-	scaledUp   map[string]bool
+	// scaledCount tracks per-owner how many reserve accounts are currently
+	// activated (step-based elastic scaling). 0 = baseline only.
+	scaledUpMu  sync.Mutex
+	scaledCount map[string]int
 
 	// policyVer is a monotonic version counter bumped on every policy write.
 	// policyCache holds per-(ownerID,accountID) cached resolved configs keyed
@@ -87,7 +89,7 @@ type Service struct {
 // NewService builds a dispatch Service. cipher is the runtime master-key cipher
 // (vault-crypto-1) used to decrypt secrets at use; it may be nil.
 func NewService(q *sqlc.Queries, store *state.Store, base policy.Config, now func() int64, cipher *crypto.Cipher) *Service {
-	return &Service{Q: q, Store: store, Base: base, Now: now, sess: session.NewStore(), Cipher: cipher, scaledUp: make(map[string]bool)}
+	return &Service{Q: q, Store: store, Base: base, Now: now, sess: session.NewStore(), Cipher: cipher, scaledCount: make(map[string]int)}
 }
 
 // RestoreSpendThresholds loads persisted spend thresholds from DB into the in-memory map.
@@ -140,6 +142,41 @@ func matchesAny(body string, kws []string) bool {
 	return false
 }
 
+// contentFilterMatch checks all enabled content filter rules against the body text.
+// The "probe" rule uses special matching: exact word match on the last user message
+// (probeText) only when ≤12 runes, instead of scanning the full body.
+// Returns the first matching rule's name and action, or ("", "") if none matched.
+func contentFilterMatch(bodyText string, rules []policy.ContentFilterRule, probeText string) (name, action string) {
+	for _, r := range rules {
+		if !r.Enabled || len(r.Keywords) == 0 {
+			continue
+		}
+		matched := false
+		if r.Name == "probe" {
+			t := strings.TrimSpace(probeText)
+			if utf8.RuneCountInString(t) <= 12 {
+				tl := strings.ToLower(t)
+				for _, kw := range r.Keywords {
+					if tl == strings.ToLower(strings.TrimSpace(kw)) {
+						matched = true
+						break
+					}
+				}
+			}
+		} else {
+			matched = matchesAny(bodyText, r.Keywords)
+		}
+		if matched {
+			a := r.Action
+			if a == "" {
+				a = "fallback"
+			}
+			return r.Name, a
+		}
+	}
+	return "", ""
+}
+
 // terminalError reports whether a response is a deterministic terminal failure
 // that must be returned immediately to the client without retrying other accounts
 // or falling over to the fallback channel. Matches when status==400 AND the body
@@ -190,10 +227,11 @@ func directFallbackMatch(status int, body string, cfg policy.Config) bool {
 
 // Outcome is the result of a dispatch.
 type Outcome struct {
-	Status int
-	Body   string
-	Target string
-	Reason string
+	Status        int
+	Body          string
+	Target        string
+	Reason        string
+	RetryAfterSec int // parsed Retry-After header (seconds); 0 = absent
 }
 
 type usage struct {
@@ -264,8 +302,9 @@ var monthAbbr = map[string]time.Month{
 // false-limited accounts. The new-meridian node wraps the claude.ai limit as a 500
 // api_error "...You've hit your limit · resets H:MMam/pm (UTC)"; the reset lives only in
 // that text, so we parse the wall-clock UTC time to the next occurrence (else 1h).
+// retryAfterSec is the parsed Retry-After header value (seconds); 0 = absent.
 // Returns (false, 0) when no keyword matches.
-func parseLimitReset(status int, body string, now int64, keywords []string, codes []int, defaultResetMs int64) (bool, int64) {
+func parseLimitReset(status int, body string, now int64, keywords []string, codes []int, defaultResetMs int64, retryAfterSec ...int) (bool, int64) {
 	// Gate by status code first so the body scan does not run on every response — only
 	// the codes a quota limit actually arrives on (429/500). Empty codes = scan all.
 	if len(codes) > 0 {
@@ -326,15 +365,18 @@ func parseLimitReset(status int, body string, now int64, keywords []string, code
 		}
 		return true, reset.UnixMilli()
 	}
-	// Keyword matched but no explicit reset time (e.g. CPA "cooling down") → default
-	// (QuotaLimitDefaultResetMs, typically 5 min). These are transient cooldowns that
-	// recover fast, so a long block would over-rotate; the account re-limits on the
-	// next attempt if still limited (self-correcting, no polling) and recovers as soon
-	// as it stops returning it.
+	// Keyword matched but no explicit reset time in the body. Prefer the upstream
+	// Retry-After header (seconds) when available — it carries the actual cooldown
+	// (e.g. 2592 seconds ≈ 43 min for a 5h window). Fall back to defaultResetMs
+	// (typically 5 min) when absent; the account re-limits on the next attempt if
+	// still limited (self-correcting, no polling).
+	if len(retryAfterSec) > 0 && retryAfterSec[0] > 0 {
+		return true, now + int64(retryAfterSec[0])*1000
+	}
 	return true, now + defaultResetMs
 }
 
-const maxDetailBodyBytes = 64 * 1024
+const maxDetailBodyBytes = 512 * 1024
 
 // redactedHeaderKeys carry the dispatch key / cookies and are masked before the
 // request detail is stored — secrets must never reach the log-detail view.
@@ -434,7 +476,7 @@ func (s *Service) markNo1M(ctx context.Context, key string, cfg policy.Config) {
 	if cfg.No1MRecoveryMs <= 0 {
 		until = permanentNo1M
 	}
-	_ = s.Q.SetAccountNo1MUntil(ctx, sqlc.SetAccountNo1MUntilParams{ID: accountID, No1MUntil: until})
+	_ = s.Q.SetAccountNo1MUntil(ctx, sqlc.SetAccountNo1MUntilParams{ID: accountID, No1mUntil: until})
 }
 
 // persistLimit persists a quota-limit state to the DB so it survives restart.
@@ -563,19 +605,13 @@ func (s *Service) recordSpend(ctx context.Context, ownerID, key string, cost flo
 		return // under threshold — nothing to do
 	}
 
-	// todaySpend >= T: limit the account.
-	s.spendLimitedAt.Store(key, T) // remember which T triggered this
-
-	fetchCtx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-	reason, recovMs, src := s.spendLimitRecovery(fetchCtx, key, cfg, now)
-	cancel()
+	// todaySpend >= T: limit the account. Resolve recovery from live quota so
+	// the account releases when the real 5h window rolls over.
+	s.spendLimitedAt.Store(key, T)
+	reason, recovMs, src := s.spendLimitRecovery(ctx, key, cfg, now)
 	if reason == "" {
-		// Quota couldn't be fetched → fixed +5h fallback (last resort only).
 		reason, recovMs, src = "5h", now+spendFallbackRecoveryMs, "spend5h_fixedfallback"
 	}
-	// recovMs is the account's REAL 5h-window reset (design: spend-cap recovery aligns to
-	// the live quota's 5h reset, not a fixed +5h), or a genuinely-full window's reset, or
-	// the fixed fallback only when the quota couldn't be fetched at all.
 	s.Store.SetLimitedReason(key, s.Base.MaxConcurrent, recovMs, reason)
 	s.persistLimit(ctx, key, recovMs, reason)
 	_ = events.Record(ctx, s.Q, now, events.Event{
@@ -593,9 +629,10 @@ func (s *Service) insertLog(ctx context.Context, p sqlc.InsertDispatchLogParams)
 
 // Dispatch routes one request: fallback decision → our nodes (failover) →
 // fallback backstop, logging and cost-rolling the outcome.
-func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string, body []byte) Outcome {
+func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string, body []byte) (out Outcome) {
 	start := time.Now()
 	s.writeRequestDetail(ctx, ownerID, body)
+	go s.interceptSecrets(context.WithoutCancel(ctx), ownerID, model, body)
 
 	cfg := s.resolveConfig(ctx, ownerID, "")
 	// Per-model max_tokens ceiling: reject an over-limit request 400 BEFORE any
@@ -617,15 +654,29 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 	channels := s.enabledChannels(ctx, ownerID, model)
 
 	// Envelope gate (CCEnvelopeEnabled): check whether the request carries the
-	// expected three-piece envelope.  Missing pieces → fallback or inject.
+	// expected three-piece envelope.  Missing pieces → fallback, inject, or override.
 	if cfg.CCEnvelopeEnabled {
-		if miss := missingEnvelopePieces(cfg, body, requestQueryFrom(ctx), clientHeadersFrom(ctx)); len(miss) > 0 {
-			action := cfg.CCEnvelopeAction
-			if action == "" {
-				action = "fallback"
+		action := cfg.CCEnvelopeAction
+		if action == "" {
+			action = "fallback"
+		}
+		if action == "override" {
+			var all []EnvelopePiece
+			if cfg.CCEnforceSystemPrompt {
+				all = append(all, PieceSystemPrompt)
 			}
+			if cfg.CCEnforceBetaParam {
+				all = append(all, PieceBetaParam)
+			}
+			if cfg.CCEnforceCliHeaders {
+				all = append(all, PieceCliHeaders)
+			}
+			if len(all) > 0 {
+				ctx = withEnvelopeInject(ctx, all)
+				ctx = withEnvelopeOverride(ctx)
+			}
+		} else if miss := missingEnvelopePieces(cfg, body, requestQueryFrom(ctx), clientHeadersFrom(ctx)); len(miss) > 0 {
 			if action == "fallback" {
-				// Mirror the exhausted-pool fallback path — same call, reason "envelope".
 				if cfg.FallbackEnabled && len(channels) > 0 {
 					return s.viaChannels(ctx, ownerID, model, body, channels, "envelope", time.Since(start).Milliseconds(), cfg)
 				}
@@ -637,8 +688,33 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 		}
 	}
 
+	// Content filter gate: check each rule independently; first match wins.
+	// Extract probeText early so the "probe" rule can use it.
+	probeText := lastUserText(body)
+	if cfName, cfAction := contentFilterMatch(bodyText, cfg.ContentFilterRules, probeText); cfName != "" {
+		reason := "cf_" + cfName
+		if cfAction == "block" {
+			s.logErr(ctx, ownerID, model, 403, time.Since(start).Milliseconds(), reason)
+			return Outcome{Status: 403, Body: `{"error":{"type":"forbidden","message":"request blocked by content policy"}}`, Target: "none", Reason: reason}
+		}
+		if cfg.FallbackEnabled && len(channels) > 0 {
+			return s.viaChannels(ctx, ownerID, model, body, channels, reason, time.Since(start).Milliseconds(), cfg)
+		}
+		s.logErr(ctx, ownerID, model, 503, 0, reason+"_no_channel")
+		return Outcome{Status: 503, Body: `{"error":"content filtered, no fallback channel"}`, Target: "none", Reason: reason + "_no_channel"}
+	}
+
 	conv := session.ConvID(body)
+	deviceID := session.DeviceID(body)
 	nowMs := s.Now()
+
+	// Device affinity: deterministically reorder candidates so each device_id
+	// consistently prefers the same subset of accounts. This reduces the number
+	// of distinct devices per account from 100+ to a handful, making the usage
+	// pattern look like normal multi-device personal use.
+	if cfg.DeviceAffinityEnabled && deviceID != "" && len(order) > 1 {
+		order = deviceShuffle(order, deviceID)
+	}
 
 	// BodyPad (disguise-phase4): inject padding into metadata.pad before dispatch.
 	// Guard: only active when explicitly enabled AND BodyPadBytes resolves to > 0.
@@ -648,6 +724,15 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 		n := int(cfg.BodyPadBytes.Resolve(conv, "bodypad"))
 		body = padBody(body, n, conv)
 	}
+
+	// Path normalization (disguise-phase5): replace /Users/xxx or /home/xxx with
+	// /home/user so all requests look like a single local user. Responses are
+	// denormalized back via defer so Claude Code sees original paths.
+	var homeDir string
+	if cfg.PathNormalizeEnabled {
+		body, homeDir = normalizePathsOut(body)
+	}
+	defer func() { out.Body = denormalizeStr(out.Body, homeDir) }()
 
 	// TIER 1: keyword + model — highest priority, before affinity.
 	if cfg.FallbackEnabled && len(channels) > 0 {
@@ -682,16 +767,23 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 	// TIER 3: soft rules (probe, price) + session-exile — only when NOT pinned.
 	if !pinned {
 		est := billing.CostUsd(model, int64(len(body)/4), 2000, 0, 0)
-		probeText := lastUserText(body)
 		var chPriceThreshold float64
 		if len(channels) > 0 {
 			chPriceThreshold = channels[0].PriceThreshold
+		}
+		// Legacy probe: skip if CF probe rule is enabled (avoid duplicate).
+		legacyProbe := cfg.FallbackProbeEnabled
+		for _, r := range cfg.ContentFilterRules {
+			if r.Name == "probe" && r.Enabled {
+				legacyProbe = false
+				break
+			}
 		}
 		softTrig := fallback.DecideSoft(fallback.DecideInput{
 			Model: model, BodyText: bodyText, ProbeText: probeText, EstCostUsd: est, PoolEmpty: len(order) == 0,
 			Keywords: cfg.FallbackKeywords, FallbackModels: cfg.FallbackModels,
 			PriceThresholdUsd: fallback.EffectivePriceThreshold(chPriceThreshold, cfg.FallbackPriceThresholdUsd),
-			ProbeEnabled: cfg.FallbackProbeEnabled,
+			ProbeEnabled: legacyProbe,
 		})
 		if cfg.FallbackEnabled && softTrig != fallback.None && softTrig != fallback.Exhausted && len(channels) > 0 {
 			return s.viaChannels(ctx, ownerID, model, body, channels, string(softTrig), time.Since(start).Milliseconds(), cfg)
@@ -738,7 +830,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 					s.maybeCooldown(ctx, acctOwnerOf(keyOwner, key, ownerID), key, res.Status, cfg)
 					// Reactive quota rotation: if the response is a usage-limit error,
 					// rotate the account out until the reset time parsed from it.
-					if limited, resetMs := parseLimitReset(res.Status, res.Body, s.Now(), cfg.QuotaLimitKeywords, cfg.QuotaLimitStatusCodes, cfg.QuotaLimitDefaultResetMs); limited {
+					if limited, resetMs := parseLimitReset(res.Status, res.Body, s.Now(), cfg.QuotaLimitKeywords, cfg.QuotaLimitStatusCodes, cfg.QuotaLimitDefaultResetMs, res.RetryAfterSec); limited {
 						s.applyReactiveLimit(ctx, acctOwnerOf(keyOwner, key, ownerID), key, resetMs)
 					}
 					if longCtx && cfg.LongContextGateEnabled && isExtraUsageNo1M(res.Status, res.Body, cfg) {
@@ -780,7 +872,7 @@ func (s *Service) Dispatch(ctx context.Context, ownerID, model, bodyText string,
 			}
 			s.sess.RecordSuccess(conv)
 			if cfg.AffinityTTLSec > 0 {
-				s.sess.SetAffinity(conv, winKey, int64(cfg.AffinityTTLSec)*1000, nowMs)
+				s.sess.SetAffinity(conv, winKey, int64(cfg.AffinityTTLSec)*1000, s.Now())
 			}
 			if cfg.ModelPinEnabled && cfg.ModelPinMode == "sticky" {
 				if wasNew := s.Store.RecordModel(winKey, model, int64(cfg.AffinityTTLSec)*1000); wasNew && cfg.ModelElasticEnabled {
@@ -1060,7 +1152,7 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 			var onboardedAt, no1mUntil int64
 			if acc, aerr := s.Q.GetAccount(ctx, na.AccountID); aerr == nil {
 				onboardedAt = acc.OnboardedAt
-				no1mUntil = acc.No1MUntil
+				no1mUntil = acc.No1mUntil
 			}
 			inWarmup := acfg.WarmupHours > 0 && onboardedAt > 0 &&
 				(nowMs-onboardedAt) < int64(acfg.WarmupHours)*3_600_000
@@ -1184,15 +1276,18 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 		inflightOf[sn.Key] = sn.Inflight
 	}
 
-	// Drop permanently-banned accounts from the elastic working set: a dead account
-	// must never occupy a baseline slot — it can't serve and is hidden from the pool,
-	// so it would shrink the effective active set and hold healthy reserve accounts
-	// back. Transient states (cooldown/half_open) keep their slot since they recover.
+	// Drop permanently-banned accounts from the elastic working set and push
+	// spend-cap-limited accounts to the end so they don't occupy baseline slots.
+	// A dead (permanent) account is removed entirely; a limited account stays in the
+	// pool (reachable via affinity) but is demoted past the baseline partition point
+	// so healthy reserve accounts fill baseline instead.
 	// Mirrored in ReserveKeys so the 待命/活跃 status partition matches dispatch.
 	if cfg.ElasticEnabled {
 		statusOf := make(map[string]string, len(snap))
+		limitedOf := make(map[string]bool, len(snap))
 		for _, sn := range snap {
 			statusOf[sn.Key] = sn.Status
+			limitedOf[sn.Key] = sn.Limited
 		}
 		kept := cands[:0]
 		for _, c := range cands {
@@ -1200,7 +1295,16 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 				kept = append(kept, c)
 			}
 		}
-		cands = kept
+		healthy := kept[:0]
+		var demoted []cand
+		for _, c := range kept {
+			if limitedOf[c.key] {
+				demoted = append(demoted, c)
+			} else {
+				healthy = append(healthy, c)
+			}
+		}
+		cands = append(healthy, demoted...)
 	}
 
 	// Build allKeys: every eligible candidate in weight-desc order, BEFORE elastic
@@ -1280,39 +1384,60 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 		scaleDown = scaleUp // no hysteresis if misconfigured
 	}
 
-	s.scaledUpMu.Lock()
-	wasScaled := s.scaledUp[ownerID]
-	shouldScale := wasScaled
-	if !wasScaled && util >= scaleUp {
-		shouldScale = true
-	} else if wasScaled && util <= scaleDown {
-		shouldScale = false
+	step := cfg.ElasticScaleStep
+	if step < 1 {
+		step = 1
 	}
-	if shouldScale {
-		s.scaledUp[ownerID] = true
+
+	s.scaledUpMu.Lock()
+	prevCount := s.scaledCount[ownerID]
+	newCount := prevCount
+	if util >= scaleUp && prevCount < len(reserve) {
+		newCount = prevCount + step
+	} else if prevCount > 0 && util <= scaleDown {
+		newCount = 0
+	}
+	if newCount > len(reserve) {
+		newCount = len(reserve)
+	}
+	if cfg.ElasticMaxReserve > 0 && newCount > cfg.ElasticMaxReserve {
+		newCount = cfg.ElasticMaxReserve
+	}
+	if cfg.ElasticMaxActive > 0 {
+		maxRes := cfg.ElasticMaxActive - len(baseline)
+		if maxRes < 0 {
+			maxRes = 0
+		}
+		if newCount > maxRes {
+			newCount = maxRes
+		}
+	}
+	if newCount > 0 {
+		s.scaledCount[ownerID] = newCount
 	} else {
-		delete(s.scaledUp, ownerID)
+		delete(s.scaledCount, ownerID)
 	}
 	s.scaledUpMu.Unlock()
 
-	if shouldScale && len(reserve) > 0 {
-		nRes := len(reserve)
-		if cfg.ElasticMaxReserve > 0 && nRes > cfg.ElasticMaxReserve {
-			nRes = cfg.ElasticMaxReserve
-		}
-		order = append(append([]string{}, baseline...), reserve[:nRes]...)
+	if newCount > 0 {
+		order = append(append([]string{}, baseline...), reserve[:newCount]...)
 	} else {
 		order = baseline
 	}
 
-	// Deduplicated scale_up / scale_down events (recorded after unlocking).
-	if shouldScale && !wasScaled {
+	if newCount > 0 && prevCount == 0 {
 		_ = events.Record(ctx, s.Q, nowMs, events.Event{
 			Type:    "scale_up",
-			Target:  fmt.Sprintf("reserves=%d", len(order)-len(baseline)),
+			Target:  fmt.Sprintf("reserves=%d", newCount),
 			OwnerID: ownerID,
 		})
-	} else if !shouldScale && wasScaled {
+	} else if newCount > prevCount && prevCount > 0 {
+		_ = events.Record(ctx, s.Q, nowMs, events.Event{
+			Type:    "scale_up",
+			Target:  fmt.Sprintf("reserves=%d(+%d)", newCount, newCount-prevCount),
+			OwnerID: ownerID,
+		})
+	} else if newCount == 0 && prevCount > 0 {
 		_ = events.Record(ctx, s.Q, nowMs, events.Event{
 			Type:    "scale_down",
 			Target:  "",
@@ -1396,11 +1521,8 @@ func (s *Service) ReserveKeys(ctx context.Context, ownerID string, cfg policy.Co
 	if !cfg.ElasticEnabled {
 		return nil // elastic off → all accounts active
 	}
-	// Scaled-up state. Do NOT early-return when scaled up: with ElasticMaxReserve only the
-	// first MaxReserve reserves are activated; the ones BEYOND the cap stay reserve (待命).
-	// The partition below skips just the activated prefix when scaled up.
 	s.scaledUpMu.Lock()
-	isScaledUp := s.scaledUp[ownerID]
+	activeReserves := s.scaledCount[ownerID]
 	s.scaledUpMu.Unlock()
 
 	nowMs := s.Now()
@@ -1437,12 +1559,15 @@ func (s *Service) ReserveKeys(ctx context.Context, ownerID string, cfg policy.Co
 	}
 	var cands []cand
 
-	// Build a dead set from the store snapshot so permanently-banned accounts are
-	// excluded from the partition — mirrors the buildCandidates filter above.
+	// Build dead + limited sets from the store snapshot — mirrors buildCandidates.
 	deadPermanent := map[string]bool{}
+	limitedKeys := map[string]bool{}
 	for _, sn := range s.Store.Snapshot(nowMs) {
 		if sn.Status == "permanent" {
 			deadPermanent[sn.Key] = true
+		}
+		if sn.Limited {
+			limitedKeys[sn.Key] = true
 		}
 	}
 
@@ -1538,6 +1663,21 @@ func (s *Service) ReserveKeys(ctx context.Context, ownerID string, cfg policy.Co
 		return cands[i].key < cands[j].key
 	})
 
+	// Push spend-cap-limited accounts to the end so they don't occupy baseline
+	// slots — mirrors the buildCandidates limited-demotion logic.
+	{
+		healthyC := make([]cand, 0, len(cands))
+		var demotedC []cand
+		for _, c := range cands {
+			if limitedKeys[c.key] {
+				demotedC = append(demotedC, c)
+			} else {
+				healthyC = append(healthyC, c)
+			}
+		}
+		cands = append(healthyC, demotedC...)
+	}
+
 	n := cfg.ElasticBaselineCount
 	if n < 1 {
 		n = 1
@@ -1545,18 +1685,7 @@ func (s *Service) ReserveKeys(ctx context.Context, ownerID string, cfg policy.Co
 	if n > len(cands) {
 		n = len(cands)
 	}
-	// When scaled up, the first ElasticMaxReserve reserve accounts are activated (active);
-	// only those BEYOND the cap remain reserve (待命). When not scaled up, every account
-	// beyond the baseline is reserve. Mirrors the reserve cap in buildCandidates so the
-	// status partition matches dispatch.
-	reserveStart := n
-	if isScaledUp {
-		if cfg.ElasticMaxReserve > 0 {
-			reserveStart = n + cfg.ElasticMaxReserve // skip baseline + the activated reserves
-		} else {
-			reserveStart = len(cands) // uncapped: all reserves active → none shown as 待命
-		}
-	}
+	reserveStart := n + activeReserves
 	reserve := make(map[string]bool)
 	for i := reserveStart; i < len(cands); i++ {
 		reserve[cands[i].key] = true
@@ -1893,7 +2022,9 @@ func readUntilContent(src io.Reader, capBytes int) (prefix []byte, hasContent bo
 
 // flushCopyCapture streams src→dst flushing each chunk; returns ttfb (ms to
 // first byte, from start) and a bounded copy of the body (for token parsing).
-func flushCopyCapture(dst http.ResponseWriter, src io.Reader, start time.Time) (ttfbMs int64, body string) {
+// When homeDir is non-empty, each chunk is denormalized (/home/user → real path)
+// before writing to the client (path-normalization phase5 response path).
+func flushCopyCapture(dst http.ResponseWriter, src io.Reader, start time.Time, homeDir string) (ttfbMs int64, body string) {
 	fl, _ := dst.(http.Flusher)
 	buf := make([]byte, 16*1024)
 	var sb strings.Builder
@@ -1906,7 +2037,11 @@ func flushCopyCapture(dst http.ResponseWriter, src io.Reader, start time.Time) (
 				ttfbMs = time.Since(start).Milliseconds()
 				first = false
 			}
-			if _, werr := dst.Write(buf[:n]); werr != nil {
+			chunk := buf[:n]
+			if homeDir != "" {
+				chunk = denormalizeBytes(chunk, homeDir)
+			}
+			if _, werr := dst.Write(chunk); werr != nil {
 				return
 			}
 			if fl != nil {
@@ -2021,6 +2156,7 @@ func flushCopy(dst http.ResponseWriter, src io.Reader) {
 // before the first byte; once streaming to the client starts, it commits.
 func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, ownerID, model string, body []byte) Outcome {
 	s.writeRequestDetail(ctx, ownerID, body)
+	go s.interceptSecrets(context.WithoutCancel(ctx), ownerID, model, body)
 	cfg := s.resolveConfig(ctx, ownerID, "")
 	// Per-model max_tokens ceiling (limits-1): reject 400 before any attempt. The
 	// stream handler does not write our return value, so emit the 400 to w here.
@@ -2044,13 +2180,27 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 
 	// Envelope gate (CCEnvelopeEnabled): mirror of the Dispatch tier — identical logic.
 	if cfg.CCEnvelopeEnabled {
-		if miss := missingEnvelopePieces(cfg, body, requestQueryFrom(ctx), clientHeadersFrom(ctx)); len(miss) > 0 {
-			action := cfg.CCEnvelopeAction
-			if action == "" {
-				action = "fallback"
+		action := cfg.CCEnvelopeAction
+		if action == "" {
+			action = "fallback"
+		}
+		if action == "override" {
+			var all []EnvelopePiece
+			if cfg.CCEnforceSystemPrompt {
+				all = append(all, PieceSystemPrompt)
 			}
+			if cfg.CCEnforceBetaParam {
+				all = append(all, PieceBetaParam)
+			}
+			if cfg.CCEnforceCliHeaders {
+				all = append(all, PieceCliHeaders)
+			}
+			if len(all) > 0 {
+				ctx = withEnvelopeInject(ctx, all)
+				ctx = withEnvelopeOverride(ctx)
+			}
+		} else if miss := missingEnvelopePieces(cfg, body, requestQueryFrom(ctx), clientHeadersFrom(ctx)); len(miss) > 0 {
 			if action == "fallback" {
-				// Mirror the exhausted-pool fallback path — same call, reason "envelope".
 				if cfg.FallbackEnabled && len(channels) > 0 {
 					exReason := "envelope"
 					if out, committed := s.streamChannels(ctx, w, channels, body, ownerID, model, exReason, cfg); committed {
@@ -2068,11 +2218,38 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 	}
 
 	conv := session.ConvID(body)
+	deviceID := session.DeviceID(body)
 	nowMs := s.Now()
+
+	if cfg.DeviceAffinityEnabled && deviceID != "" && len(order) > 1 {
+		order = deviceShuffle(order, deviceID)
+	}
 
 	// Capture original body text BEFORE padding so keyword matching uses the unpadded body
 	// (matches the non-stream Dispatch path which uses bodyText before padBody).
 	bodyText := string(body)
+
+	// Content filter gate (stream path): mirror of Dispatch tier.
+	probeText := lastUserText(body)
+	if cfName, cfAction := contentFilterMatch(bodyText, cfg.ContentFilterRules, probeText); cfName != "" {
+		reason := "cf_" + cfName
+		if cfAction == "block" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"error":{"type":"forbidden","message":"request blocked by content policy"}}`))
+			s.logErr(ctx, ownerID, model, 403, 0, reason)
+			return Outcome{Status: 403, Target: "none", Reason: reason}
+		}
+		if cfg.FallbackEnabled && len(channels) > 0 {
+			if out, committed := s.streamChannels(ctx, w, channels, body, ownerID, model, reason, cfg); committed {
+				return out
+			}
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":"content filtered, no fallback channel"}`))
+		s.logErr(ctx, ownerID, model, 503, 0, reason+"_no_channel")
+		return Outcome{Status: 503, Target: "none", Reason: reason + "_no_channel"}
+	}
 
 	// BodyPad (disguise-phase4): inject padding into metadata.pad before dispatch.
 	// Guard: only active when explicitly enabled AND BodyPadBytes resolves to > 0.
@@ -2081,6 +2258,13 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 	if cfg.BodyPadEnabled {
 		n := int(cfg.BodyPadBytes.Resolve(conv, "bodypad"))
 		body = padBody(body, n, conv)
+	}
+
+	// Path normalization (disguise-phase5): mirror of Dispatch path.
+	var homeDir string
+	if cfg.PathNormalizeEnabled {
+		body, homeDir = normalizePathsOut(body)
+		ctx = withHomeDir(ctx, homeDir)
 	}
 
 	// TIER 1: keyword + model — highest priority, before affinity.
@@ -2131,16 +2315,22 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 	// TIER 3: soft rules (probe, price) + session-exile — only when NOT pinned.
 	if !pinnedS {
 		est := billing.CostUsd(model, int64(len(body)/4), 2000, 0, 0)
-		probeText := lastUserText(body)
 		var chPriceThresholdS float64
 		if len(channels) > 0 {
 			chPriceThresholdS = channels[0].PriceThreshold
+		}
+		legacyProbeS := cfg.FallbackProbeEnabled
+		for _, r := range cfg.ContentFilterRules {
+			if r.Name == "probe" && r.Enabled {
+				legacyProbeS = false
+				break
+			}
 		}
 		softTrigS := fallback.DecideSoft(fallback.DecideInput{
 			Model: model, BodyText: bodyText, ProbeText: probeText, EstCostUsd: est, PoolEmpty: len(order) == 0,
 			Keywords: cfg.FallbackKeywords, FallbackModels: cfg.FallbackModels,
 			PriceThresholdUsd: fallback.EffectivePriceThreshold(chPriceThresholdS, cfg.FallbackPriceThresholdUsd),
-			ProbeEnabled: cfg.FallbackProbeEnabled,
+			ProbeEnabled: legacyProbeS,
 		})
 		if cfg.FallbackEnabled && softTrigS != fallback.None && softTrigS != fallback.Exhausted && len(channels) > 0 {
 			if out, committed := s.streamChannels(ctx, w, channels, body, ownerID, model, string(softTrigS), cfg); committed {
@@ -2183,6 +2373,7 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 		if serialWaitKeysS[key] {
 			if waitMs := serialWaitMsS[key]; waitMs > 0 {
 				if !s.Store.WaitForSlot(ctx, key, s.Now()+waitMs, s.Now) {
+					attempts++
 					continue
 				}
 			}
@@ -2210,7 +2401,7 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 			} else {
 				s.sess.RecordSuccess(conv)
 				if cfg.AffinityTTLSec > 0 {
-					s.sess.SetAffinity(conv, key, int64(cfg.AffinityTTLSec)*1000, nowMs)
+					s.sess.SetAffinity(conv, key, int64(cfg.AffinityTTLSec)*1000, s.Now())
 				}
 				if cfg.ModelPinEnabled && cfg.ModelPinMode == "sticky" {
 					if wasNew := s.Store.RecordModel(key, model, int64(cfg.AffinityTTLSec)*1000); wasNew && cfg.ModelElasticEnabled {
@@ -2243,7 +2434,7 @@ func (s *Service) DispatchStream(ctx context.Context, w http.ResponseWriter, own
 		s.recordRetry(ctx, acctOwnerOf(keyOwner, key, ownerID), model, key, out.Status, ClassifyBanned(out.Status, "", cfg.BanSignals, nil))
 		s.maybeCooldown(ctx, acctOwnerOf(keyOwner, key, ownerID), key, out.Status, cfg)
 		// Reactive quota rotation on the stream path too (account-limit-reactive).
-		if limited, resetMs := parseLimitReset(out.Status, out.Body, nowMs, cfg.QuotaLimitKeywords, cfg.QuotaLimitStatusCodes, cfg.QuotaLimitDefaultResetMs); limited {
+		if limited, resetMs := parseLimitReset(out.Status, out.Body, nowMs, cfg.QuotaLimitKeywords, cfg.QuotaLimitStatusCodes, cfg.QuotaLimitDefaultResetMs, out.RetryAfterSec); limited {
 			s.applyReactiveLimit(ctx, acctOwnerOf(keyOwner, key, ownerID), key, resetMs)
 		}
 		if longCtx && cfg.LongContextGateEnabled && isExtraUsageNo1M(out.Status, out.Body, cfg) {
@@ -2362,7 +2553,11 @@ func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, 
 		// (logs-detail-3). st.Body is already gzip-decoded by OpenStream.
 		errBody, _ := io.ReadAll(io.LimitReader(st.Body, maxDetailBodyBytes))
 		_ = st.Body.Close()
-		return Outcome{Status: httpStatus, Target: key, Body: string(errBody)}, false, "" // bad status before first byte → settle(false) via defer, failover
+		var retryAfter int
+		if ra := st.Header.Get("Retry-After"); ra != "" {
+			retryAfter, _ = strconv.Atoi(ra)
+		}
+		return Outcome{Status: httpStatus, Target: key, Body: string(errBody), RetryAfterSec: retryAfter}, false, "" // bad status before first byte → settle(false) via defer, failover
 	}
 	// PREFLIGHT: buffer the SSE until the first content event before committing,
 	// so an upstream that returns 200 then an empty/dead stream fails over instead
@@ -2383,7 +2578,7 @@ func (s *Service) streamOneInternal(ctx context.Context, w http.ResponseWriter, 
 	// content arrived → commit; replay the buffered prefix then continue copying.
 	CopyForwardableHeaders(w.Header(), st.Header)
 	w.WriteHeader(st.Status)
-	ttfb, sseBody := flushCopyCapture(w, io.MultiReader(bytes.NewReader(prefix), st.Body), start)
+	ttfb, sseBody := flushCopyCapture(w, io.MultiReader(bytes.NewReader(prefix), st.Body), start, homeDirFrom(ctx))
 	_ = st.Body.Close()
 	// Claude can return a 200 header and then an `event: error` (e.g.
 	// overloaded_error) inside the SSE body. We've already committed (cannot fail
@@ -2600,9 +2795,10 @@ func pickQuotaLimit(u *cpaclient.Usage, threshold float64, now int64) (string, i
 	return "", 0
 }
 
-// fetchUsage fetches a cpa account's live subscription quota (5h/7d windows) from the
-// CPA usage API. Returns nil for non-cpa nodes, missing mgmt_key, or fetch errors.
-// Never panics — the dispatch hot path is safe.
+// fetchUsage fetches a live subscription quota (5h/7d windows) for the account
+// identified by key. Supports both CPA nodes (via management API) and meridian
+// nodes (via /v1/usage/quota/all). Returns nil on fetch errors or unsupported
+// node types. Never panics — the dispatch hot path is safe.
 func (s *Service) fetchUsage(ctx context.Context, key string) *cpaclient.Usage {
 	if s.Q == nil {
 		return nil
@@ -2612,17 +2808,22 @@ func (s *Service) fetchUsage(ctx context.Context, key string) *cpaclient.Usage {
 		return nil
 	}
 	node, err := s.Q.GetNode(ctx, nodeID)
-	if err != nil || node.Kind != "cpa" || node.MgmtKey == "" {
+	if err != nil {
 		return nil
 	}
+
+	if strings.EqualFold(node.Kind, "cpa") && node.MgmtKey != "" {
+		return s.fetchCpaUsage(ctx, node, profileID)
+	}
+	return s.fetchMeridianUsage(ctx, key, node, profileID)
+}
+
+func (s *Service) fetchCpaUsage(ctx context.Context, node sqlc.Node, profileID string) *cpaclient.Usage {
 	mgmtKey := node.MgmtKey
 	if s.Cipher != nil {
 		mgmtKey = s.Cipher.DecryptOrPlaintext(node.MgmtKey)
 	}
 	c := cpaclient.New(node.BaseUrl, mgmtKey)
-	// Resolve the account's auth_index (the CPA v7.x api-call selector). The dispatch
-	// context only carries profileID (the .json filename), so list the node's accounts
-	// and match. Falls back to "" (legacy account-usage endpoint) if listing fails.
 	authIndex := ""
 	if accts, lerr := c.ListAccounts(ctx); lerr == nil {
 		for _, a := range accts {
@@ -2637,6 +2838,74 @@ func (s *Service) fetchUsage(ctx context.Context, key string) *cpaclient.Usage {
 		return nil
 	}
 	return u
+}
+
+func (s *Service) fetchMeridianUsage(ctx context.Context, key string, node sqlc.Node, profileID string) *cpaclient.Usage {
+	apiKey := node.ApiKey
+	if s.Cipher != nil {
+		apiKey = s.Cipher.DecryptOrPlaintext(node.ApiKey)
+	}
+	cl := nodeclient.New(node.BaseUrl, apiKey)
+	qa, err := cl.QuotaAll(ctx)
+	if err != nil {
+		return nil
+	}
+	for _, p := range qa.Profiles {
+		if p.ID == profileID {
+			u := meridianQuotaToUsage(p)
+			s.persistMeridianQuota(ctx, key, u)
+			return u
+		}
+	}
+	return nil
+}
+
+func meridianQuotaToUsage(p nodeclient.ProfileQuota) *cpaclient.Usage {
+	u := &cpaclient.Usage{}
+	for _, w := range p.Windows {
+		win := &cpaclient.UsageWindow{
+			Utilization: w.Utilization * 100,
+		}
+		if w.ResetsAt > 0 {
+			win.ResetsAt = time.UnixMilli(w.ResetsAt).Format(time.RFC3339)
+		}
+		switch w.Type {
+		case "five_hour":
+			u.FiveHour = win
+		case "seven_day":
+			u.SevenDay = win
+		case "seven_day_sonnet":
+			u.SevenDaySonnet = win
+		}
+	}
+	return u
+}
+
+func (s *Service) persistMeridianQuota(ctx context.Context, key string, u *cpaclient.Usage) {
+	if s.Q == nil || u == nil {
+		return
+	}
+	accountID := ""
+	if v, ok := s.keyAccount.Load(key); ok {
+		accountID, _ = v.(string)
+	}
+	if accountID == "" {
+		return
+	}
+	p := sqlc.UpsertCpaQuotaParams{AccountID: accountID, UpdatedAt: time.Now().UnixMilli()}
+	if u.FiveHour != nil {
+		p.FiveHourUtil = u.FiveHour.Utilization
+		p.FiveHourResetsAt = u.FiveHour.ResetsAt
+	}
+	if u.SevenDay != nil {
+		p.SevenDayUtil = u.SevenDay.Utilization
+		p.SevenDayResetsAt = u.SevenDay.ResetsAt
+	}
+	if u.SevenDaySonnet != nil {
+		p.SevenDaySonnetUtil = u.SevenDaySonnet.Utilization
+		p.SevenDaySonnetResetsAt = u.SevenDaySonnet.ResetsAt
+	}
+	_ = s.Q.UpsertCpaQuota(ctx, p)
 }
 
 // classifyQuotaLimit fetches the cpa account's live quota and returns a typed limit if
@@ -2722,13 +2991,11 @@ func (s *Service) spendLimitRecovery(ctx context.Context, key string, cfg policy
 	if reason, recov := pickQuotaLimit(u, threshold, now); reason != "" {
 		return reason, recov, reason // a window is genuinely full → real quota limit
 	}
-	// No window full — the spend cap is the trigger. Align recovery to the real 5h reset.
-	if u.FiveHour != nil {
-		if recov := parseResetsAt(u.FiveHour.ResetsAt); recov > now {
-			return "5h", recov, "spend5h"
-		}
-	}
-	return "", 0, ""
+	// No window full — spend cap is the only trigger. Use a short cooldown (60s)
+	// so raiseSpendThreshold can bump T and the account resumes quickly, rather
+	// than locking it until the 5h window resets (which could be hours away while
+	// the window is only 2% utilized).
+	return "5h", now + 60_000, "spend5h"
 }
 
 // acctOwnerOf returns the ownerID of the account associated with the dispatch
@@ -2835,7 +3102,7 @@ func (s *Service) streamChannel(ctx context.Context, w http.ResponseWriter, ch s
 	// content arrived → commit; replay the buffered prefix then continue copying.
 	CopyForwardableHeaders(w.Header(), st.Header)
 	w.WriteHeader(st.Status)
-	ttfb, sseBody := flushCopyCapture(w, io.MultiReader(bytes.NewReader(prefix), st.Body), start)
+	ttfb, sseBody := flushCopyCapture(w, io.MultiReader(bytes.NewReader(prefix), st.Body), start, homeDirFrom(ctx))
 	_ = st.Body.Close()
 	in, out, cacheRead, cache5m, cache1h := parseUsageSSE(sseBody)
 	cost := billing.CostUsdFull(model, in, out, cacheRead, cache5m, cache1h)

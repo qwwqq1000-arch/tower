@@ -6,10 +6,44 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
+
+func logUpstreamRequest(req *http.Request, tag string, override bool, pieces int) {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "\n===== upstream %s (override=%v pieces=%d) =====\n", tag, override, pieces)
+	fmt.Fprintf(&sb, "%s %s\n", req.Method, req.URL.String())
+	for k, vs := range req.Header {
+		for _, v := range vs {
+			if strings.EqualFold(k, "x-api-key") || strings.EqualFold(k, "authorization") {
+				if len(v) > 12 {
+					v = v[:8] + "..." + v[len(v)-4:]
+				}
+			}
+			fmt.Fprintf(&sb, "%s: %s\n", k, v)
+		}
+	}
+	sb.WriteString("\n")
+	if req.Body != nil && req.ContentLength > 0 {
+		data, err := io.ReadAll(req.Body)
+		if err == nil {
+			req.Body = io.NopCloser(bytes.NewReader(data))
+			s := string(data)
+			if len(s) > 4000 {
+				sb.WriteString(s[:4000])
+				fmt.Fprintf(&sb, "\n…[truncated, total %d bytes]", len(s))
+			} else {
+				sb.WriteString(s)
+			}
+		}
+	}
+	sb.WriteString("\n===== end =====")
+	log.Println(sb.String())
+}
 
 // idleTimeoutReader wraps an io.ReadCloser and returns an error if no data
 // is received within idleTimeout between consecutive reads. The underlying
@@ -212,11 +246,13 @@ func (p *NodeProxy) Send(ctx context.Context, key string) (ProxyResult, error) {
 	setNodeAuthHeaders(req.Header, ref)
 	if len(miss) > 0 {
 		body := p.Body
-		newBody := injectEnvelope(miss, body, req.Header, p.EnvVals)
+		override := envelopeOverrideFrom(ctx)
+		newBody := injectEnvelope(miss, body, req.Header, p.EnvVals, override)
 		if len(newBody) != len(body) || string(newBody) != string(body) {
 			req.Body = io.NopCloser(bytes.NewReader(newBody))
 			req.ContentLength = int64(len(newBody))
 		}
+		logUpstreamRequest(req, "Send", override, len(miss))
 	}
 	resp, err := p.client().Do(req)
 	if err != nil {
@@ -235,10 +271,15 @@ func (p *NodeProxy) Send(ctx context.Context, key string) (ProxyResult, error) {
 	if status >= 200 && status < 300 && sseHasError(body) {
 		status = 500
 	}
+	var retryAfter int
+	if ra := resp.Header.Get("Retry-After"); ra != "" {
+		retryAfter, _ = strconv.Atoi(ra)
+	}
 	return ProxyResult{
-		Status: status,
-		Body:   body,
-		Banned: ClassifyBanned(resp.StatusCode, body, p.BanSignals, p.BanKeywords),
+		Status:        status,
+		Body:          body,
+		Banned:        ClassifyBanned(resp.StatusCode, body, p.BanSignals, p.BanKeywords),
+		RetryAfterSec: retryAfter,
 	}, nil
 }
 
@@ -331,11 +372,13 @@ func (p *NodeProxy) OpenStream(ctx context.Context, key string) (*Stream, error)
 	setNodeAuthHeaders(req.Header, ref)
 	if len(miss) > 0 {
 		body := p.Body
-		newBody := injectEnvelope(miss, body, req.Header, p.EnvVals)
+		override := envelopeOverrideFrom(ctx)
+		newBody := injectEnvelope(miss, body, req.Header, p.EnvVals, override)
 		if len(newBody) != len(body) || string(newBody) != string(body) {
 			req.Body = io.NopCloser(bytes.NewReader(newBody))
 			req.ContentLength = int64(len(newBody))
 		}
+		logUpstreamRequest(req, "SendStream", override, len(miss))
 	}
 	resp, err := streamClient.Do(req)
 	if err != nil {
