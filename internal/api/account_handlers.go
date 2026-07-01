@@ -1,8 +1,11 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -487,6 +490,66 @@ func clearNo1MHandler(q *sqlc.Queries) http.HandlerFunc {
 		}
 		recordAudit(r, q, "account.clear_no1m", "account:"+id, nil, nil)
 		writeJSON(w, 200, map[string]string{"ok": "true"})
+	}
+}
+
+func testAccountHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		accountID := r.PathValue("accountId")
+		if !ownsAccountID(r, q, accountID) {
+			writeJSON(w, 403, map[string]string{"error": "forbidden"})
+			return
+		}
+		var body struct {
+			Model string `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Model == "" {
+			writeJSON(w, 400, map[string]string{"error": "model required"})
+			return
+		}
+		nas, err := q.ListNodeAccountsByAccount(r.Context(), accountID)
+		if err != nil || len(nas) == 0 {
+			writeJSON(w, 404, map[string]string{"error": "account not assigned to any node"})
+			return
+		}
+		na := nas[0]
+		node, err := q.GetNode(r.Context(), na.NodeID)
+		if err != nil {
+			writeJSON(w, 404, map[string]string{"error": "node not found"})
+			return
+		}
+		apiKey := node.ApiKey
+		if cipher != nil {
+			apiKey = cipher.DecryptOrPlaintext(node.ApiKey)
+		}
+		payload, _ := json.Marshal(map[string]any{
+			"model":      body.Model,
+			"max_tokens": 32,
+			"messages":   []map[string]string{{"role": "user", "content": "Say hi in one word"}},
+		})
+		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+		defer cancel()
+		req, _ := http.NewRequestWithContext(ctx, "POST", node.BaseUrl+"v1/messages", bytes.NewReader(payload))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("x-api-key", apiKey)
+		req.Header.Set("anthropic-version", "2023-06-01")
+		req.Header.Set("X-Profile-ID", na.ProfileID)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			writeJSON(w, 502, map[string]string{"error": fmt.Sprintf("request failed: %v", err)})
+			return
+		}
+		defer resp.Body.Close()
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
+		var parsed map[string]any
+		if json.Unmarshal(respBody, &parsed) != nil {
+			parsed = map[string]any{"raw": string(respBody)}
+		}
+		writeJSON(w, resp.StatusCode, map[string]any{
+			"status": resp.StatusCode,
+			"model":  body.Model,
+			"body":   parsed,
+		})
 	}
 }
 

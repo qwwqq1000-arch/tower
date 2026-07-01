@@ -85,6 +85,7 @@ func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc
 		mux.HandleFunc("PATCH /api/admin/accounts/{accountId}/owner", requireAdmin(secret, q, setAccountOwnerHandler(q)))
 		mux.HandleFunc("POST /api/admin/accounts/{accountId}/recover", requireAdmin(secret, q, recoverAccountHandler(q, svc)))
 		mux.HandleFunc("POST /api/admin/accounts/{accountId}/clear-no1m", requireAdmin(secret, q, clearNo1MHandler(q)))
+		mux.HandleFunc("POST /api/admin/accounts/{accountId}/test", requireAdmin(secret, q, testAccountHandler(q, cipher)))
 		mux.HandleFunc("POST /api/admin/accounts/realign-limits", requireAdmin(secret, q, realignSpendLimitsHandler(svc)))
 		mux.HandleFunc("POST /api/admin/accounts/refresh-quota", requireAdmin(secret, q, accountsRefreshQuotaHandler(q, cipher, rot)))
 		mux.HandleFunc("POST /api/admin/accounts/{accountId}/refresh-quota", requireAdmin(secret, q, accountRefreshQuotaHandler(q, cipher, rot)))

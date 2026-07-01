@@ -15,6 +15,7 @@ import {
   clearNo1M,
   refreshAllQuota,
   refreshAccountQuota,
+  testAccount,
   listUsers,
 } from '../api';
 import type { AccountRow, CpaQuota, QuotaAll, Slot, UserRow } from '../types';
@@ -456,6 +457,112 @@ function AccountEditModal({
 }
 
 // ------------------------------------------------------------------
+// Model test modal
+// ------------------------------------------------------------------
+const TEST_MODELS = [
+  'claude-sonnet-5',
+  'claude-opus-4-8',
+  'claude-opus-4-6',
+  'claude-sonnet-4-6',
+  'claude-haiku-4-5-20251001',
+];
+
+function TestModal({
+  account,
+  onClose,
+}: {
+  account: AccountRow;
+  onClose: () => void;
+}) {
+  const [model, setModel] = useState(TEST_MODELS[0]);
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState<{ status: number; body: Record<string, unknown> } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleTest() {
+    setTesting(true);
+    setResult(null);
+    setError(null);
+    try {
+      const r = await testAccount(account.accountId, model);
+      setResult({ status: r.status, body: r.body });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '测试失败');
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  const ok = result && result.status >= 200 && result.status < 300;
+  const text = result?.body?.content
+    ? String((result.body.content as Array<{ text?: string }>)?.[0]?.text ?? '')
+    : null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+      <div className="bg-surface border border-line rounded-xl shadow-xl w-full max-w-md p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-ink">模型测试</h2>
+          <button onClick={onClose} className="text-muted hover:text-ink text-lg leading-none">×</button>
+        </div>
+        <p className="text-xs text-muted truncate">{account.email || account.profileId}</p>
+
+        <div className="flex gap-2">
+          <select
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            className="flex-1 bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink
+                       focus:outline-none focus:border-accent transition"
+          >
+            {TEST_MODELS.map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+          <button
+            onClick={() => { void handleTest(); }}
+            disabled={testing}
+            className="px-4 py-2 text-sm font-medium bg-accent text-white rounded-lg
+                       hover:bg-accent/80 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          >
+            {testing ? '测试中…' : '测试'}
+          </button>
+        </div>
+
+        {error && (
+          <div className="bg-err/10 border border-err/30 rounded-lg p-3 text-err text-xs">{error}</div>
+        )}
+
+        {result && (
+          <div className={`rounded-lg p-3 text-xs space-y-1 border ${ok ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
+            <div className="flex items-center gap-2">
+              <span className={`font-semibold ${ok ? 'text-green-400' : 'text-red-400'}`}>
+                {ok ? '✓ 成功' : '✗ 失败'} ({result.status})
+              </span>
+              {result.body?.model != null && <span className="text-muted font-mono">{String(result.body.model)}</span>}
+            </div>
+            {text && <p className="text-ink">{text}</p>}
+            {!ok && (
+              <pre className="text-muted whitespace-pre-wrap break-all mt-1 max-h-32 overflow-auto">
+                {JSON.stringify(result.body, null, 2)}
+              </pre>
+            )}
+          </div>
+        )}
+
+        <div className="flex justify-end">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-sm text-muted bg-bg border border-line rounded-lg hover:text-ink transition"
+          >
+            关闭
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------
 // Sort key type
 // ------------------------------------------------------------------
 type SortKey = 'email' | 'expiresAt' | 'todayCostUsd' | null;
@@ -481,6 +588,7 @@ function AccountTableRow({
   const [removing, setRemoving] = useState(false);
   const [editing, setEditing] = useState(false);
   const [toggling, setToggling] = useState(false);
+  const [showTest, setShowTest] = useState(false);
 
   const ownerName = useMemo(() => {
     if (!account.ownerId) return '超级管理员';
@@ -583,6 +691,13 @@ function AccountTableRow({
         <td className="px-4 py-3">
           <div className="flex items-center gap-2">
             <button
+              onClick={() => setShowTest(true)}
+              className="text-xs text-cyan-400 hover:text-cyan-300 transition"
+              title="测试该号是否支持某模型"
+            >
+              测试
+            </button>
+            <button
               onClick={() => { void handleRefreshQuota(); }}
               disabled={refreshingQuota}
               className="text-xs text-accent hover:text-accent/70 disabled:opacity-50 transition"
@@ -644,6 +759,9 @@ function AccountTableRow({
           onSave={onRefresh}
           onClose={() => setEditing(false)}
         />
+      )}
+      {showTest && (
+        <TestModal account={account} onClose={() => setShowTest(false)} />
       )}
     </>
   );

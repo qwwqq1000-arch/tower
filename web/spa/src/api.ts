@@ -221,6 +221,9 @@ export const refreshAllQuota = () =>
 export const refreshAccountQuota = (accountId: string) =>
   api<{ refreshed: number }>('POST', `/api/admin/accounts/${accountId}/refresh-quota`, {});
 
+export const testAccount = (accountId: string, model: string) =>
+  api<{ status: number; model: string; body: Record<string, unknown> }>('POST', `/api/admin/accounts/${accountId}/test`, { model });
+
 export const listNodeProfiles = (nodeId: string) =>
   api<NodeProfile[]>('GET', `/api/admin/nodes/${nodeId}/profiles`);
 
