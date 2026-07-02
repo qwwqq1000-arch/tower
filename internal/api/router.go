@@ -54,6 +54,7 @@ func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc
 	if q != nil {
 		mux.HandleFunc("POST /api/admin/nodes", requireAdmin(secret, q, createNodeHandler(q, cipher)))
 		mux.HandleFunc("GET /api/admin/nodes", requireAdmin(secret, q, listNodesHandler(q, cipher, svc)))
+		mux.HandleFunc("PATCH /api/admin/nodes/{id}", requireAdmin(secret, q, updateNodeHandler(q, cipher)))
 		mux.HandleFunc("DELETE /api/admin/nodes/{id}", requireAdmin(secret, q, deleteNodeHandler(pool, q, svc)))
 		mux.HandleFunc("POST /api/admin/nodes/normalize-mgmt-key", requireSuperadmin(secret, q, normalizeMgmtKeyHandler(pool, q, cipher)))
 		mux.HandleFunc("POST /api/admin/nodes/push", requireAdminOrToken(secret, q, pushToken, pushNodeHandler(pool, q, cipher, svc)))
@@ -91,6 +92,7 @@ func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc
 		mux.HandleFunc("POST /api/admin/accounts/{accountId}/refresh-quota", requireAdmin(secret, q, accountRefreshQuotaHandler(q, cipher, rot)))
 		mux.HandleFunc("GET /api/admin/nodes/{id}/profiles", requireAdmin(secret, q, listProfilesHandler(q, cipher)))
 		mux.HandleFunc("POST /api/admin/nodes/{id}/accounts/import", requireAdmin(secret, q, importProfileHandler(q, cipher)))
+		mux.HandleFunc("POST /api/admin/accounts/batch-import", requireAdmin(secret, q, batchAutoImportHandler(q, cipher)))
 		mux.HandleFunc("POST /api/admin/nodes/{id}/oauth/start", requireAdmin(secret, q, oauthStartHandler(q, cipher)))
 		mux.HandleFunc("POST /api/admin/nodes/{id}/oauth/exchange", requireAdmin(secret, q, oauthExchangeHandler(q, cipher)))
 		mux.HandleFunc("GET /api/admin/dispatch/status", requireAdmin(secret, q, dispatchStatusHandler(q, svc)))

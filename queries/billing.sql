@@ -38,3 +38,15 @@ SELECT coalesce(sum(s.est_cost_usd),0)::float8 AS total
 FROM fallback_spend s
 JOIN fallback_channels c ON c.id = s.channel_id
 WHERE c.owner_id = $1;
+
+-- name: SumAllFallbackSpend :one
+SELECT coalesce(sum(est_cost_usd),0)::float8 AS total FROM fallback_spend;
+
+-- name: SumFallbackSpendToday :one
+SELECT coalesce(sum(est_cost_usd),0)::float8 AS total FROM fallback_spend WHERE day = $1;
+
+-- name: SumFallbackSpendTodayByOwner :one
+SELECT coalesce(sum(s.est_cost_usd),0)::float8 AS total
+FROM fallback_spend s
+JOIN fallback_channels c ON c.id = s.channel_id
+WHERE c.owner_id = $1 AND s.day = $2;

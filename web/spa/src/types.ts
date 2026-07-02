@@ -92,6 +92,11 @@ export interface DashboardData {
   };
   accounts: {
     total: number;
+    enabled: number;
+  };
+  elastic?: {
+    current: number;
+    max: number;
   };
   today: {
     requests: number;
@@ -104,6 +109,8 @@ export interface DashboardData {
   };
   hosting: DashboardHostingRow[];
   totalCostUsd: number;
+  channelTodayCostUsd?: number;
+  channelTotalCostUsd?: number;
   quota5hAvg?: number;
   quota7dAvg?: number;
 }
@@ -406,6 +413,7 @@ export interface NodeProfile {
   loggedIn?: boolean;
   subscriptionType?: string;
   type?: string;
+  imported?: boolean;
 }
 
 export interface OAuthStartResult {
@@ -553,6 +561,7 @@ export interface DispatchStatus {
   traffic: DispatchTraffic;
   events: DispatchEvent[];
   nodes: { total: number; enabled: number };
+  elastic?: { current: number; max: number };
   asOf: number;
   fallbackChannels?: DispatchFallbackChannel[];
   quota5hAvg?: number;

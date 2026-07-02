@@ -94,6 +94,47 @@ func createNodeHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc 
 	}
 }
 
+func updateNodeHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		n, err := q.GetNode(r.Context(), id)
+		if err != nil {
+			writeJSON(w, 404, map[string]string{"error": "node not found"})
+			return
+		}
+		if owner, all := scope(r); !all && n.OwnerID != owner {
+			writeJSON(w, 403, map[string]string{"error": "forbidden"})
+			return
+		}
+		var body struct {
+			BaseUrl string `json:"baseUrl"`
+			ApiKey  string `json:"apiKey"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "invalid body"})
+			return
+		}
+		baseUrl := strings.TrimSpace(body.BaseUrl)
+		if baseUrl == "" {
+			baseUrl = n.BaseUrl
+		} else if verr := validateUpstreamURL(baseUrl, true); verr != nil {
+			writeJSON(w, 400, map[string]string{"error": verr.Error()})
+			return
+		}
+		apiKey := n.ApiKey
+		if strings.TrimSpace(body.ApiKey) != "" {
+			apiKey = cipher.EncryptStr(strings.TrimSpace(body.ApiKey))
+		}
+		old := map[string]any{"baseUrl": n.BaseUrl}
+		if err := q.UpdateNode(r.Context(), sqlc.UpdateNodeParams{ID: id, BaseUrl: baseUrl, ApiKey: apiKey}); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		recordAudit(r, q, "node.update", "node:"+id, old, map[string]any{"baseUrl": baseUrl})
+		writeJSON(w, 200, map[string]any{"ok": true})
+	}
+}
+
 func listNodesHandler(q *sqlc.Queries, cipher *crypto.Cipher, svc *dispatch.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		owner, all := scope(r)
@@ -439,12 +480,45 @@ func dashboardHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
 		}
 		nodes := map[string]any{"total": len(rows), "enabled": enabled, "byStatus": byStatus, "list": list}
 
-		// accounts count (owner-scoped for non-superadmin)
+		// accounts count + target set (owner-scoped for non-superadmin)
 		accTotal := 0
+		accEnabled := 0
+		accTargets := map[string]bool{}
 		if accs, err := q.ListNodeAccountsAll(ctx); err == nil {
 			for _, a := range accs {
 				if all || a.AcctOwnerID == owner {
 					accTotal++
+					accTargets[a.NodeID+":"+a.ProfileID] = true
+					if a.Enabled {
+						accEnabled++
+					}
+				}
+			}
+		}
+
+		// elastic status — mirrors dispatch_status logic: per-owner sum
+		elasticCurrent := 0
+		elasticMax := 0
+		if svc != nil {
+			cfg := svc.ResolveConfigForOwner(ctx, owner)
+			if cfg.ElasticEnabled {
+				if cfg.ElasticMaxActive > 0 {
+					elasticMax = cfg.ElasticMaxActive
+				} else {
+					elasticMax = cfg.ElasticBaselineCount + cfg.ElasticMaxReserve
+				}
+				svc.ScaledUpMu().Lock()
+				if all {
+					for _, v := range svc.ScaledCountSnapshot() {
+						elasticCurrent += v
+					}
+				} else {
+					elasticCurrent = svc.ScaledCountFor(owner)
+				}
+				svc.ScaledUpMu().Unlock()
+				elasticCurrent += cfg.ElasticBaselineCount
+				if elasticCurrent > elasticMax {
+					elasticCurrent = elasticMax
 				}
 			}
 		}
@@ -476,14 +550,35 @@ func dashboardHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
 		if reqN > 0 {
 			successRate = float64(okN) / float64(reqN)
 		}
-		today := map[string]any{"requests": reqN, "ok": okN, "successRate": successRate, "tokensIn": inTok, "tokensOut": outTok, "costUsd": cost, "byModel": byModel}
+		// Override cost with 号库-only cost (sum per-target, filtered by current node_accounts)
+		var accTodayCost float64
+		if todayTargets, err := q.CostByTargetSince(ctx, since); err == nil {
+			for _, r := range todayTargets {
+				if accTargets[r.Target] {
+					accTodayCost += r.Cost
+				}
+			}
+		}
+		today := map[string]any{"requests": reqN, "ok": okN, "successRate": successRate, "tokensIn": inTok, "tokensOut": outTok, "costUsd": accTodayCost, "byModel": byModel}
 
-		// total accumulated cost (owner-scoped for non-superadmin)
+		// total accumulated cost — only for accounts currently in 号库
 		var totalCost float64
+		if totalRows, err := q.CostByTargetTotal(ctx); err == nil {
+			for _, r := range totalRows {
+				if accTargets[r.Target] {
+					totalCost += r.Cost
+				}
+			}
+		}
+		// channel (fallback) cost: today + total
+		todayStr := time.UnixMilli(since).UTC().Format("2006-01-02")
+		var channelTodayCost, channelTotalCost float64
 		if all {
-			totalCost, _ = q.SumAllCost(ctx)
+			channelTodayCost, _ = q.SumFallbackSpendToday(ctx, todayStr)
+			channelTotalCost, _ = q.SumAllFallbackSpend(ctx)
 		} else {
-			totalCost, _ = q.SumCostForOwner(ctx, owner)
+			channelTodayCost, _ = q.SumFallbackSpendTodayByOwner(ctx, sqlc.SumFallbackSpendTodayByOwnerParams{OwnerID: owner, Day: todayStr})
+			channelTotalCost, _ = q.SumFallbackSpendByOwner(ctx, owner)
 		}
 
 		// hosting fees per tenant
@@ -514,6 +609,6 @@ func dashboardHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
 			a5h, a7d = cpaQuotaAvg(r.Context(), q, svc)
 		}
 
-		writeJSON(w, http.StatusOK, map[string]any{"nodes": nodes, "accounts": map[string]any{"total": accTotal}, "today": today, "hosting": hosting, "totalCostUsd": totalCost, "quota5hAvg": a5h, "quota7dAvg": a7d})
+		writeJSON(w, http.StatusOK, map[string]any{"nodes": nodes, "accounts": map[string]any{"total": accTotal, "enabled": accEnabled}, "elastic": map[string]any{"current": elasticCurrent, "max": elasticMax}, "today": today, "hosting": hosting, "totalCostUsd": totalCost, "channelTodayCostUsd": channelTodayCost, "channelTotalCostUsd": channelTotalCost, "quota5hAvg": a5h, "quota7dAvg": a7d})
 	}
 }

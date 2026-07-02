@@ -35,22 +35,27 @@ function RecoverCountdown({ recoverAt }: { recoverAt: number }) {
 // Top stats bar
 // ------------------------------------------------------------------
 function StatsBar({ data }: { data: DispatchStatus }) {
-  const { nodes, traffic, accounts } = data;
+  const { nodes, elastic, traffic, accounts } = data;
   const inflight = accounts.reduce((s, a) => s + a.inflight, 0);
   const rate = traffic.total > 0
     ? ((traffic.ok / traffic.total) * 100).toFixed(1)
     : '—';
 
-  const stats = [
-    { label: '节点 (启用/总)', value: `${nodes.enabled} / ${nodes.total}` },
+  const stats: { label: string; value: string }[] = [
+    { label: '号库 (启用/总)', value: `${nodes.enabled} / ${nodes.total}` },
+  ];
+  if (elastic && elastic.max > 0) {
+    stats.push({ label: '弹性 (当前/最大)', value: `${elastic.current} / ${elastic.max}` });
+  }
+  stats.push(
     { label: '总请求', value: traffic.total.toLocaleString() },
     { label: '成功率', value: traffic.total > 0 ? `${rate}%` : '—' },
     { label: '并发中', value: inflight.toString() },
     { label: 'RPM', value: traffic.rpm != null ? traffic.rpm.toString() : '—' },
-  ];
+  );
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 mb-6">
+    <div className={`grid grid-cols-2 gap-4 mb-6 ${stats.length <= 5 ? 'sm:grid-cols-5' : 'sm:grid-cols-6'}`}>
       {stats.map((s) => (
         <div key={s.label} className="bg-surface border border-line rounded-xl p-4">
           <p className="text-xs text-muted mb-1">{s.label}</p>

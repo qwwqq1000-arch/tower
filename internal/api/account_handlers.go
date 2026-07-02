@@ -46,6 +46,13 @@ func nodeClientFor(q *sqlc.Queries, cipher *crypto.Cipher, r *http.Request, id s
 	return nodeclient.New(n.BaseUrl, cipher.DecryptOrPlaintext(n.ApiKey)), n, true
 }
 
+func nodeClientFromRow(n sqlc.Node, cipher *crypto.Cipher) (*nodeclient.Client, error) {
+	if n.BaseUrl == "" {
+		return nil, fmt.Errorf("no base url")
+	}
+	return nodeclient.New(n.BaseUrl, cipher.DecryptOrPlaintext(n.ApiKey)), nil
+}
+
 func oauthStartHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		cl, n, ok := nodeClientFor(q, cipher, r, r.PathValue("id"))
@@ -220,7 +227,8 @@ func buildImportAccountParams(id, ownerID, email string, expiresAt, onboardedAt 
 
 func listProfilesHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cl, _, ok := nodeClientFor(q, cipher, r, r.PathValue("id"))
+		nodeID := r.PathValue("id")
+		cl, n, ok := nodeClientFor(q, cipher, r, nodeID)
 		if !ok {
 			writeJSON(w, 404, map[string]string{"error": "node not found"})
 			return
@@ -230,7 +238,78 @@ func listProfilesHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFun
 			writeJSON(w, 502, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, 200, ps)
+		assigned, _ := q.ListNodeAccountsByNode(r.Context(), nodeID)
+		importedSet := map[string]bool{}
+		for _, a := range assigned {
+			importedSet[a.ProfileID] = true
+		}
+		// Auto-import: logged-in profiles not yet imported get imported automatically.
+		for _, p := range ps {
+			if p.LoggedIn && !importedSet[p.ID] {
+				accID := randHex("acc_")
+				if _, err := q.CreateAccount(r.Context(), buildImportAccountParams(accID, n.AccountOwnerID, p.Email, time.Now().Add(30*24*time.Hour).UnixMilli(), time.Now().UnixMilli())); err == nil {
+					q.AssignAccount(r.Context(), sqlc.AssignAccountParams{NodeID: n.ID, AccountID: accID, ProfileID: p.ID, Egress: "", Weight: 100, Role: "baseline", SlotID: ""})
+					importedSet[p.ID] = true
+				}
+			}
+		}
+		type profileWithImported struct {
+			nodeclient.Profile
+			Imported bool `json:"imported"`
+		}
+		out := make([]profileWithImported, len(ps))
+		for i, p := range ps {
+			out[i] = profileWithImported{Profile: p, Imported: importedSet[p.ID]}
+		}
+		writeJSON(w, 200, out)
+	}
+}
+
+func batchAutoImportHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		owner, all := scope(r)
+		nodes, err := q.ListNodes(ctx)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		imported := 0
+		failed := 0
+		for _, n := range nodes {
+			if !all && n.OwnerID != owner {
+				continue
+			}
+			cl, err := nodeClientFromRow(n, cipher)
+			if err != nil {
+				continue
+			}
+			ps, err := effectiveProfiles(ctx, cl)
+			if err != nil {
+				continue
+			}
+			assigned, _ := q.ListNodeAccountsByNode(ctx, n.ID)
+			importedSet := map[string]bool{}
+			for _, a := range assigned {
+				importedSet[a.ProfileID] = true
+			}
+			for _, p := range ps {
+				if p.LoggedIn && !importedSet[p.ID] {
+					accID := randHex("acc_")
+					ownerID := n.AccountOwnerID
+					if ownerID == "" {
+						ownerID = n.OwnerID
+					}
+					if _, cerr := q.CreateAccount(ctx, buildImportAccountParams(accID, ownerID, p.Email, time.Now().Add(30*24*time.Hour).UnixMilli(), time.Now().UnixMilli())); cerr == nil {
+						q.AssignAccount(ctx, sqlc.AssignAccountParams{NodeID: n.ID, AccountID: accID, ProfileID: p.ID, Egress: "", Weight: 100, Role: "baseline", SlotID: ""})
+						imported++
+					} else {
+						failed++
+					}
+				}
+			}
+		}
+		writeJSON(w, 200, map[string]any{"imported": imported, "failed": failed})
 	}
 }
 

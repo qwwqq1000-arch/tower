@@ -121,11 +121,22 @@ func (q *Queries) ListTenantsBasic(ctx context.Context) ([]ListTenantsBasicRow, 
 }
 
 const sumAllCost = `-- name: SumAllCost :one
-SELECT coalesce(sum(cost_usd),0)::float8 AS total FROM cost_rollup
+SELECT coalesce(sum(cost_usd),0)::float8 AS total FROM dispatch_logs WHERE status='ok'
 `
 
 func (q *Queries) SumAllCost(ctx context.Context) (float64, error) {
 	row := q.db.QueryRow(ctx, sumAllCost)
+	var total float64
+	err := row.Scan(&total)
+	return total, err
+}
+
+const sumAllCostFromLogs = `-- name: SumAllCostFromLogs :one
+SELECT coalesce(sum(cost_usd),0)::float8 AS total FROM dispatch_logs WHERE status='ok' AND owner_id = $1
+`
+
+func (q *Queries) SumAllCostFromLogs(ctx context.Context, ownerID string) (float64, error) {
+	row := q.db.QueryRow(ctx, sumAllCostFromLogs, ownerID)
 	var total float64
 	err := row.Scan(&total)
 	return total, err

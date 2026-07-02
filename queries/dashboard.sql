@@ -15,11 +15,14 @@ SELECT id, username, role, channel_rate, fallback_limit FROM tenants ORDER BY cr
 SELECT rate FROM hosting_rates WHERE tenant_id = $1 ORDER BY effective_from DESC LIMIT 1;
 
 -- name: SumAllCost :one
-SELECT coalesce(sum(cost_usd),0)::float8 AS total FROM cost_rollup;
+SELECT coalesce(sum(cost_usd),0)::float8 AS total FROM dispatch_logs WHERE status='ok';
 
 -- name: CostByTargetSince :many
 SELECT target, coalesce(sum(cost_usd),0)::float8 AS cost, count(*)::bigint AS requests
 FROM dispatch_logs WHERE ts >= $1 AND status='ok' GROUP BY target;
+
+-- name: SumAllCostFromLogs :one
+SELECT coalesce(sum(cost_usd),0)::float8 AS total FROM dispatch_logs WHERE status='ok' AND owner_id = $1;
 
 -- name: CostByTargetTotal :many
 SELECT target, coalesce(sum(cost_usd),0)::float8 AS cost, count(*)::bigint AS requests

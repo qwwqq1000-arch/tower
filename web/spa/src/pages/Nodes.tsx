@@ -20,6 +20,8 @@ import {
   listNodeProfiles,
   importNodeProfile,
   listUsers,
+  updateNode,
+  batchAutoImport,
 } from '../api';
 import type { NodeRecord, NodeProfile, UserRow } from '../types';
 
@@ -56,12 +58,9 @@ function openConsole(node: NodeRecord) {
     window.open(`${base}/management.html#/`, '_blank', 'noopener,noreferrer');
     return;
   }
-  // meridian: the URL embeds the node key so the dashboard opens authenticated;
-  // it's built server-side. Open a blank tab synchronously to avoid popup-blocking.
-  const win = window.open('', '_blank', 'noopener,noreferrer');
   getNodeConsoleUrl(node.id)
-    .then(({ url }) => { if (win) win.location.href = url; })
-    .catch(() => { if (win) win.close(); });
+    .then(({ url }) => { window.open(url, '_blank', 'noopener,noreferrer'); })
+    .catch(() => {});
 }
 
 function NodeKindBadge({ kind }: { kind?: string }) {
@@ -106,6 +105,73 @@ function NodeStatusBadge({ node }: { node: NodeRecord }) {
 }
 
 // ------------------------------------------------------------------
+// Node edit modal (接入地址 + API密钥)
+// ------------------------------------------------------------------
+function NodeEditModal({ node, onClose, onSuccess }: { node: NodeRecord; onClose: () => void; onSuccess: () => void }) {
+  const [baseUrl, setBaseUrl] = useState(node.baseUrl);
+  const [apiKey, setApiKey] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function handleSave() {
+    setSaving(true);
+    setErr(null);
+    try {
+      await updateNode(node.id, {
+        ...(baseUrl !== node.baseUrl ? { baseUrl } : {}),
+        ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+      });
+      onSuccess();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : '保存失败');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div className="bg-surface border border-line rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-line">
+          <h2 className="text-base font-semibold text-ink">编辑节点 — {node.name}</h2>
+          <button onClick={onClose} className="text-muted hover:text-ink text-lg leading-none transition">x</button>
+        </div>
+        <div className="p-5 space-y-4">
+          <div>
+            <label className="text-xs text-muted font-medium">接入地址</label>
+            <input
+              type="text"
+              value={baseUrl}
+              onChange={(e) => setBaseUrl(e.target.value)}
+              placeholder="http://ip:3456"
+              className="mt-1 w-full bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-muted font-medium">API 密钥（留空不修改）</label>
+            <input
+              type="text"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="留空保持不变"
+              className="mt-1 w-full bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition"
+            />
+          </div>
+          {err && <p className="text-xs text-err">{err}</p>}
+          <button
+            onClick={() => { void handleSave(); }}
+            disabled={saving}
+            className="w-full py-2 text-sm font-medium bg-accent text-white rounded-lg hover:bg-accent/80 disabled:opacity-50 transition"
+          >
+            {saving ? '保存中…' : '保存'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------
 // OAuth wizard modal (per-node)
 // ------------------------------------------------------------------
 interface OAuthWizardModalProps {
@@ -131,7 +197,7 @@ function OAuthWizardModal({ node, onClose, onSuccess }: OAuthWizardModalProps) {
   const [importing, setImporting] = useState<Record<string, boolean>>({});
   const [importResults, setImportResults] = useState<Record<string, string>>({});
 
-  // Load existing profiles
+  // Load existing profiles (backend auto-imports logged-in ones)
   const loadProfiles = useCallback(async () => {
     setProfilesLoading(true);
     setProfilesErr(null);
@@ -143,7 +209,7 @@ function OAuthWizardModal({ node, onClose, onSuccess }: OAuthWizardModalProps) {
     } finally {
       setProfilesLoading(false);
     }
-  }, [node.id]);
+  }, [node.id, onSuccess]);
 
   useEffect(() => {
     void loadProfiles();
@@ -328,8 +394,10 @@ function OAuthWizardModal({ node, onClose, onSuccess }: OAuthWizardModalProps) {
                           {p.loggedIn ? '已登录' : '未登录'}
                         </span>
                       )}
-                      {importResults[p.id] ? (
-                        <span className="text-xs text-ok">{importResults[p.id]}</span>
+                      {p.imported || importResults[p.id] === '导入成功' || importResults[p.id] === '已存在' ? (
+                        <span className="text-xs text-ok">已导入</span>
+                      ) : importResults[p.id] ? (
+                        <span className="text-xs text-err">{importResults[p.id]}</span>
                       ) : (
                         <button
                           onClick={() => { void handleImport(p.id); }}
@@ -857,6 +925,7 @@ function NodeRow({
   onToggleEnabled,
   onTogglePassthrough,
   onOpenOAuth,
+  onRefresh,
 }: {
   node: NodeRecord;
   selected: boolean;
@@ -865,9 +934,11 @@ function NodeRow({
   onToggleEnabled: (node: NodeRecord) => void;
   onTogglePassthrough: (node: NodeRecord) => void;
   onOpenOAuth: (node: NodeRecord) => void;
+  onRefresh: () => void;
 }) {
   const [deleting, setDeleting] = useState(false);
   const [toggling, setToggling] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
 
   async function handleDelete() {
     if (!confirm(`确认删除节点 ${node.name}？`)) return;
@@ -920,6 +991,12 @@ function NodeRow({
       <td className="px-4 py-3">
         <div className="flex items-center gap-3 flex-wrap">
           <button
+            onClick={() => setShowEdit(true)}
+            className="text-xs font-medium text-cyan-400 hover:text-cyan-300 transition"
+          >
+            编辑
+          </button>
+          <button
             onClick={() => onOpenOAuth(node)}
             className="text-xs font-medium text-accent hover:text-accent/70 transition"
             title="授权向导"
@@ -965,6 +1042,9 @@ function NodeRow({
             {deleting ? '…' : '删除'}
           </button>
         </div>
+        {showEdit && (
+          <NodeEditModal node={node} onClose={() => setShowEdit(false)} onSuccess={() => { setShowEdit(false); onRefresh(); }} />
+        )}
       </td>
     </tr>
   );
@@ -1242,17 +1322,44 @@ export default function Nodes() {
     });
   }
 
+  const [importing, setImporting] = useState(false);
+  const [importMsg, setImportMsg] = useState<string | null>(null);
+
+  async function handleBatchImport() {
+    setImporting(true);
+    setImportMsg(null);
+    try {
+      const res = await batchAutoImport();
+      setImportMsg(`导入 ${res.imported} 个, 失败 ${res.failed} 个`);
+      void fetchNodes();
+    } catch (e) {
+      setImportMsg(e instanceof Error ? e.message : '导入失败');
+    } finally {
+      setImporting(false);
+    }
+  }
+
   return (
     <div className="p-4 md:p-6 space-y-6">
       {/* Page header */}
       <div className="flex items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold text-ink">节点</h1>
-        <button
-          onClick={() => { void fetchNodes(); }}
-          className="text-xs text-accent hover:underline"
-        >
-          刷新
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => { void handleBatchImport(); }}
+            disabled={importing}
+            className="px-3 py-1.5 text-xs font-medium bg-accent text-white rounded-lg hover:bg-accent/80 disabled:opacity-50 transition"
+          >
+            {importing ? '导入中…' : '一键导入'}
+          </button>
+          {importMsg && <span className="text-xs text-muted">{importMsg}</span>}
+          <button
+            onClick={() => { void fetchNodes(); }}
+            className="text-xs text-accent hover:underline"
+          >
+            刷新
+          </button>
+        </div>
       </div>
 
       {/* Add node form */}
@@ -1367,6 +1474,7 @@ export default function Nodes() {
                     onToggleEnabled={handleToggleEnabled}
                     onTogglePassthrough={handleTogglePassthrough}
                     onOpenOAuth={(n) => setOauthNode(n)}
+                    onRefresh={() => { void fetchNodes(); }}
                   />
                 ))}
               </tbody>

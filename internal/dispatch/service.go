@@ -1517,6 +1517,18 @@ func (s *Service) buildCandidates(ctx context.Context, ownerID, model string, cf
 // partition logic in buildCandidates exactly — including the slot-window filter —
 // so the status display's reserve/active split always matches what dispatch actually
 // does. Used by the status UI to show 待命 vs 活跃.
+func (s *Service) ScaledUpMu() *sync.Mutex { return &s.scaledUpMu }
+
+func (s *Service) ScaledCountFor(ownerID string) int { return s.scaledCount[ownerID] }
+
+func (s *Service) ScaledCountSnapshot() map[string]int {
+	cp := make(map[string]int, len(s.scaledCount))
+	for k, v := range s.scaledCount {
+		cp[k] = v
+	}
+	return cp
+}
+
 func (s *Service) ReserveKeys(ctx context.Context, ownerID string, cfg policy.Config) map[string]bool {
 	if !cfg.ElasticEnabled {
 		return nil // elastic off → all accounts active
@@ -1526,19 +1538,6 @@ func (s *Service) ReserveKeys(ctx context.Context, ownerID string, cfg policy.Co
 	s.scaledUpMu.Unlock()
 
 	nowMs := s.Now()
-
-	// Quiet-hours flag (mirror buildCandidates lines ~961) — needed for the
-	// rate-governor RPM filter below so the status partition matches dispatch.
-	inQuiet := false
-	if cfg.QuietHoursEnabled && len(cfg.QuietHoursWindows) > 0 {
-		loc, _ := time.LoadLocation(cfg.QuietHoursTZ)
-		if loc == nil {
-			loc = time.UTC
-		}
-		t := time.UnixMilli(nowMs).In(loc)
-		curMin := t.Hour()*60 + t.Minute()
-		inQuiet = policy.InAnyWindow(curMin, cfg.QuietHoursWindows)
-	}
 
 	// Load slots once, mirroring buildCandidates' slot-window filter.
 	// Accounts in inactive slot windows are excluded from dispatch and must therefore
@@ -1607,40 +1606,11 @@ func (s *Service) ReserveKeys(ctx context.Context, ownerID string, cfg policy.Co
 			if deadPermanent[key] {
 				continue // exclude permanently-banned from the baseline/reserve partition (mirrors buildCandidates)
 			}
-			// Rate-governor + quiet-hours RPM filter: mirror buildCandidates (lines
-			// ~1047-1077) so an account currently rate-limited OUT of dispatch is also
-			// excluded from the baseline/reserve partition — otherwise the 待命/活跃
-			// status drifts from the real routing set when the limiter is active.
-			// NOTE: model-pin and warmup-opus skips are intentionally NOT mirrored —
-			// they depend on the request's model, which the status partition (model-
-			// agnostic) has no concept of; exact parity there is structurally impossible.
-			acfg := s.resolveConfig(ctx, ownerID, na.AccountID)
-			if acfg.RateGovEnabled || inQuiet {
-				var rpm int64
-				hasRPMLimit := false
-				if acfg.RateGovEnabled {
-					rpm = acfg.RateRPM.Resolve(key, "rpm")
-					hasRPMLimit = true
-				}
-				if inQuiet {
-					qrpm := acfg.QuietHoursRPM.Resolve(key, "qrpm")
-					if !hasRPMLimit || qrpm < rpm {
-						rpm = qrpm
-					}
-					hasRPMLimit = true
-				}
-				if hasRPMLimit && rpm > 0 && int64(s.Store.ReqsInWindow(key, 60000)) >= rpm {
-					continue
-				}
-				if acfg.RateGovEnabled {
-					rph := acfg.RateRPH.Resolve(key, "rph")
-					rpd := acfg.RateRPD.Resolve(key, "rpd")
-					if (rph > 0 && int64(s.Store.ReqsInWindow(key, 3600000)) >= rph) ||
-						(rpd > 0 && int64(s.Store.ReqsInWindow(key, 86400000)) >= rpd) {
-						continue
-					}
-				}
-			}
+			// Rate-governor / quiet-hours filtering is intentionally NOT applied here.
+			// ReserveKeys defines the baseline/reserve PARTITION (structural), while
+			// rate-gov is a runtime routing filter. Excluding rate-limited accounts
+			// from cands causes them to fall outside the reserve set, making them
+			// appear "active" in the UI — the opposite of reality.
 			cands = append(cands, cand{key: key, weight: int(na.Weight), createdAt: nodeCreatedMs(n)})
 		}
 	}
@@ -1684,6 +1654,22 @@ func (s *Service) ReserveKeys(ctx context.Context, ownerID string, cfg policy.Co
 	}
 	if n > len(cands) {
 		n = len(cands)
+	}
+	maxRes := len(cands) - n
+	if cfg.ElasticMaxReserve > 0 && activeReserves > cfg.ElasticMaxReserve {
+		activeReserves = cfg.ElasticMaxReserve
+	}
+	if cfg.ElasticMaxActive > 0 {
+		maxFromActive := cfg.ElasticMaxActive - n
+		if maxFromActive < 0 {
+			maxFromActive = 0
+		}
+		if activeReserves > maxFromActive {
+			activeReserves = maxFromActive
+		}
+	}
+	if activeReserves > maxRes {
+		activeReserves = maxRes
 	}
 	reserveStart := n + activeReserves
 	reserve := make(map[string]bool)

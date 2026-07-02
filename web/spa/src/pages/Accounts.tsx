@@ -460,6 +460,7 @@ function AccountEditModal({
 // Model test modal
 // ------------------------------------------------------------------
 const TEST_MODELS = [
+  'claude-fable-5',
   'claude-sonnet-5',
   'claude-opus-4-8',
   'claude-opus-4-6',
@@ -565,7 +566,7 @@ function TestModal({
 // ------------------------------------------------------------------
 // Sort key type
 // ------------------------------------------------------------------
-type SortKey = 'email' | 'expiresAt' | 'todayCostUsd' | null;
+type SortKey = 'nodeName' | 'email' | 'subscriptionType' | 'weight' | 'role' | 'expiresAt' | 'ownerId' | 'todayCostUsd' | 'totalCostUsd' | null;
 
 // ------------------------------------------------------------------
 // Account row (desktop table)
@@ -1018,12 +1019,26 @@ function AdminAccounts() {
 
     if (sortKey) {
       list = [...list].sort((a, b) => {
-        let av: number | string | undefined;
-        let bv: number | string | undefined;
-        if (sortKey === 'email') { av = a.email || ''; bv = b.email || ''; }
-        else if (sortKey === 'expiresAt') { av = a.expiresAt ?? 0; bv = b.expiresAt ?? 0; }
-        else if (sortKey === 'todayCostUsd') { av = a.todayCostUsd ?? 0; bv = b.todayCostUsd ?? 0; }
-        if (av === undefined || bv === undefined) return 0;
+        let av: number | string;
+        let bv: number | string;
+        switch (sortKey) {
+          case 'nodeName': av = a.nodeName || ''; bv = b.nodeName || ''; break;
+          case 'email': av = a.email || ''; bv = b.email || ''; break;
+          case 'subscriptionType': av = a.subscriptionType || ''; bv = b.subscriptionType || ''; break;
+          case 'weight': av = a.weight ?? 0; bv = b.weight ?? 0; break;
+          case 'role': av = a.role || ''; bv = b.role || ''; break;
+          case 'expiresAt': av = a.expiresAt ?? 0; bv = b.expiresAt ?? 0; break;
+          case 'ownerId': {
+            const ua = users.find((u) => u.id === a.ownerId);
+            const ub = users.find((u) => u.id === b.ownerId);
+            av = ua ? ua.username : a.ownerId || '';
+            bv = ub ? ub.username : b.ownerId || '';
+            break;
+          }
+          case 'todayCostUsd': av = a.todayCostUsd ?? 0; bv = b.todayCostUsd ?? 0; break;
+          case 'totalCostUsd': av = a.totalCostUsd ?? 0; bv = b.totalCostUsd ?? 0; break;
+          default: av = 0; bv = 0;
+        }
         const cmp = av < bv ? -1 : av > bv ? 1 : 0;
         return sortDir === 'asc' ? cmp : -cmp;
       });
@@ -1141,31 +1156,34 @@ function AdminAccounts() {
             <table className="w-full text-left">
               <thead>
                 <tr className="text-xs text-muted uppercase tracking-wide">
-                  <th className="px-4 py-3 font-medium">节点</th>
-                  <th
-                    className="px-4 py-3 font-medium cursor-pointer hover:text-ink select-none"
-                    onClick={() => handleSort('email')}
-                  >
+                  <th className="px-4 py-3 font-medium cursor-pointer hover:text-ink select-none" onClick={() => handleSort('nodeName')}>
+                    节点 <SortIcon active={sortKey === 'nodeName'} dir={sortDir} />
+                  </th>
+                  <th className="px-4 py-3 font-medium cursor-pointer hover:text-ink select-none" onClick={() => handleSort('email')}>
                     邮箱 <SortIcon active={sortKey === 'email'} dir={sortDir} />
                   </th>
-                  <th className="px-4 py-3 font-medium">订阅类型</th>
+                  <th className="px-4 py-3 font-medium cursor-pointer hover:text-ink select-none" onClick={() => handleSort('subscriptionType')}>
+                    订阅类型 <SortIcon active={sortKey === 'subscriptionType'} dir={sortDir} />
+                  </th>
                   <th className="px-4 py-3 font-medium">限额</th>
-                  <th className="px-4 py-3 font-medium">权重</th>
-                  <th className="px-4 py-3 font-medium">角色</th>
-                  <th
-                    className="px-4 py-3 font-medium cursor-pointer hover:text-ink select-none"
-                    onClick={() => handleSort('expiresAt')}
-                  >
+                  <th className="px-4 py-3 font-medium cursor-pointer hover:text-ink select-none" onClick={() => handleSort('weight')}>
+                    权重 <SortIcon active={sortKey === 'weight'} dir={sortDir} />
+                  </th>
+                  <th className="px-4 py-3 font-medium cursor-pointer hover:text-ink select-none" onClick={() => handleSort('role')}>
+                    角色 <SortIcon active={sortKey === 'role'} dir={sortDir} />
+                  </th>
+                  <th className="px-4 py-3 font-medium cursor-pointer hover:text-ink select-none" onClick={() => handleSort('expiresAt')}>
                     订阅到期 <SortIcon active={sortKey === 'expiresAt'} dir={sortDir} />
                   </th>
-                  <th className="px-4 py-3 font-medium">租户</th>
-                  <th
-                    className="px-4 py-3 font-medium text-right cursor-pointer hover:text-ink select-none"
-                    onClick={() => handleSort('todayCostUsd')}
-                  >
+                  <th className="px-4 py-3 font-medium cursor-pointer hover:text-ink select-none" onClick={() => handleSort('ownerId')}>
+                    租户 <SortIcon active={sortKey === 'ownerId'} dir={sortDir} />
+                  </th>
+                  <th className="px-4 py-3 font-medium text-right cursor-pointer hover:text-ink select-none" onClick={() => handleSort('todayCostUsd')}>
                     今日消费 <SortIcon active={sortKey === 'todayCostUsd'} dir={sortDir} />
                   </th>
-                  <th className="px-4 py-3 font-medium text-right">总消费</th>
+                  <th className="px-4 py-3 font-medium text-right cursor-pointer hover:text-ink select-none" onClick={() => handleSort('totalCostUsd')}>
+                    总消费 <SortIcon active={sortKey === 'totalCostUsd'} dir={sortDir} />
+                  </th>
                   <th className="px-4 py-3 font-medium">操作</th>
                 </tr>
               </thead>

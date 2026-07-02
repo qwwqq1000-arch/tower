@@ -178,6 +178,17 @@ func (q *Queries) SetHostingRate(ctx context.Context, arg SetHostingRateParams) 
 	return err
 }
 
+const sumAllFallbackSpend = `-- name: SumAllFallbackSpend :one
+SELECT coalesce(sum(est_cost_usd),0)::float8 AS total FROM fallback_spend
+`
+
+func (q *Queries) SumAllFallbackSpend(ctx context.Context) (float64, error) {
+	row := q.db.QueryRow(ctx, sumAllFallbackSpend)
+	var total float64
+	err := row.Scan(&total)
+	return total, err
+}
+
 const sumFallbackSpendByOwner = `-- name: SumFallbackSpendByOwner :one
 SELECT coalesce(sum(s.est_cost_usd),0)::float8 AS total
 FROM fallback_spend s
@@ -187,6 +198,36 @@ WHERE c.owner_id = $1
 
 func (q *Queries) SumFallbackSpendByOwner(ctx context.Context, ownerID string) (float64, error) {
 	row := q.db.QueryRow(ctx, sumFallbackSpendByOwner, ownerID)
+	var total float64
+	err := row.Scan(&total)
+	return total, err
+}
+
+const sumFallbackSpendToday = `-- name: SumFallbackSpendToday :one
+SELECT coalesce(sum(est_cost_usd),0)::float8 AS total FROM fallback_spend WHERE day = $1
+`
+
+func (q *Queries) SumFallbackSpendToday(ctx context.Context, day string) (float64, error) {
+	row := q.db.QueryRow(ctx, sumFallbackSpendToday, day)
+	var total float64
+	err := row.Scan(&total)
+	return total, err
+}
+
+const sumFallbackSpendTodayByOwner = `-- name: SumFallbackSpendTodayByOwner :one
+SELECT coalesce(sum(s.est_cost_usd),0)::float8 AS total
+FROM fallback_spend s
+JOIN fallback_channels c ON c.id = s.channel_id
+WHERE c.owner_id = $1 AND s.day = $2
+`
+
+type SumFallbackSpendTodayByOwnerParams struct {
+	OwnerID string `json:"owner_id"`
+	Day     string `json:"day"`
+}
+
+func (q *Queries) SumFallbackSpendTodayByOwner(ctx context.Context, arg SumFallbackSpendTodayByOwnerParams) (float64, error) {
+	row := q.db.QueryRow(ctx, sumFallbackSpendTodayByOwner, arg.OwnerID, arg.Day)
 	var total float64
 	err := row.Scan(&total)
 	return total, err

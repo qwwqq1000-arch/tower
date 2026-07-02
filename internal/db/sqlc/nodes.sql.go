@@ -204,6 +204,21 @@ func (q *Queries) SetNodeAccountOwner(ctx context.Context, arg SetNodeAccountOwn
 	return err
 }
 
+const updateNode = `-- name: UpdateNode :exec
+UPDATE nodes SET base_url = $2, api_key = $3 WHERE id = $1
+`
+
+type UpdateNodeParams struct {
+	ID      string `json:"id"`
+	BaseUrl string `json:"base_url"`
+	ApiKey  string `json:"api_key"`
+}
+
+func (q *Queries) UpdateNode(ctx context.Context, arg UpdateNodeParams) error {
+	_, err := q.db.Exec(ctx, updateNode, arg.ID, arg.BaseUrl, arg.ApiKey)
+	return err
+}
+
 const updateNodeEnabled = `-- name: UpdateNodeEnabled :exec
 UPDATE nodes SET enabled = $2 WHERE id = $1
 `

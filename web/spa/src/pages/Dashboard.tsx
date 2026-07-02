@@ -238,7 +238,7 @@ function AdminDashboard() {
 
   if (!data) return null;
 
-  const { nodes, accounts, today, hosting, totalCostUsd, quota5hAvg, quota7dAvg } = data;
+  const { nodes, accounts, today, hosting, totalCostUsd, channelTodayCostUsd, channelTotalCostUsd, quota5hAvg, quota7dAvg } = data;
   const byStatus = nodes.byStatus ?? {};
 
   return (
@@ -249,17 +249,12 @@ function AdminDashboard() {
       {/* ---- Top stat cards ---- */}
       <section>
         <h2 className="text-xs font-medium text-muted uppercase tracking-wide mb-3">总览</h2>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           <StatCard
-            label="节点"
-            value={`${nodes.enabled} / ${nodes.total}`}
+            label="号库"
+            value={`${accounts.enabled} / ${accounts.total}`}
             sub="启用 / 总数"
             accent
-          />
-          <StatCard
-            label="账户"
-            value={accounts.total}
-            sub="号库总数"
           />
           <StatCard
             label="今日请求"
@@ -269,12 +264,20 @@ function AdminDashboard() {
             warn={today.successRate < 0.8}
           />
           <StatCard
-            label="今日消耗"
+            label="号库今日消费"
             value={fmtCost(today.costUsd)}
           />
           <StatCard
-            label="总消耗"
+            label="号库总消费"
             value={fmtCost(totalCostUsd)}
+          />
+          <StatCard
+            label="渠道今日消费"
+            value={fmtCost(channelTodayCostUsd ?? 0)}
+          />
+          <StatCard
+            label="渠道总消费"
+            value={fmtCost(channelTotalCostUsd ?? 0)}
           />
           <StatCard
             label="5h 均额度"

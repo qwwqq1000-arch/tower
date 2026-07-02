@@ -86,6 +86,9 @@ export const listNodes = () =>
 export const createNode = (data: { baseUrl: string; apiKey?: string; ownerId?: string; accountOwnerId?: string; kind?: string; mgmtKey?: string; passthrough?: boolean }) =>
   api<NodeRecord>('POST', '/api/admin/nodes', data);
 
+export const updateNode = (id: string, data: { baseUrl?: string; apiKey?: string }) =>
+  api<{ ok: boolean }>('PATCH', `/api/admin/nodes/${id}`, data);
+
 export const deleteNode = (id: string) =>
   api<void>('DELETE', `/api/admin/nodes/${id}`);
 
@@ -226,6 +229,9 @@ export const testAccount = (accountId: string, model: string) =>
 
 export const listNodeProfiles = (nodeId: string) =>
   api<NodeProfile[]>('GET', `/api/admin/nodes/${nodeId}/profiles`);
+
+export const batchAutoImport = () =>
+  api<{ imported: number; failed: number }>('POST', '/api/admin/accounts/batch-import');
 
 export const importNodeProfile = (nodeId: string, profileId: string) =>
   api<{ ok: boolean; profileId: string; email?: string; reused?: boolean }>(

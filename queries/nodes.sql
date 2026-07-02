@@ -20,3 +20,6 @@ DELETE FROM nodes WHERE id = $1;
 
 -- name: SetNodeAccountOwner :exec
 UPDATE nodes SET account_owner_id = $2 WHERE id = $1;
+
+-- name: UpdateNode :exec
+UPDATE nodes SET base_url = $2, api_key = $3 WHERE id = $1;

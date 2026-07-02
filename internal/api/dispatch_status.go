@@ -250,15 +250,39 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 			events = append(events, map[string]any{"ts": e.Ts, "type": e.Type, "target": e.Target, "detail": json.RawMessage(e.Detail)})
 		}
 	}
-	nodesTotal, nodesEnabled := 0, 0
-	if ns, err := q.ListNodes(ctx); err == nil {
-		for _, n := range ns {
-			if !all && n.OwnerID != owner {
+	acctTotal, acctEnabled := 0, 0
+	if accs, err := q.ListNodeAccountsAll(ctx); err == nil {
+		for _, a := range accs {
+			if !all && a.AcctOwnerID != owner {
 				continue
 			}
-			nodesTotal++
-			if n.Enabled {
-				nodesEnabled++
+			acctTotal++
+			if a.Enabled {
+				acctEnabled++
+			}
+		}
+	}
+	elasticCurrent, elasticMax := 0, 0
+	if svc != nil {
+		cfg := svc.ResolveConfigForOwner(ctx, owner)
+		if cfg.ElasticEnabled {
+			if cfg.ElasticMaxActive > 0 {
+				elasticMax = cfg.ElasticMaxActive
+			} else {
+				elasticMax = cfg.ElasticBaselineCount + cfg.ElasticMaxReserve
+			}
+			svc.ScaledUpMu().Lock()
+			if all {
+				for _, v := range svc.ScaledCountSnapshot() {
+					elasticCurrent += v
+				}
+			} else {
+				elasticCurrent = svc.ScaledCountFor(owner)
+			}
+			svc.ScaledUpMu().Unlock()
+			elasticCurrent += cfg.ElasticBaselineCount
+			if elasticCurrent > elasticMax {
+				elasticCurrent = elasticMax
 			}
 		}
 	}
@@ -312,7 +336,8 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 	}
 	return map[string]any{
 		"accounts": accounts, "traffic": traffic, "events": events,
-		"nodes":            map[string]any{"total": nodesTotal, "enabled": nodesEnabled},
+		"nodes":            map[string]any{"total": acctTotal, "enabled": acctEnabled},
+		"elastic":          map[string]any{"current": elasticCurrent, "max": elasticMax},
 		"fallbackChannels": fallbackChannels,
 		"asOf":             now,
 		"quota5hAvg":       a5h,
