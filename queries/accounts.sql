@@ -33,3 +33,9 @@ ON CONFLICT (id) DO UPDATE SET
   email = EXCLUDED.email,
   subscription_type = EXCLUDED.subscription_type,
   status = EXCLUDED.status;
+
+-- name: SetAccountNo1MUntil :exec
+UPDATE accounts SET no_1m_until = $2 WHERE id = $1;
+
+-- name: ClearAccountNo1M :exec
+UPDATE accounts SET no_1m_until = 0 WHERE id = $1;

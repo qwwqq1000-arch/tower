@@ -4,9 +4,11 @@ import "context"
 
 // HealthAuth is the auth block of /health.
 type HealthAuth struct {
-	LoggedIn         bool   `json:"loggedIn"`
-	Email            string `json:"email"`
-	SubscriptionType string `json:"subscriptionType"`
+	LoggedIn              bool   `json:"loggedIn"`
+	Email                 string `json:"email"`
+	SubscriptionType      string `json:"subscriptionType"`
+	SubscriptionCreatedAt string `json:"subscriptionCreatedAt"`
+	AccountCreatedAt      string `json:"accountCreatedAt"`
 }
 
 // Health is the parsed /health response.

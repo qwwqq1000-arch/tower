@@ -10,9 +10,9 @@ import (
 )
 
 const createNode = `-- name: CreateNode :one
-INSERT INTO nodes (id, name, base_url, api_key, mgmt_key, owner_id, group_id, region, short_id, version, fingerprint_seed, kind)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-RETURNING id, name, base_url, api_key, mgmt_key, owner_id, group_id, region, short_id, version, fingerprint_seed, enabled, created_at, kind
+INSERT INTO nodes (id, name, base_url, api_key, mgmt_key, owner_id, group_id, region, short_id, version, fingerprint_seed, kind, passthrough, account_owner_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+RETURNING id, name, base_url, api_key, mgmt_key, owner_id, group_id, region, short_id, version, fingerprint_seed, enabled, created_at, kind, passthrough, account_owner_id
 `
 
 type CreateNodeParams struct {
@@ -28,6 +28,8 @@ type CreateNodeParams struct {
 	Version         string `json:"version"`
 	FingerprintSeed string `json:"fingerprint_seed"`
 	Kind            string `json:"kind"`
+	Passthrough     bool   `json:"passthrough"`
+	AccountOwnerID  string `json:"account_owner_id"`
 }
 
 func (q *Queries) CreateNode(ctx context.Context, arg CreateNodeParams) (Node, error) {
@@ -44,6 +46,8 @@ func (q *Queries) CreateNode(ctx context.Context, arg CreateNodeParams) (Node, e
 		arg.Version,
 		arg.FingerprintSeed,
 		arg.Kind,
+		arg.Passthrough,
+		arg.AccountOwnerID,
 	)
 	var i Node
 	err := row.Scan(
@@ -61,6 +65,8 @@ func (q *Queries) CreateNode(ctx context.Context, arg CreateNodeParams) (Node, e
 		&i.Enabled,
 		&i.CreatedAt,
 		&i.Kind,
+		&i.Passthrough,
+		&i.AccountOwnerID,
 	)
 	return i, err
 }
@@ -75,7 +81,7 @@ func (q *Queries) DeleteNode(ctx context.Context, id string) error {
 }
 
 const getNode = `-- name: GetNode :one
-SELECT id, name, base_url, api_key, mgmt_key, owner_id, group_id, region, short_id, version, fingerprint_seed, enabled, created_at, kind FROM nodes WHERE id = $1
+SELECT id, name, base_url, api_key, mgmt_key, owner_id, group_id, region, short_id, version, fingerprint_seed, enabled, created_at, kind, passthrough, account_owner_id FROM nodes WHERE id = $1
 `
 
 func (q *Queries) GetNode(ctx context.Context, id string) (Node, error) {
@@ -96,12 +102,14 @@ func (q *Queries) GetNode(ctx context.Context, id string) (Node, error) {
 		&i.Enabled,
 		&i.CreatedAt,
 		&i.Kind,
+		&i.Passthrough,
+		&i.AccountOwnerID,
 	)
 	return i, err
 }
 
 const listNodes = `-- name: ListNodes :many
-SELECT id, name, base_url, api_key, mgmt_key, owner_id, group_id, region, short_id, version, fingerprint_seed, enabled, created_at, kind FROM nodes ORDER BY created_at DESC
+SELECT id, name, base_url, api_key, mgmt_key, owner_id, group_id, region, short_id, version, fingerprint_seed, enabled, created_at, kind, passthrough, account_owner_id FROM nodes ORDER BY created_at DESC
 `
 
 func (q *Queries) ListNodes(ctx context.Context) ([]Node, error) {
@@ -128,6 +136,8 @@ func (q *Queries) ListNodes(ctx context.Context) ([]Node, error) {
 			&i.Enabled,
 			&i.CreatedAt,
 			&i.Kind,
+			&i.Passthrough,
+			&i.AccountOwnerID,
 		); err != nil {
 			return nil, err
 		}
@@ -140,7 +150,7 @@ func (q *Queries) ListNodes(ctx context.Context) ([]Node, error) {
 }
 
 const listNodesByOwner = `-- name: ListNodesByOwner :many
-SELECT id, name, base_url, api_key, mgmt_key, owner_id, group_id, region, short_id, version, fingerprint_seed, enabled, created_at, kind FROM nodes WHERE owner_id = $1 ORDER BY created_at DESC
+SELECT id, name, base_url, api_key, mgmt_key, owner_id, group_id, region, short_id, version, fingerprint_seed, enabled, created_at, kind, passthrough, account_owner_id FROM nodes WHERE owner_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListNodesByOwner(ctx context.Context, ownerID string) ([]Node, error) {
@@ -167,6 +177,8 @@ func (q *Queries) ListNodesByOwner(ctx context.Context, ownerID string) ([]Node,
 			&i.Enabled,
 			&i.CreatedAt,
 			&i.Kind,
+			&i.Passthrough,
+			&i.AccountOwnerID,
 		); err != nil {
 			return nil, err
 		}
@@ -176,6 +188,35 @@ func (q *Queries) ListNodesByOwner(ctx context.Context, ownerID string) ([]Node,
 		return nil, err
 	}
 	return items, nil
+}
+
+const setNodeAccountOwner = `-- name: SetNodeAccountOwner :exec
+UPDATE nodes SET account_owner_id = $2 WHERE id = $1
+`
+
+type SetNodeAccountOwnerParams struct {
+	ID             string `json:"id"`
+	AccountOwnerID string `json:"account_owner_id"`
+}
+
+func (q *Queries) SetNodeAccountOwner(ctx context.Context, arg SetNodeAccountOwnerParams) error {
+	_, err := q.db.Exec(ctx, setNodeAccountOwner, arg.ID, arg.AccountOwnerID)
+	return err
+}
+
+const updateNode = `-- name: UpdateNode :exec
+UPDATE nodes SET base_url = $2, api_key = $3 WHERE id = $1
+`
+
+type UpdateNodeParams struct {
+	ID      string `json:"id"`
+	BaseUrl string `json:"base_url"`
+	ApiKey  string `json:"api_key"`
+}
+
+func (q *Queries) UpdateNode(ctx context.Context, arg UpdateNodeParams) error {
+	_, err := q.db.Exec(ctx, updateNode, arg.ID, arg.BaseUrl, arg.ApiKey)
+	return err
 }
 
 const updateNodeEnabled = `-- name: UpdateNodeEnabled :exec

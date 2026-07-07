@@ -21,13 +21,18 @@ func settleHandler(pool *pgxpool.Pool, q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenantId required"})
 			return
 		}
+		if owner, all := scope(r); !all && body.TenantId != owner {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+			return
+		}
 		now := time.Now().UnixMilli()
 		st, err := billing.Settle(r.Context(), pool, body.TenantId, body.PeriodStart, body.PeriodEnd, now, randHex("s_"))
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"id": st.ID, "tenantId": st.TenantID, "gross": st.GrossUsd, "status": st.Status})
+		recordAudit(r, q, "billing.settle", "tenant:"+body.TenantId, nil, map[string]any{"id": st.ID, "gross": st.GrossUsd, "status": st.Status, "periodStart": body.PeriodStart, "periodEnd": body.PeriodEnd})
+		writeJSON(w, http.StatusOK, map[string]any{"id": st.ID, "tenantId": st.TenantID, "gross": billing.RoundUSD(st.GrossUsd), "settled": billing.RoundUSD(st.SettledUsd), "status": st.Status})
 	}
 }
 

@@ -51,7 +51,8 @@ function InvoiceCard({ result, tenantName }: { result: SettleResult; tenantName?
         </div>
         <div className="col-span-2">
           <p className="text-xs text-muted">结算金额</p>
-          <p className="text-2xl font-bold text-ink mt-0.5">{fmtUsd(result.gross ?? 0)}</p>
+          <p className="text-2xl font-bold text-ink mt-0.5">{fmtUsd(result.settled ?? result.gross ?? 0)}</p>
+          <p className="text-xs text-muted mt-0.5">累计消费：{fmtUsd(result.gross ?? 0)}</p>
         </div>
       </div>
     </div>

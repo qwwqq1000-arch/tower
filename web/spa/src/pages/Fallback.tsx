@@ -22,6 +22,7 @@ import {
 } from '../api';
 import type { FallbackChannel } from '../types';
 import { useAuth } from '../auth';
+import { RangeInput } from '../components/RangeInput';
 
 // ------------------------------------------------------------------
 // Helpers
@@ -47,6 +48,11 @@ function emptyForm() {
     balanceToken: '',
     balanceUserId: '',
     balanceAlertUsd: 0,
+    spendCapDailyMinUsd: 0,
+    spendCapDailyMaxUsd: 0,
+    spendCapTotalMinUsd: 0,
+    spendCapTotalMaxUsd: 0,
+    spendCapAction: 'skip',
   };
 }
 
@@ -132,7 +138,7 @@ function ChannelForm({ initial, submitLabel, submitting, onSubmit, onCancel }: C
           />
         </div>
         <div>
-          <label className="block text-xs text-muted mb-1">Weight</label>
+          <label className="block text-xs text-muted mb-1">权重</label>
           <input
             type="number"
             value={f.weight}
@@ -150,6 +156,48 @@ function ChannelForm({ initial, submitLabel, submitting, onSubmit, onCancel }: C
             min={1}
             className={inputCls}
           />
+        </div>
+      </div>
+
+      {/* Row: spend-cap 保底花费上限 */}
+      <div className="border-t border-line pt-3">
+        <p className="text-xs text-muted mb-2 font-medium">保底花费上限（可选）</p>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs text-muted mb-1">日花费上限 $ (min ~ max, 0 = 不限)</label>
+            <RangeInput
+              min={f.spendCapDailyMinUsd}
+              max={f.spendCapDailyMaxUsd}
+              onChangeMin={(v) => set('spendCapDailyMinUsd', v)}
+              onChangeMax={(v) => set('spendCapDailyMaxUsd', v)}
+              step={0.01}
+              minLabel="日最小$"
+              maxLabel="日最大$"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-muted mb-1">总花费上限 $ (min ~ max, 0 = 不限)</label>
+            <RangeInput
+              min={f.spendCapTotalMinUsd}
+              max={f.spendCapTotalMaxUsd}
+              onChangeMin={(v) => set('spendCapTotalMinUsd', v)}
+              onChangeMax={(v) => set('spendCapTotalMaxUsd', v)}
+              step={0.1}
+              minLabel="总最小$"
+              maxLabel="总最大$"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-muted mb-1">触发动作</label>
+            <select
+              value={f.spendCapAction}
+              onChange={(e) => set('spendCapAction', e.target.value)}
+              className={inputCls}
+            >
+              <option value="skip">跳过 (skip)</option>
+              <option value="disable">禁用 (disable)</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -271,7 +319,7 @@ function EditModal({ channel, onSave, onClose }: EditModalProps) {
     baseUrl: channel.baseUrl,
     apiKey: '',
     priority: channel.priority,
-    weight: channel.weight,
+    weight: channel.weight ?? 1,
     maxConcurrent: channel.maxConcurrent,
     cooldownMs: channel.cooldownMs,
     priceThreshold: channel.priceThreshold,
@@ -279,6 +327,11 @@ function EditModal({ channel, onSave, onClose }: EditModalProps) {
     balanceToken: '',
     balanceUserId: channel.balanceUserId ?? '',
     balanceAlertUsd: channel.balanceAlertUsd ?? 0,
+    spendCapDailyMinUsd: channel.spendCapDailyMinUsd ?? 0,
+    spendCapDailyMaxUsd: channel.spendCapDailyMaxUsd ?? 0,
+    spendCapTotalMinUsd: channel.spendCapTotalMinUsd ?? 0,
+    spendCapTotalMaxUsd: channel.spendCapTotalMaxUsd ?? 0,
+    spendCapAction: channel.spendCapAction ?? 'skip',
   };
 
   async function handleSubmit(f: FormState) {
@@ -438,6 +491,11 @@ export default function Fallback() {
         ...(f.balanceToken ? { balanceToken: f.balanceToken } : {}),
         ...(f.balanceUserId ? { balanceUserId: f.balanceUserId } : {}),
         ...(f.balanceAlertUsd > 0 ? { balanceAlertUsd: f.balanceAlertUsd } : {}),
+        spendCapDailyMinUsd: f.spendCapDailyMinUsd,
+        spendCapDailyMaxUsd: f.spendCapDailyMaxUsd,
+        spendCapTotalMinUsd: f.spendCapTotalMinUsd,
+        spendCapTotalMaxUsd: f.spendCapTotalMaxUsd,
+        spendCapAction: f.spendCapAction,
       });
       setChannels((prev) => [...prev, ch]);
     } catch (e) {
@@ -462,6 +520,11 @@ export default function Fallback() {
       ...(f.balanceToken ? { balanceToken: f.balanceToken } : {}),
       balanceUserId: f.balanceUserId,
       balanceAlertUsd: f.balanceAlertUsd,
+      spendCapDailyMinUsd: f.spendCapDailyMinUsd,
+      spendCapDailyMaxUsd: f.spendCapDailyMaxUsd,
+      spendCapTotalMinUsd: f.spendCapTotalMinUsd,
+      spendCapTotalMaxUsd: f.spendCapTotalMaxUsd,
+      spendCapAction: f.spendCapAction,
     });
     setChannels((prev) => prev.map((c) => (c.id === id ? updated : c)));
   }
@@ -571,7 +634,6 @@ export default function Fallback() {
                       {!isTenant && <th className="px-4 py-3 font-medium">归属</th>}
                       <th className="px-4 py-3 font-medium">Base URL</th>
                       <th className="px-4 py-3 font-medium text-right">Priority</th>
-                      <th className="px-4 py-3 font-medium text-right">Weight</th>
                       <th className="px-4 py-3 font-medium text-right">并发</th>
                       <th className="px-4 py-3 font-medium text-right">价格阈值</th>
                       <th className="px-4 py-3 font-medium text-right">今日消费</th>
@@ -599,7 +661,6 @@ export default function Fallback() {
                         )}
                         <td className="px-4 py-3 text-muted font-mono text-xs truncate max-w-[200px]">{c.baseUrl}</td>
                         <td className="px-4 py-3 text-right tabular-nums">{c.priority}</td>
-                        <td className="px-4 py-3 text-right tabular-nums">{c.weight}</td>
                         <td className="px-4 py-3 text-right tabular-nums">{c.maxConcurrent}</td>
                         <td className="px-4 py-3 text-right tabular-nums">
                           {c.priceThreshold > 0 ? `$${c.priceThreshold.toFixed(4)}` : '—'}
@@ -686,14 +747,10 @@ export default function Fallback() {
                       </div>
                       <EnableToggle id={c.id} enabled={c.enabled} onChange={handleToggle} setEnabledFn={setEnabledFn} />
                     </div>
-                    <div className="grid grid-cols-4 gap-2 text-xs">
+                    <div className="grid grid-cols-3 gap-2 text-xs">
                       <div>
                         <p className="text-muted">Priority</p>
                         <p className="text-ink font-medium tabular-nums">{c.priority}</p>
-                      </div>
-                      <div>
-                        <p className="text-muted">Weight</p>
-                        <p className="text-ink font-medium tabular-nums">{c.weight}</p>
                       </div>
                       <div>
                         <p className="text-muted">并发</p>

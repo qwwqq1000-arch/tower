@@ -1,5 +1,30 @@
 package state
 
+import "strings"
+
+type spendEntry struct {
+	ts  int64
+	usd float64
+}
+
+// classOf maps a model identifier to its rate-limit class ("opus", "sonnet",
+// "haiku", or "all" for unknown/unrecognized models). The comparison is
+// case-insensitive substring matching so both raw class names ("opus") and
+// full model IDs ("claude-opus-4-8") resolve to the same class.
+func classOf(model string) string {
+	m := strings.ToLower(model)
+	switch {
+	case strings.Contains(m, "opus"):
+		return "opus"
+	case strings.Contains(m, "sonnet"):
+		return "sonnet"
+	case strings.Contains(m, "haiku"):
+		return "haiku"
+	default:
+		return "all"
+	}
+}
+
 // Account aggregates the operational state of one (node, profile) account.
 type Account struct {
 	Breaker      Breaker
@@ -7,7 +32,51 @@ type Account struct {
 	Disabled     bool
 	Offline      bool
 	LimitedUntil map[string]int64 // model class ("opus"/"sonnet"/"all") -> reset time ms
+	LimitReason  string           // "5h" / "7d" / "" — set by SetLimitedReason; clears lazily
 	WarmupCap    int              // 0 = no warmup limit; >0 = max in-flight during warmup
+	CoolUntil    int64            // ms; temporary error-cooldown (e.g. 429); 0 = none. Ephemeral.
+	PausedUntil  int64            // ms; session-sim burst pause (0 = not paused). Separate from LimitedUntil so pauses don't trigger elastic demote.
+	spendLog     []spendEntry     // 升序时间
+	reqLog       []int64          // timestamps (ms, ascending) of dispatched requests; for rate governor
+
+	// todayDay and todayTotal track cumulative spend for the current calendar day.
+	// Day bucket = nowMs / 86400000. Resets when the bucket changes.
+	todayDay   int64
+	todayTotal float64
+
+	// Session-sim burst state (only used when SessionSimEnabled=true).
+	burstCount int // requests served in the current burst
+
+	// ModelPin sticky state (only used when ModelPinEnabled=true, mode="sticky").
+	pinModel string // model this account is currently pinned to ("" = unpinned)
+	pinUntil int64  // ms epoch when the pin expires (0 = not set)
+}
+
+// RecordReq appends a request timestamp and prunes entries older than 1 day (86400000 ms).
+// The 1-day pruning window is the longest rate window, ensuring shorter windows (1min, 1hr)
+// still have complete data.
+func (a *Account) RecordReq(now int64) {
+	a.reqLog = append(a.reqLog, now)
+	cut := now - 86400000
+	i := 0
+	for i < len(a.reqLog) && a.reqLog[i] < cut {
+		i++
+	}
+	if i > 0 {
+		a.reqLog = a.reqLog[i:]
+	}
+}
+
+// ReqsInWindow counts request entries in the closed window [now-windowMs, now].
+func (a *Account) ReqsInWindow(now, windowMs int64) int {
+	cut := now - windowMs
+	count := 0
+	for _, ts := range a.reqLog {
+		if ts >= cut && ts <= now {
+			count++
+		}
+	}
+	return count
 }
 
 // NewAccount builds an account with a slot set of the given capacity.
@@ -24,19 +93,29 @@ func (a *Account) Status(now int64) string {
 	if a.Offline {
 		return "offline"
 	}
-	switch a.Breaker.State(now) {
-	case "permanent":
+	bs := a.Breaker.State(now)
+	if bs == "permanent" {
 		return "permanent"
+	}
+	// An active error-cooldown (e.g. 429) takes precedence over a recoverable
+	// breaker state when it outlasts the breaker's recovery time, so a rate-limit
+	// shows as 限流·冷却 for its full duration instead of a shorter 封控·冷却.
+	if now < a.CoolUntil && a.CoolUntil >= a.Breaker.RecoverAt() {
+		return "cooldown"
+	}
+	switch bs {
 	case "open":
 		return "banned"
 	case "half_open":
 		return "half_open"
-	default:
-		return "active"
 	}
+	return "active"
 }
 
 // limitedFor reports whether the model class is rate-limited at now.
+// It checks the "all" key (applies to every model), the exact model string
+// (for backward compatibility), and the normalized class returned by classOf
+// so that a limit keyed by "opus" matches full model IDs like "claude-opus-4-8".
 func (a *Account) limitedFor(now int64, model string) bool {
 	if a.LimitedUntil == nil {
 		return false
@@ -47,7 +126,33 @@ func (a *Account) limitedFor(now int64, model string) bool {
 	if until, ok := a.LimitedUntil[model]; ok && now < until {
 		return true
 	}
+	if cls := classOf(model); cls != model {
+		if until, ok := a.LimitedUntil[cls]; ok && now < until {
+			return true
+		}
+	}
 	return false
+}
+
+// LimitState reports whether the account is currently quota-limited (rotated out
+// of dispatch for any model class) and the latest active reset deadline. Used by
+// Snapshot so the UI can surface a quota-rotated account as "限额" — the breaker
+// Status() is independent and stays "active" while the account is rate-limited.
+func (a *Account) LimitState(now int64) (bool, int64) {
+	var until int64
+	for _, t := range a.LimitedUntil {
+		if t > now && t > until {
+			until = t
+		}
+	}
+	return until > now, until
+}
+
+func (a *Account) IsPaused(now int64) (bool, int64) {
+	if a.PausedUntil > now {
+		return true, a.PausedUntil
+	}
+	return false, 0
 }
 
 // CanDispatch reports whether the account may take a request for model at now,
@@ -58,6 +163,12 @@ func (a *Account) CanDispatch(now int64, model string, cfg BreakerCfg) (ok bool,
 		return false, false
 	}
 	if a.Offline {
+		return false, false
+	}
+	if now < a.CoolUntil { // temporary error-cooldown (e.g. 429)
+		return false, false
+	}
+	if now < a.PausedUntil {
 		return false, false
 	}
 	if a.limitedFor(now, model) {
@@ -82,4 +193,99 @@ func (a *Account) CanDispatch(now int64, model string, cfg BreakerCfg) (ok bool,
 	default: // open
 		return false, false
 	}
+}
+
+// AddSpend records a spend entry and prunes entries older than (now-pruneWindowMs).
+// The caller should pass the longest applicable window (e.g., 7d) to avoid pruning
+// data that is still needed for shorter windows.
+// It also maintains the today-bucket (todayDay/todayTotal) for SpendToday queries.
+func (a *Account) AddSpend(now int64, usd float64, pruneWindowMs int64) {
+	a.spendLog = append(a.spendLog, spendEntry{ts: now, usd: usd})
+	cut := now - pruneWindowMs
+	i := 0
+	for i < len(a.spendLog) && a.spendLog[i].ts < cut {
+		i++
+	}
+	if i > 0 {
+		a.spendLog = a.spendLog[i:]
+	}
+	// Update today-bucket (day = nowMs / 86400000).
+	day := now / 86_400_000
+	if day != a.todayDay {
+		a.todayDay = day
+		a.todayTotal = 0
+	}
+	a.todayTotal += usd
+}
+
+// SpendToday returns the cumulative spend for the current calendar day (bucket = now/86400000).
+// Returns 0 if no spend has been recorded today or if the bucket has rolled over.
+func (a *Account) SpendToday(now int64) float64 {
+	day := now / 86_400_000
+	if day != a.todayDay {
+		return 0
+	}
+	return a.todayTotal
+}
+
+// SeedSpendToday warm-restores the today-bucket to total for the current calendar
+// day (bucket = now/86400000), so the daily spend cap counts the full day across
+// restarts instead of resetting to 0. Overwrites any existing today total; later
+// AddSpend calls accumulate on top. A no-op for past/future days is the caller's
+// concern — callers pass the current clock.
+func (a *Account) SeedSpendToday(now int64, total float64) {
+	a.todayDay = now / 86_400_000
+	a.todayTotal = total
+}
+
+// BurstTick increments the burst counter by one (called on each successful dispatch
+// when SessionSim is enabled). Thread-safety is the caller's responsibility (Store
+// wrappers hold the store lock before calling this).
+func (a *Account) BurstTick() {
+	a.burstCount++
+}
+
+// BurstShouldPause reports whether the burst counter has reached or exceeded target,
+// meaning the account should take a "coffee break" pause.
+func (a *Account) BurstShouldPause(target int) bool {
+	return a.burstCount >= target
+}
+
+// BurstReset resets the burst counter to zero (called after triggering a pause).
+func (a *Account) BurstReset() {
+	a.burstCount = 0
+}
+
+// RecordModel pins this account to model for ttl milliseconds, but only when the
+// account is currently unpinned or its pin has already expired. If the account is
+// already pinned to a model within the TTL window, the call is a no-op (first-model
+// wins, per sticky-pin semantics).
+func (a *Account) RecordModel(model string, now, ttl int64) {
+	if a.pinModel == "" || now >= a.pinUntil {
+		a.pinModel = model
+		a.pinUntil = now + ttl
+	}
+}
+
+// PinnedModel returns the model this account is currently pinned to and whether
+// the pin is still active (now < pinUntil). The ttl parameter is accepted for
+// interface symmetry with Store.PinnedModel but is not used in the check — the
+// expiry was already computed by RecordModel.
+func (a *Account) PinnedModel(now, _ int64) (string, bool) {
+	if a.pinModel != "" && now < a.pinUntil {
+		return a.pinModel, true
+	}
+	return "", false
+}
+
+// SpendInWindow returns the sum of spend entries in [now-windowMs, now].
+func (a *Account) SpendInWindow(now, windowMs int64) float64 {
+	cut := now - windowMs
+	var sum float64
+	for _, e := range a.spendLog {
+		if e.ts > cut {
+			sum += e.usd
+		}
+	}
+	return sum
 }

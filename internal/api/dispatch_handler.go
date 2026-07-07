@@ -11,6 +11,10 @@ import (
 	"github.com/qwwqq1000-arch/tower/internal/dispatch"
 )
 
+// maxDispatchBodyBytes caps the inbound /v1/messages body (security-audit:
+// prevent memory exhaustion from an unbounded upload on a valid dispatch key).
+const maxDispatchBodyBytes = 64 << 20 // 64 MiB
+
 func extractKey(r *http.Request) string {
 	if k := r.Header.Get("x-api-key"); k != "" {
 		return k
@@ -47,17 +51,34 @@ func dispatchMessagesHandler(svc *dispatch.Service, q *sqlc.Queries) http.Handle
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid dispatch key"})
 			return
 		}
-		body, _ := io.ReadAll(r.Body)
+		// Cap the inbound body so a valid dispatch key can't exhaust memory with an
+		// unbounded upload (security-audit). 64MiB comfortably fits max-context +
+		// image requests; oversized bodies get a 413 from MaxBytesReader.
+		r.Body = http.MaxBytesReader(w, r.Body, maxDispatchBodyBytes)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "request body too large"})
+			return
+		}
 		var parsed struct {
 			Model  string `json:"model"`
 			Stream bool   `json:"stream"`
 		}
 		_ = json.Unmarshal(body, &parsed)
+		// Pure passthrough: carry the client's original request headers so the proxy
+		// forwards them verbatim upstream (only auth/host/account-pin are re-set).
+		// Generate the request id here (not inside Dispatch) so we can record the
+		// response detail after dispatch returns (logs-detail-2).
+		ctx := dispatch.WithClientHeaders(r.Context(), r.Header.Clone())
+		ctx = dispatch.WithRequestQuery(ctx, r.URL.Query())
+		ctx = dispatch.WithRequestID(ctx, dispatch.NewRequestID())
 		if parsed.Stream {
-			svc.DispatchStream(r.Context(), w, ownerID, parsed.Model, body)
+			out := svc.DispatchStream(ctx, w, ownerID, parsed.Model, body)
+			svc.UpdateRequestDetailResponse(ctx, out.Status, out.Body)
 			return
 		}
-		out := svc.Dispatch(r.Context(), ownerID, parsed.Model, string(body), body)
+		out := svc.Dispatch(ctx, ownerID, parsed.Model, string(body), body)
+		svc.UpdateRequestDetailResponse(ctx, out.Status, out.Body)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(out.Status)
 		_, _ = w.Write([]byte(out.Body))

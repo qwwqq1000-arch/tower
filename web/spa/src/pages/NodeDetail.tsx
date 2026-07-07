@@ -321,7 +321,7 @@ export default function NodeDetail() {
             {refreshing ? '刷新中…' : '刷新 token'}
           </button>
           <a
-            href={node.baseUrl}
+            href={/^https?:\/\//i.test(node.baseUrl) ? node.baseUrl : '#'}
             target="_blank"
             rel="noopener noreferrer"
             className="px-4 py-2 text-sm font-medium bg-surface border border-line rounded-lg

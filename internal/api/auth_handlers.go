@@ -20,11 +20,16 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func loginHandler(pool *pgxpool.Pool, secret string) http.HandlerFunc {
+func loginHandler(pool *pgxpool.Pool, secret string, throttle *auth.Throttle, secureCookies bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct{ Username, Password string }
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad request"})
+			return
+		}
+		key := body.Username + "|" + clientIP(r)
+		if !throttle.Allowed(key, time.Now()) {
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many attempts"})
 			return
 		}
 		q := sqlc.New(pool)
@@ -37,13 +42,16 @@ func loginHandler(pool *pgxpool.Pool, secret string) http.HandlerFunc {
 			ok = auth.VerifyPassword(body.Password, u.PwHash, u.Salt)
 		}
 		if !ok {
+			throttle.RecordFailure(key, time.Now())
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 			return
 		}
-		tok := auth.IssueSession(secret, u.ID, u.Role, nowUnix(), sessionTTLSec)
+		throttle.Reset(key)
+		tok := auth.IssueSession(secret, u.ID, u.Role, u.SessionEpoch, nowUnix(), sessionTTLSec)
 		http.SetCookie(w, &http.Cookie{
 			Name: "tower_session", Value: tok, Path: "/",
 			HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: sessionTTLSec,
+			Secure: secureCookies,
 		})
 		writeJSON(w, http.StatusOK, map[string]string{"role": u.Role})
 	}
@@ -57,11 +65,21 @@ func meHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 		perms := loadPerms(pool, r, p.Role)
-		writeJSON(w, http.StatusOK, map[string]any{"sub": p.Sub, "role": p.Role, "perms": perms})
+		// Surface must_change_pw so the SPA can enforce a forced change gate.
+		mustChangePw := false
+		if pool != nil {
+			if t, err := sqlc.New(pool).GetTenantByID(r.Context(), p.Sub); err == nil {
+				mustChangePw = t.MustChangePw
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"sub": p.Sub, "role": p.Role, "perms": perms, "mustChangePw": mustChangePw})
 	}
 }
 
 func loadPerms(pool *pgxpool.Pool, r *http.Request, role string) []string {
+	if pool == nil {
+		return []string{}
+	}
 	var raw []byte
 	err := pool.QueryRow(r.Context(), `SELECT permissions FROM roles WHERE name=$1`, role).Scan(&raw)
 	if err != nil {

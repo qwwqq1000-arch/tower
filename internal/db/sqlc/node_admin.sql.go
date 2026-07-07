@@ -22,3 +22,17 @@ func (q *Queries) SetNodeEnabled(ctx context.Context, arg SetNodeEnabledParams) 
 	_, err := q.db.Exec(ctx, setNodeEnabled, arg.ID, arg.Enabled)
 	return err
 }
+
+const setNodePassthrough = `-- name: SetNodePassthrough :exec
+UPDATE nodes SET passthrough = $2 WHERE id = $1
+`
+
+type SetNodePassthroughParams struct {
+	ID          string `json:"id"`
+	Passthrough bool   `json:"passthrough"`
+}
+
+func (q *Queries) SetNodePassthrough(ctx context.Context, arg SetNodePassthroughParams) error {
+	_, err := q.db.Exec(ctx, setNodePassthrough, arg.ID, arg.Passthrough)
+	return err
+}

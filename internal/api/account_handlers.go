@@ -1,11 +1,15 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"time"
 
+	"github.com/qwwqq1000-arch/tower/internal/crypto"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 	"github.com/qwwqq1000-arch/tower/internal/dispatch"
 	"github.com/qwwqq1000-arch/tower/internal/events"
@@ -28,7 +32,7 @@ func effectiveProfiles(ctx context.Context, cl *nodeclient.Client) ([]nodeclient
 	return ps, nil
 }
 
-func nodeClientFor(q *sqlc.Queries, r *http.Request, id string) (*nodeclient.Client, sqlc.Node, bool) {
+func nodeClientFor(q *sqlc.Queries, cipher *crypto.Cipher, r *http.Request, id string) (*nodeclient.Client, sqlc.Node, bool) {
 	n, err := q.GetNode(r.Context(), id)
 	if err != nil {
 		return nil, sqlc.Node{}, false
@@ -37,14 +41,28 @@ func nodeClientFor(q *sqlc.Queries, r *http.Request, id string) (*nodeclient.Cli
 	if owner, all := scope(r); !all && n.OwnerID != owner {
 		return nil, sqlc.Node{}, false
 	}
-	return nodeclient.New(n.BaseUrl, n.ApiKey), n, true
+	// Decrypt the stored api_key transparently (vault-crypto-3): ciphertext rows
+	// decrypt, legacy plaintext rows pass through unchanged.
+	return nodeclient.New(n.BaseUrl, cipher.DecryptOrPlaintext(n.ApiKey)), n, true
 }
 
-func oauthStartHandler(q *sqlc.Queries) http.HandlerFunc {
+func nodeClientFromRow(n sqlc.Node, cipher *crypto.Cipher) (*nodeclient.Client, error) {
+	if n.BaseUrl == "" {
+		return nil, fmt.Errorf("no base url")
+	}
+	return nodeclient.New(n.BaseUrl, cipher.DecryptOrPlaintext(n.ApiKey)), nil
+}
+
+func oauthStartHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cl, _, ok := nodeClientFor(q, r, r.PathValue("id"))
+		cl, n, ok := nodeClientFor(q, cipher, r, r.PathValue("id"))
 		if !ok {
 			writeJSON(w, 404, map[string]string{"error": "node not found"})
+			return
+		}
+		// OAuth login flow is meridian-specific; CPA nodes manage accounts via
+		// the CPA management API, not the meridian oauth endpoints (nodeclient-telemetry-5).
+		if cpaNotApplicable(w, n.Kind) {
 			return
 		}
 		lu, err := cl.LoginURL(r.Context())
@@ -56,11 +74,16 @@ func oauthStartHandler(q *sqlc.Queries) http.HandlerFunc {
 	}
 }
 
-func oauthExchangeHandler(q *sqlc.Queries) http.HandlerFunc {
+func oauthExchangeHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cl, n, ok := nodeClientFor(q, r, r.PathValue("id"))
+		cl, n, ok := nodeClientFor(q, cipher, r, r.PathValue("id"))
 		if !ok {
 			writeJSON(w, 404, map[string]string{"error": "node not found"})
+			return
+		}
+		// OAuth exchange is meridian-specific; CPA nodes manage accounts via
+		// the CPA management API (nodeclient-telemetry-5).
+		if cpaNotApplicable(w, n.Kind) {
 			return
 		}
 		var body struct {
@@ -77,7 +100,7 @@ func oauthExchangeHandler(q *sqlc.Queries) http.HandlerFunc {
 			return
 		}
 		// register the now-logged-in profile
-		profiles, _ := cl.ProfilesList(r.Context())
+		profiles, _ := effectiveProfiles(r.Context(), cl)
 		profileID, email := "default", ""
 		for _, p := range profiles {
 			if p.LoggedIn {
@@ -94,15 +117,18 @@ func oauthExchangeHandler(q *sqlc.Queries) http.HandlerFunc {
 			}
 		}
 		accID := randHex("acc_")
+		// Tower's import path is pointer-only: the session lives on the node keyed
+		// by profile_id (stored in node_accounts.profile_id). Tower does not capture
+		// raw OAuth access/refresh tokens from cl.Exchange(), so OauthAccessEnc and
+		// OauthRefreshEnc are intentionally left empty here. If real OAuth tokens
+		// become available in future, write them via internal/vault.Vault.Store().
 		if _, err := q.CreateAccount(r.Context(), sqlc.CreateAccountParams{
 			ID:               accID,
-			OwnerID:          n.OwnerID,
+			OwnerID:          n.AccountOwnerID,
 			Email:            email,
 			SubscriptionType: "",
-			OauthAccessEnc:   "",
-			OauthRefreshEnc:  "",
 			ExpiresAt:        time.Now().Add(30 * 24 * time.Hour).UnixMilli(),
-			OnboardedAt:      0,
+			OnboardedAt:      time.Now().UnixMilli(),
 		}); err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
@@ -115,6 +141,7 @@ func oauthExchangeHandler(q *sqlc.Queries) http.HandlerFunc {
 			Weight:    100,
 			Role:      "baseline",
 			SlotID:    "",
+			BoundAt:   time.Now().UnixMilli(),
 		}); err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
@@ -123,7 +150,7 @@ func oauthExchangeHandler(q *sqlc.Queries) http.HandlerFunc {
 	}
 }
 
-func importProfileHandler(q *sqlc.Queries) http.HandlerFunc {
+func importProfileHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		nodeID := r.PathValue("id")
 		n, err := q.GetNode(r.Context(), nodeID)
@@ -142,7 +169,7 @@ func importProfileHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 400, map[string]string{"error": "profileId required"})
 			return
 		}
-		cl := nodeclient.New(n.BaseUrl, n.ApiKey)
+		cl := nodeclient.New(n.BaseUrl, cipher.DecryptOrPlaintext(n.ApiKey))
 		profiles, _ := effectiveProfiles(r.Context(), cl)
 		var matched *nodeclient.Profile
 		for i := range profiles {
@@ -164,16 +191,7 @@ func importProfileHandler(q *sqlc.Queries) http.HandlerFunc {
 			}
 		}
 		accID := randHex("acc_")
-		if _, err := q.CreateAccount(r.Context(), sqlc.CreateAccountParams{
-			ID:               accID,
-			OwnerID:          n.OwnerID,
-			Email:            matched.Email,
-			SubscriptionType: "",
-			OauthAccessEnc:   "",
-			OauthRefreshEnc:  "",
-			ExpiresAt:        time.Now().Add(30 * 24 * time.Hour).UnixMilli(),
-			OnboardedAt:      0,
-		}); err != nil {
+		if _, err := q.CreateAccount(r.Context(), buildImportAccountParams(accID, n.OwnerID, matched.Email, time.Now().Add(30*24*time.Hour).UnixMilli(), time.Now().UnixMilli())); err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
@@ -185,6 +203,7 @@ func importProfileHandler(q *sqlc.Queries) http.HandlerFunc {
 			Weight:    100,
 			Role:      "baseline",
 			SlotID:    "",
+			BoundAt:   time.Now().UnixMilli(),
 		}); err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
@@ -193,9 +212,25 @@ func importProfileHandler(q *sqlc.Queries) http.HandlerFunc {
 	}
 }
 
-func listProfilesHandler(q *sqlc.Queries) http.HandlerFunc {
+// buildImportAccountParams constructs the CreateAccountParams for the import path.
+// Tower's import is pointer-only: OauthAccessEnc and OauthRefreshEnc are intentionally
+// left empty because Tower does not capture raw OAuth tokens from the node.
+// The session lives on the node keyed by profile_id (stored in node_accounts.profile_id).
+// If real OAuth tokens become available in future, write them via internal/vault.Vault.Store().
+func buildImportAccountParams(id, ownerID, email string, expiresAt, onboardedAt int64) sqlc.CreateAccountParams {
+	return sqlc.CreateAccountParams{
+		ID:          id,
+		OwnerID:     ownerID,
+		Email:       email,
+		ExpiresAt:   expiresAt,
+		OnboardedAt: onboardedAt,
+	}
+}
+
+func listProfilesHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cl, _, ok := nodeClientFor(q, r, r.PathValue("id"))
+		nodeID := r.PathValue("id")
+		cl, n, ok := nodeClientFor(q, cipher, r, nodeID)
 		if !ok {
 			writeJSON(w, 404, map[string]string{"error": "node not found"})
 			return
@@ -205,7 +240,78 @@ func listProfilesHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 502, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, 200, ps)
+		assigned, _ := q.ListNodeAccountsByNode(r.Context(), nodeID)
+		importedSet := map[string]bool{}
+		for _, a := range assigned {
+			importedSet[a.ProfileID] = true
+		}
+		// Auto-import: logged-in profiles not yet imported get imported automatically.
+		for _, p := range ps {
+			if p.LoggedIn && !importedSet[p.ID] {
+				accID := randHex("acc_")
+				if _, err := q.CreateAccount(r.Context(), buildImportAccountParams(accID, n.AccountOwnerID, p.Email, time.Now().Add(30*24*time.Hour).UnixMilli(), time.Now().UnixMilli())); err == nil {
+					q.AssignAccount(r.Context(), sqlc.AssignAccountParams{NodeID: n.ID, AccountID: accID, ProfileID: p.ID, Egress: "", Weight: 100, Role: "baseline", SlotID: "", BoundAt: time.Now().UnixMilli()})
+					importedSet[p.ID] = true
+				}
+			}
+		}
+		type profileWithImported struct {
+			nodeclient.Profile
+			Imported bool `json:"imported"`
+		}
+		out := make([]profileWithImported, len(ps))
+		for i, p := range ps {
+			out[i] = profileWithImported{Profile: p, Imported: importedSet[p.ID]}
+		}
+		writeJSON(w, 200, out)
+	}
+}
+
+func batchAutoImportHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		owner, all := scope(r)
+		nodes, err := q.ListNodes(ctx)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		imported := 0
+		failed := 0
+		for _, n := range nodes {
+			if !all && n.OwnerID != owner {
+				continue
+			}
+			cl, err := nodeClientFromRow(n, cipher)
+			if err != nil {
+				continue
+			}
+			ps, err := effectiveProfiles(ctx, cl)
+			if err != nil {
+				continue
+			}
+			assigned, _ := q.ListNodeAccountsByNode(ctx, n.ID)
+			importedSet := map[string]bool{}
+			for _, a := range assigned {
+				importedSet[a.ProfileID] = true
+			}
+			for _, p := range ps {
+				if p.LoggedIn && !importedSet[p.ID] {
+					accID := randHex("acc_")
+					ownerID := n.AccountOwnerID
+					if ownerID == "" {
+						ownerID = n.OwnerID
+					}
+					if _, cerr := q.CreateAccount(ctx, buildImportAccountParams(accID, ownerID, p.Email, time.Now().Add(30*24*time.Hour).UnixMilli(), time.Now().UnixMilli())); cerr == nil {
+						q.AssignAccount(ctx, sqlc.AssignAccountParams{NodeID: n.ID, AccountID: accID, ProfileID: p.ID, Egress: "", Weight: 100, Role: "baseline", SlotID: "", BoundAt: time.Now().UnixMilli()})
+						imported++
+					} else {
+						failed++
+					}
+				}
+			}
+		}
+		writeJSON(w, 200, map[string]any{"imported": imported, "failed": failed})
 	}
 }
 
@@ -227,6 +333,7 @@ func listAccountsHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFun
 		}
 		// Live status overlay (banned/half_open/permanent/...) from the in-memory store.
 		liveStatus := map[string]string{}
+		liveLimitedUntil := map[string]int64{} // key -> limit reset deadline (reactive + spend-cap limited accounts)
 		if svc != nil && svc.Store != nil {
 			now := int64(0)
 			if svc.Now != nil {
@@ -234,20 +341,46 @@ func listAccountsHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFun
 			}
 			for _, snap := range svc.Store.Snapshot(now) {
 				liveStatus[snap.Key] = snap.Status
+				if snap.Limited {
+					liveLimitedUntil[snap.Key] = snap.LimitedUntil
+				}
 			}
 		}
+		// Build bound_at map so today/total costs only reflect the CURRENT account.
+		boundAtMap := map[string]int64{}
+		if baRows, err := q.ListBoundAtByTarget(ctx); err == nil {
+			for _, r := range baRows {
+				boundAtMap[r.Target] = r.BoundAt
+			}
+		}
+		todayStart := startOfTodayMs()
 		// Build today cost map: target -> cost
 		todayCostMap := map[string]float64{}
-		if todayRows, err := q.CostByTargetSince(ctx, startOfTodayMs()); err == nil {
+		if todayRows, err := q.CostByTargetSince(ctx, todayStart); err == nil {
 			for _, r := range todayRows {
 				todayCostMap[r.Target] = r.Cost
 			}
 		}
-		// Build total cost map: target -> cost
+		// Re-query targets whose bound_at is after midnight (account was replaced today).
+		for target, ba := range boundAtMap {
+			if ba > todayStart {
+				if cost, err := q.CostByTargetSinceOne(ctx, sqlc.CostByTargetSinceOneParams{Target: target, Ts: ba}); err == nil {
+					todayCostMap[target] = cost
+				}
+			}
+		}
+		// Build total cost map: target -> cost (only since bound_at if set)
 		totalCostMap := map[string]float64{}
 		if totalRows, err := q.CostByTargetTotal(ctx); err == nil {
 			for _, r := range totalRows {
 				totalCostMap[r.Target] = r.Cost
+			}
+		}
+		for target, ba := range boundAtMap {
+			if ba > 0 {
+				if cost, err := q.CostByTargetSinceOne(ctx, sqlc.CostByTargetSinceOneParams{Target: target, Ts: ba}); err == nil {
+					totalCostMap[target] = cost
+				}
 			}
 		}
 		out := make([]map[string]any, 0, len(rows))
@@ -260,16 +393,38 @@ func listAccountsHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFun
 			if ls, ok := liveStatus[key]; ok {
 				status = ls // live ban/half_open/permanent state wins over stored value
 			}
+			// Limit overlay: an account marked limited by LimitState (a reactive
+			// usage-limit response or a tripped 5h/7d spend cap) is rotated out of
+			// dispatch but its breaker stays "active" — surface it as "limited" so the
+			// UI shows 限额 instead of a misleading 活跃 (quota-3).
+			limitedUntil := liveLimitedUntil[key]
+			if limitedUntil > 0 {
+				status = "limited"
+			}
 			var quota map[string]any
 			if qr, ok := quotaByAccount[a.AccountID]; ok {
+				now := time.Now()
+				fhUtil, fhReset := qr.FiveHourUtil, qr.FiveHourResetsAt
+				sdUtil, sdReset := qr.SevenDayUtil, qr.SevenDayResetsAt
+				ssUtil, ssReset := qr.SevenDaySonnetUtil, qr.SevenDaySonnetResetsAt
+				if t, err := time.Parse(time.RFC3339, fhReset); err == nil && t.Before(now) {
+					fhUtil, fhReset = 0, ""
+				}
+				if t, err := time.Parse(time.RFC3339, sdReset); err == nil && t.Before(now) {
+					sdUtil, sdReset = 0, ""
+				}
+				if t, err := time.Parse(time.RFC3339, ssReset); err == nil && t.Before(now) {
+					ssUtil, ssReset = 0, ""
+				}
 				quota = map[string]any{
-					"fiveHourUtil": qr.FiveHourUtil, "fiveHourResetsAt": qr.FiveHourResetsAt,
-					"sevenDayUtil": qr.SevenDayUtil, "sevenDayResetsAt": qr.SevenDayResetsAt,
-					"sevenDaySonnetUtil": qr.SevenDaySonnetUtil, "sevenDaySonnetResetsAt": qr.SevenDaySonnetResetsAt,
-					"updatedAt": qr.UpdatedAt,
+					"fiveHourUtil": fhUtil, "fiveHourResetsAt": fhReset,
+					"sevenDayUtil": sdUtil, "sevenDayResetsAt": sdReset,
+					"sevenDaySonnetUtil": ssUtil, "sevenDaySonnetResetsAt": ssReset,
+					"updatedAt":  qr.UpdatedAt,
+					"fetchError": qr.QuotaFetchError,
 				}
 			}
-			out = append(out, map[string]any{
+			row := map[string]any{
 				"nodeId":           a.NodeID,
 				"nodeName":         a.NodeName,
 				"baseUrl":          a.BaseUrl,
@@ -281,15 +436,44 @@ func listAccountsHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFun
 				"egress":           a.Egress,
 				"email":            a.Email,
 				"status":           status,
+				"limitedUntil":     limitedUntil,
 				"todayCostUsd":     todayCostMap[key],
 				"totalCostUsd":     totalCostMap[key],
 				"expiresAt":        a.ExpiresAt,
 				"subscriptionType": a.SubscriptionType,
 				"ownerId":          a.AcctOwnerID,
 				"cpaQuota":         quota,
-			})
+				"no1mUntil":        a.No1mUntil,
+			}
+			if h, ok := getHealthCache(a.NodeID); ok {
+				if row["subscriptionType"] == "" {
+					row["subscriptionType"] = h.SubscriptionType
+				}
+				row["subscriptionCreatedAt"] = h.SubscriptionCreatedAt
+				row["accountCreatedAt"] = h.AccountCreatedAt
+			}
+			out = append(out, row)
 		}
 		writeJSON(w, 200, out)
+	}
+}
+
+// realignSpendLimitsHandler re-evaluates every currently-limited account against its
+// LIVE quota and fixes the recovery time (one-shot maintenance for limits set before the
+// spend-cap-reset fix): full window → its real reset; 5h active → its real reset; 5h
+// empty → recover the account now. Returns {realigned, recovered, skipped}.
+func realignSpendLimitsHandler(svc *dispatch.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if svc == nil {
+			writeJSON(w, 500, map[string]string{"error": "dispatch unavailable"})
+			return
+		}
+		// Fresh context with a generous timeout — fetching live quota for every limited
+		// account is N sequential CPA calls and must not be cut by the request deadline.
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+		defer cancel()
+		realigned, recovered, skipped := svc.RealignSpendLimits(ctx)
+		writeJSON(w, 200, map[string]any{"realigned": realigned, "recovered": recovered, "skipped": skipped})
 	}
 }
 
@@ -319,7 +503,14 @@ func recoverAccountHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerF
 		}
 		if svc != nil && svc.Store != nil {
 			for _, na := range rows {
-				svc.Store.Recover(na.NodeID + ":" + na.ProfileID)
+				key := na.NodeID + ":" + na.ProfileID
+				svc.Store.Recover(key)
+				// A manual recover lifts EVERY hold, including a quota/spend limit (5h/7d):
+				// clear the in-memory LimitedUntil and the persisted limit row so the
+				// account re-enters dispatch now and its limit is recomputed on the next
+				// trip (spend-cap/quota recovery starts fresh).
+				svc.Store.SetLimited(key, svc.Base.MaxConcurrent, map[string]int64{})
+				_ = q.DeleteAccountLimitState(r.Context(), key)
 				// Persist the cleared verdict immediately so a restart in the
 				// periodic-persist window cannot reload permanent=true and silently
 				// re-ban the account the operator just recovered.
@@ -327,11 +518,19 @@ func recoverAccountHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerF
 					NodeID: na.NodeID, ProfileID: na.ProfileID, Status: "active",
 					CooldownUntil: 0, BanStreak: 0, FailCount: 0, Permanent: false, UpdatedAt: now,
 				})
+				// Close any open ban episodes so recovered_at/survival_ms are populated
+				// (events-audit-2 / ban-classify-1).
+				_ = q.RecoverBanEpisode(r.Context(), sqlc.RecoverBanEpisodeParams{
+					NodeID:      na.NodeID,
+					ProfileID:   na.ProfileID,
+					RecoveredAt: now,
+				})
 			}
 		}
 		_ = q.SetNodeAccountEnabledByAccount(r.Context(), sqlc.SetNodeAccountEnabledByAccountParams{AccountID: accountID, Enabled: true})
 		_ = q.SetAccountStatus(r.Context(), sqlc.SetAccountStatusParams{ID: accountID, Status: "active"})
 		_ = events.Record(r.Context(), q, now, events.Event{Type: "account_recovered", Target: accountID, OwnerID: acc.OwnerID, Detail: map[string]any{"email": acc.Email}})
+		recordAudit(r, q, "account.recover", "account:"+accountID, nil, map[string]any{"email": acc.Email})
 		writeJSON(w, 200, map[string]any{"ok": true, "accountId": accountID})
 	}
 }
@@ -357,6 +556,7 @@ func setAccountExpiryHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "account.expiry", "account:"+accountID, nil, map[string]any{"expiresAt": body.ExpiresAt})
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }
@@ -384,7 +584,84 @@ func setAccountOwnerHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "account.owner", "account:"+accountID, nil, map[string]any{"ownerId": body.OwnerID})
 		writeJSON(w, 200, map[string]string{"ok": "true"})
+	}
+}
+
+func clearNo1MHandler(q *sqlc.Queries) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("accountId")
+		if id == "" {
+			writeJSON(w, 400, map[string]string{"error": "account id required"})
+			return
+		}
+		if err := q.ClearAccountNo1M(r.Context(), id); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		recordAudit(r, q, "account.clear_no1m", "account:"+id, nil, nil)
+		writeJSON(w, 200, map[string]string{"ok": "true"})
+	}
+}
+
+func testAccountHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		accountID := r.PathValue("accountId")
+		if !ownsAccountID(r, q, accountID) {
+			writeJSON(w, 403, map[string]string{"error": "forbidden"})
+			return
+		}
+		var body struct {
+			Model string `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Model == "" {
+			writeJSON(w, 400, map[string]string{"error": "model required"})
+			return
+		}
+		nas, err := q.ListNodeAccountsByAccount(r.Context(), accountID)
+		if err != nil || len(nas) == 0 {
+			writeJSON(w, 404, map[string]string{"error": "account not assigned to any node"})
+			return
+		}
+		na := nas[0]
+		node, err := q.GetNode(r.Context(), na.NodeID)
+		if err != nil {
+			writeJSON(w, 404, map[string]string{"error": "node not found"})
+			return
+		}
+		apiKey := node.ApiKey
+		if cipher != nil {
+			apiKey = cipher.DecryptOrPlaintext(node.ApiKey)
+		}
+		payload, _ := json.Marshal(map[string]any{
+			"model":      body.Model,
+			"max_tokens": 32,
+			"messages":   []map[string]string{{"role": "user", "content": "Say hi in one word"}},
+		})
+		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+		defer cancel()
+		req, _ := http.NewRequestWithContext(ctx, "POST", node.BaseUrl+"v1/messages", bytes.NewReader(payload))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("x-api-key", apiKey)
+		req.Header.Set("anthropic-version", "2023-06-01")
+		req.Header.Set("X-Profile-ID", na.ProfileID)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			writeJSON(w, 502, map[string]string{"error": fmt.Sprintf("request failed: %v", err)})
+			return
+		}
+		defer resp.Body.Close()
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
+		var parsed map[string]any
+		if json.Unmarshal(respBody, &parsed) != nil {
+			parsed = map[string]any{"raw": string(respBody)}
+		}
+		writeJSON(w, resp.StatusCode, map[string]any{
+			"status": resp.StatusCode,
+			"model":  body.Model,
+			"body":   parsed,
+		})
 	}
 }
 

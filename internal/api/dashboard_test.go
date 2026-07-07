@@ -33,9 +33,9 @@ func TestDashboardComprehensive(t *testing.T) {
 	_ = q.InsertDispatchLog(ctx, sqlc.InsertDispatchLogParams{Ts: now, OwnerID: "o", Model: "claude-opus-4-8", Target: "node", Status: "ok", HttpStatus: 200, TokensIn: 1000, TokensOut: 2000, CostUsd: 0.055})
 
 	const secret = "test-secret-padding-to-32-chars!"
-	router := NewRouter(pool, secret, nil, q)
+	router := NewRouter(pool, secret, nil, q, false, nil, "")
 	req := httptest.NewRequest("GET", "/api/dashboard", nil)
-	req.AddCookie(adminCookie(t, secret))
+	req.AddCookie(adminCookie(t, ctx, q, secret))
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	if rec.Code != 200 {

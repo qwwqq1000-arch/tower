@@ -216,76 +216,6 @@ func TestLastUserText(t *testing.T) {
 	}
 }
 
-func TestPickElastic(t *testing.T) {
-	b := []string{"b1", "b2"}
-	r := []string{"r1", "r2", "r3"}
-
-	cases := []struct {
-		name       string
-		util       float64
-		threshold  float64
-		maxReserve int
-		wantLen    int
-		wantOrder  []string
-	}{
-		{
-			name: "below threshold — baseline only",
-			util: 0.5, threshold: 0.8, maxReserve: 1000,
-			wantLen:   2,
-			wantOrder: []string{"b1", "b2"},
-		},
-		{
-			name: "at threshold — reserves added",
-			util: 0.8, threshold: 0.8, maxReserve: 1000,
-			wantLen:   5,
-			wantOrder: []string{"b1", "b2", "r1", "r2", "r3"},
-		},
-		{
-			name: "above threshold — reserves added",
-			util: 1.0, threshold: 0.8, maxReserve: 1000,
-			wantLen:   5,
-			wantOrder: []string{"b1", "b2", "r1", "r2", "r3"},
-		},
-		{
-			name: "above threshold — maxReserve cap applied",
-			util: 0.9, threshold: 0.8, maxReserve: 2,
-			wantLen:   4,
-			wantOrder: []string{"b1", "b2", "r1", "r2"},
-		},
-		{
-			name: "above threshold — maxReserve 0 means no cap",
-			util: 0.9, threshold: 0.8, maxReserve: 0,
-			wantLen:   5,
-			wantOrder: []string{"b1", "b2", "r1", "r2", "r3"},
-		},
-		{
-			name: "empty reserve pool — baseline only even above threshold",
-			util: 1.0, threshold: 0.8, maxReserve: 1000,
-			// use nil reserve
-			wantLen:   2,
-			wantOrder: []string{"b1", "b2"},
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			rv := r
-			if tc.name == "empty reserve pool — baseline only even above threshold" {
-				rv = nil
-			}
-			got := pickElastic(b, rv, tc.util, tc.threshold, tc.maxReserve)
-			if len(got) != tc.wantLen {
-				t.Fatalf("len=%d, want %d; got %v", len(got), tc.wantLen, got)
-			}
-			for i, key := range tc.wantOrder {
-				if got[i] != key {
-					t.Errorf("order[%d]=%q, want %q", i, got[i], key)
-				}
-			}
-		})
-	}
-}
-
 // TestElasticHysteresis verifies the hysteresis state machine used in buildCandidates.
 // It exercises the three cases required by the spec:
 //   1. not-scaled + util >= scaleUp → scales up
@@ -375,76 +305,135 @@ func TestElasticHysteresis(t *testing.T) {
 	}
 }
 
-// TestElasticCountPartition verifies the count-based baseline/reserve split inside buildCandidates.
-// It uses a real state.Store snapshot so we can control utilisation without a DB.
-func TestElasticCountPartition(t *testing.T) {
-	// buildCandidates calls s.Q.ListNodesByOwner and s.Q.ListNodes, which need a real DB.
-	// We test the pure pickElastic function with count-partitioned slices to cover the
-	// count-based contract without a DB dependency.
+// TestReserveKeys_MatchesBuildCandidatesPartition asserts that ReserveKeys and
+// buildCandidates produce the SAME baseline / reserve partition for the same owner
+// and time. This guards against partition divergence (e.g. one function applying
+// slot-window or other filters that the other misses), which is the confirmed root
+// cause of non-affinity requests reaching reserve accounts without scale-up.
+//
+// Scenario: 3 accounts assigned to a shared node. One account has an INACTIVE
+// slot window. ElasticBaselineCount=1. buildCandidates must see 2 eligible accounts
+// (the slot-inactive one is excluded) and put the second one as reserve.
+// ReserveKeys must identify exactly that same second account as reserve.
+func TestReserveKeys_MatchesBuildCandidatesPartition(t *testing.T) {
+	q, closeDB := setupDB(t)
+	defer closeDB()
+	ctx := context.Background()
 
-	// 3 accounts weight-desc: a1(weight=30), a2(weight=20), a3(weight=10)
-	// ElasticBaselineCount=1 → baseline=[a1], reserve=[a2,a3]
-	all := []string{"a1", "a2", "a3"}
+	sfx := suffixDispatch(t)
+	nodeID := "n_rsv_" + sfx
+	if _, err := q.CreateNode(ctx, sqlc.CreateNodeParams{
+		ID: nodeID, Name: "rsv-node-" + sfx, BaseUrl: "http://unused", ApiKey: "k", OwnerID: "",
+	}); err != nil {
+		t.Fatalf("create node: %v", err)
+	}
 
-	// Simulate count partition: n=1
-	n := 1
-	baseline := all[:n]
-	reserve := all[n:]
+	owner := "owner_rsv_" + sfx
+	// Three accounts: A (weight 300), B (weight 200), C (weight 100).
+	// C has an inactive slot window → excluded by buildCandidates.
+	// With ElasticBaselineCount=1: baseline=[A], reserve=[B], C is excluded entirely.
+	for _, acc := range []struct {
+		id     string
+		weight int32
+	}{
+		{"acc_a_rsv_" + sfx, 300},
+		{"acc_b_rsv_" + sfx, 200},
+		{"acc_c_rsv_" + sfx, 100},
+	} {
+		if _, err := q.CreateAccount(ctx, sqlc.CreateAccountParams{ID: acc.id, OwnerID: owner}); err != nil {
+			t.Fatalf("create account %s: %v", acc.id, err)
+		}
+	}
 
-	// Below threshold: only baseline returned.
-	t.Run("count=1 below threshold", func(t *testing.T) {
-		got := pickElastic(baseline, reserve, 0.5, 0.8, 1000)
-		if len(got) != 1 {
-			t.Fatalf("expected 1 account, got %d: %v", len(got), got)
-		}
-		if got[0] != "a1" {
-			t.Errorf("expected a1, got %s", got[0])
-		}
-	})
+	// Create a slot with a window that is currently INACTIVE: startMin=0, endMin=1
+	// (only active 00:00–00:01 UTC). nowMs will be well after midnight.
+	slotID := "slot_rsv_" + sfx
+	if _, err := q.CreateSlot(ctx, sqlc.CreateSlotParams{
+		ID: slotID, Name: "inactive-window-" + sfx, StartMin: 0, EndMin: 1,
+	}); err != nil {
+		t.Fatalf("create slot: %v", err)
+	}
+	if err := q.SetSlotEnabled(ctx, sqlc.SetSlotEnabledParams{ID: slotID, Enabled: true}); err != nil {
+		t.Fatalf("enable slot: %v", err)
+	}
 
-	// At threshold: baseline + reserves added.
-	t.Run("count=1 at threshold", func(t *testing.T) {
-		got := pickElastic(baseline, reserve, 0.8, 0.8, 1000)
-		if len(got) != 3 {
-			t.Fatalf("expected 3 accounts, got %d: %v", len(got), got)
-		}
-		if got[0] != "a1" || got[1] != "a2" || got[2] != "a3" {
-			t.Errorf("unexpected order: %v", got)
-		}
-	})
+	// Assign accounts to node: A and B without slot (always active), C with inactive slot.
+	if _, err := q.AssignAccount(ctx, sqlc.AssignAccountParams{
+		NodeID: nodeID, AccountID: "acc_a_rsv_" + sfx, ProfileID: "profA", Weight: 300, Role: "baseline",
+	}); err != nil {
+		t.Fatalf("assign A: %v", err)
+	}
+	if _, err := q.AssignAccount(ctx, sqlc.AssignAccountParams{
+		NodeID: nodeID, AccountID: "acc_b_rsv_" + sfx, ProfileID: "profB", Weight: 200, Role: "baseline",
+	}); err != nil {
+		t.Fatalf("assign B: %v", err)
+	}
+	if _, err := q.AssignAccount(ctx, sqlc.AssignAccountParams{
+		NodeID: nodeID, AccountID: "acc_c_rsv_" + sfx, ProfileID: "profC", Weight: 100, Role: "baseline",
+		SlotID: slotID, // inactive → excluded from dispatch candidates
+	}); err != nil {
+		t.Fatalf("assign C: %v", err)
+	}
 
-	// Above threshold with maxReserve=1: only 1 reserve added.
-	t.Run("count=1 above threshold maxReserve=1", func(t *testing.T) {
-		got := pickElastic(baseline, reserve, 1.0, 0.8, 1)
-		if len(got) != 2 {
-			t.Fatalf("expected 2 accounts, got %d: %v", len(got), got)
-		}
-		if got[0] != "a1" || got[1] != "a2" {
-			t.Errorf("unexpected order: %v", got)
-		}
-	})
+	keyA := nodeID + ":profA"
+	keyB := nodeID + ":profB"
+	keyC := nodeID + ":profC"
 
-	// ElasticBaselineCount=2 → baseline=[a1,a2], reserve=[a3]
-	n2 := 2
-	baseline2 := all[:n2]
-	reserve2 := all[n2:]
+	// nowMs is 12:00 UTC — well outside the slot window [00:00, 00:01) → C is inactive.
+	noonUTC := int64(12 * 3600 * 1000) // 1970-01-01 12:00 UTC (ms)
+	store := state.NewStore(func() int64 { return noonUTC }, func(min, max int64) int64 { return min })
+	svc := &Service{Q: q, Store: store, Base: policy.Defaults(), Now: func() int64 { return noonUTC }, scaledUp: make(map[string]bool)}
 
-	t.Run("count=2 below threshold", func(t *testing.T) {
-		got := pickElastic(baseline2, reserve2, 0.3, 0.8, 1000)
-		if len(got) != 2 {
-			t.Fatalf("expected 2 accounts, got %d: %v", len(got), got)
-		}
-	})
+	cfg := policy.Defaults()
+	cfg.ElasticEnabled = true
+	cfg.ElasticBaselineCount = 1
+	cfg.ElasticScaleUpUtil = 0.8
+	cfg.ElasticScaleDownUtil = 0.3
 
-	t.Run("count=2 at threshold", func(t *testing.T) {
-		got := pickElastic(baseline2, reserve2, 0.8, 0.8, 1000)
-		if len(got) != 3 {
-			t.Fatalf("expected 3 accounts, got %d: %v", len(got), got)
-		}
-		if got[2] != "a3" {
-			t.Errorf("expected a3 as reserve, got %s", got[2])
-		}
-	})
+	// buildCandidates should see A and B (C filtered by slot), baseline=[A], reserve=[B].
+	order, _, _, _, _ := svc.buildCandidates(ctx, owner, "claude-3", cfg, false)
+
+	dispatchBaseline := make(map[string]bool)
+	for _, k := range order {
+		dispatchBaseline[k] = true
+	}
+
+	// Verify dispatch: A in baseline, B in order (either baseline or reserve), C excluded.
+	if !dispatchBaseline[keyA] {
+		t.Errorf("buildCandidates: expected keyA=%s in baseline order, got %v", keyA, order)
+	}
+	if dispatchBaseline[keyC] {
+		t.Errorf("buildCandidates: keyC=%s (inactive slot) must NOT appear in dispatch order, got %v", keyC, order)
+	}
+
+	// ReserveKeys must produce a reserve set that matches: keyB=reserve, keyA=not-reserve, keyC=not-reserve.
+	reserveKeys := svc.ReserveKeys(ctx, owner, cfg)
+
+	if reserveKeys[keyC] {
+		t.Errorf("ReserveKeys: keyC=%s (inactive slot) must NOT appear in reserve set — partition divergence from buildCandidates", keyC)
+	}
+	if !reserveKeys[keyB] {
+		t.Errorf("ReserveKeys: keyB=%s must be reserve (beyond baseline after slot filter), got reserve=%v", keyB, reserveKeys)
+	}
+	if reserveKeys[keyA] {
+		t.Errorf("ReserveKeys: keyA=%s must be in baseline (not reserve), got reserve=%v", keyA, reserveKeys)
+	}
+
+	// Cross-check: the union of (dispatch order) and (reserve keys) must equal A+B;
+	// C must appear in neither (slot-inactive, excluded from both).
+	allInDispatch := make(map[string]bool)
+	for _, k := range order {
+		allInDispatch[k] = true
+	}
+	for k := range reserveKeys {
+		allInDispatch[k] = true
+	}
+	if allInDispatch[keyC] {
+		t.Errorf("keyC=%s appears in dispatch+reserve union but has inactive slot — partition mismatch", keyC)
+	}
+	if !allInDispatch[keyA] || !allInDispatch[keyB] {
+		t.Errorf("expected A+B in combined dispatch+reserve set, got %v", allInDispatch)
+	}
 }
 
 // TestBuildCandidates_OwnerIsolation verifies that buildCandidates filters by account owner:
@@ -508,7 +497,7 @@ func TestBuildCandidates_OwnerIsolation(t *testing.T) {
 
 	// ownerID=ownerA → only accA candidate.
 	t.Run("owner A sees only A", func(t *testing.T) {
-		order, _ := svc.buildCandidates(ctx, ownerA, "claude-3", cfg)
+		order, _, _, _, _ := svc.buildCandidates(ctx, ownerA, "claude-3", cfg, false)
 		found := map[string]bool{}
 		for _, k := range order {
 			found[k] = true
@@ -523,7 +512,7 @@ func TestBuildCandidates_OwnerIsolation(t *testing.T) {
 
 	// ownerID=ownerB → only accB candidate.
 	t.Run("owner B sees only B", func(t *testing.T) {
-		order, _ := svc.buildCandidates(ctx, ownerB, "claude-3", cfg)
+		order, _, _, _, _ := svc.buildCandidates(ctx, ownerB, "claude-3", cfg, false)
 		found := map[string]bool{}
 		for _, k := range order {
 			found[k] = true
@@ -538,7 +527,7 @@ func TestBuildCandidates_OwnerIsolation(t *testing.T) {
 
 	// ownerID="" (admin) → both accounts visible.
 	t.Run("admin (empty ownerID) sees all", func(t *testing.T) {
-		order, _ := svc.buildCandidates(ctx, "", "claude-3", cfg)
+		order, _, _, _, _ := svc.buildCandidates(ctx, "", "claude-3", cfg, false)
 		found := map[string]bool{}
 		for _, k := range order {
 			found[k] = true
@@ -550,4 +539,117 @@ func TestBuildCandidates_OwnerIsolation(t *testing.T) {
 			t.Errorf("expected %s in admin candidates, got %v", keyB, order)
 		}
 	})
+}
+
+// TestReserveKeys_ExcludesPermanentFromBaseline verifies that a permanently-banned
+// account is excluded from the elastic baseline/reserve partition in BOTH
+// ReserveKeys and buildCandidates. Before the fix, the most-senior (permanent)
+// account would occupy the only baseline slot, pushing all healthy accounts into
+// reserve — capping non-affinity throughput.
+//
+// Setup: 3 accounts A (most senior, permanent), B (second senior, healthy),
+// C (newest, healthy). ElasticBaselineCount=1.
+//
+// Expected after fix:
+//   - A is excluded entirely (not in dispatch order, not in reserve map)
+//   - B is the baseline (healthy and most-senior after excluding A) → NOT in reserve
+//   - C is reserve → in reserve map
+//
+// Before fix: A would occupy baseline, B+C would both be reserve.
+func TestReserveKeys_ExcludesPermanentFromBaseline(t *testing.T) {
+	q, closeDB := setupDB(t)
+	defer closeDB()
+	ctx := context.Background()
+
+	sfx := suffixDispatch(t)
+	nodeID := "n_perm_" + sfx
+	if _, err := q.CreateNode(ctx, sqlc.CreateNodeParams{
+		ID: nodeID, Name: "perm-node-" + sfx, BaseUrl: "http://unused", ApiKey: "k", OwnerID: "",
+	}); err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+
+	owner := "owner_perm_" + sfx
+	// Three accounts: all equal weight so seniority (createdAt) determines baseline order.
+	for _, acc := range []string{"acc_a_perm_" + sfx, "acc_b_perm_" + sfx, "acc_c_perm_" + sfx} {
+		if _, err := q.CreateAccount(ctx, sqlc.CreateAccountParams{ID: acc, OwnerID: owner}); err != nil {
+			t.Fatalf("create account %s: %v", acc, err)
+		}
+	}
+
+	if _, err := q.AssignAccount(ctx, sqlc.AssignAccountParams{
+		NodeID: nodeID, AccountID: "acc_a_perm_" + sfx, ProfileID: "profA", Weight: 100, Role: "baseline",
+	}); err != nil {
+		t.Fatalf("assign A: %v", err)
+	}
+	if _, err := q.AssignAccount(ctx, sqlc.AssignAccountParams{
+		NodeID: nodeID, AccountID: "acc_b_perm_" + sfx, ProfileID: "profB", Weight: 100, Role: "baseline",
+	}); err != nil {
+		t.Fatalf("assign B: %v", err)
+	}
+	if _, err := q.AssignAccount(ctx, sqlc.AssignAccountParams{
+		NodeID: nodeID, AccountID: "acc_c_perm_" + sfx, ProfileID: "profC", Weight: 100, Role: "baseline",
+	}); err != nil {
+		t.Fatalf("assign C: %v", err)
+	}
+
+	keyA := nodeID + ":profA"
+	keyB := nodeID + ":profB"
+	keyC := nodeID + ":profC"
+
+	nowMs := int64(12 * 3600 * 1000) // noon UTC
+	store := state.NewStore(func() int64 { return nowMs }, func(min, max int64) int64 { return min })
+	svc := &Service{Q: q, Store: store, Base: policy.Defaults(), Now: func() int64 { return nowMs }, scaledUp: make(map[string]bool)}
+
+	// Ensure all three keys are tracked in the store so Snapshot sees them.
+	store.Ensure(keyA, 10)
+	store.Ensure(keyB, 10)
+	store.Ensure(keyC, 10)
+
+	// Drive A to permanent-ban status by hitting PermStreak signals.
+	// Use PermStreak=1 so a single signal is enough.
+	breakerCfg := state.BreakerCfg{PersistStreak: 1, PermStreak: 1, BaseMs: 1000, MaxMs: 99999, Mult: 2}
+	store.OnBanSignal(keyA, breakerCfg)
+
+	// Sanity: confirm A is now permanent in the store.
+	if !store.IsPermanent(keyA) {
+		t.Fatal("precondition: keyA must be permanent after ban signal with PermStreak=1")
+	}
+
+	cfg := policy.Defaults()
+	cfg.ElasticEnabled = true
+	cfg.ElasticBaselineCount = 1
+	cfg.ElasticScaleUpUtil = 0.8
+	cfg.ElasticScaleDownUtil = 0.3
+
+	// --- ReserveKeys assertion ---
+	reserveKeys := svc.ReserveKeys(ctx, owner, cfg)
+
+	// A is permanent → excluded entirely; must not appear in reserve.
+	if reserveKeys[keyA] {
+		t.Errorf("ReserveKeys: permanent keyA=%s must NOT appear in reserve set (should be excluded entirely), got reserve=%v", keyA, reserveKeys)
+	}
+	// B is the next-senior healthy account → should be baseline (not reserve).
+	if reserveKeys[keyB] {
+		t.Errorf("ReserveKeys: healthy keyB=%s should be baseline (not reserve), got reserve=%v — permanent A is wrongly occupying the baseline slot", keyB, reserveKeys)
+	}
+	// C is the newest → should be reserve.
+	if !reserveKeys[keyC] {
+		t.Errorf("ReserveKeys: healthy keyC=%s should be reserve (beyond baseline), got reserve=%v", keyC, reserveKeys)
+	}
+
+	// --- buildCandidates assertion ---
+	// With elastic on and baseline=1, the dispatch order should contain B (baseline);
+	// A must not appear (permanent, excluded), C may appear as reserve expansion.
+	order, _, _, _, _ := svc.buildCandidates(ctx, owner, "claude-3", cfg, false)
+	dispatchKeys := make(map[string]bool, len(order))
+	for _, k := range order {
+		dispatchKeys[k] = true
+	}
+	if dispatchKeys[keyA] {
+		t.Errorf("buildCandidates: permanent keyA=%s must NOT appear in dispatch order, got %v", keyA, order)
+	}
+	if !dispatchKeys[keyB] {
+		t.Errorf("buildCandidates: healthy keyB=%s must appear in dispatch order (baseline), got %v", keyB, order)
+	}
 }

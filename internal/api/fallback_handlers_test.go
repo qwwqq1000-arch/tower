@@ -8,13 +8,81 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/qwwqq1000-arch/tower/internal/auth"
 	"github.com/qwwqq1000-arch/tower/internal/db"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 )
 
-func authIssueViewer(secret string) string {
-	return auth.IssueSession(secret, "u", "viewer", nowUnix(), 3600)
+// TestAdminCreateFallbackLimit verifies that POST /api/admin/fallback-channels
+// enforces the per-tenant FallbackLimit when the created channel is owner-scoped.
+// A superadmin creating a second channel for an owner that has already reached its
+// limit must receive 403 — the same gate meCreateFallbackHandler applies.
+func TestAdminCreateFallbackLimit(t *testing.T) {
+	url := os.Getenv("TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	if err := db.Migrate(ctx, url); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	pool, err := db.Connect(ctx, url)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	q := sqlc.New(pool)
+	const secret = "test-secret-padding-to-32-chars!"
+	router := NewRouter(pool, secret, nil, q, false, nil, "")
+
+	// Create a tenant with fallback_limit=1.
+	owner := randHex("owFL_")
+	if _, err := q.CreateTenant(ctx, sqlc.CreateTenantParams{
+		ID: owner, Username: owner, PwHash: "h", Salt: "s",
+		Role: "tenant", IngestKey: randHex("ik_"),
+	}); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	if err := q.SetTenantFallbackLimit(ctx, sqlc.SetTenantFallbackLimitParams{
+		ID: owner, FallbackLimit: 1,
+	}); err != nil {
+		t.Fatalf("set fallback limit: %v", err)
+	}
+	t.Cleanup(func() {
+		cctx := context.Background()
+		if rows, err := q.ListFallbackChannelsByOwner(cctx, owner); err == nil {
+			for _, c := range rows {
+				_ = q.DeleteFallbackChannel(cctx, c.ID)
+			}
+		}
+		_ = q.DeleteTenant(cctx, owner)
+	})
+
+	// Use a superadmin cookie so the admin route is accessible.
+	ck := adminCookie(t, ctx, q, secret)
+	doPost := func(body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "/api/admin/fallback-channels", strings.NewReader(body))
+		r.AddCookie(ck)
+		r.Header.Set("X-Requested-With", "tower")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, r)
+		return rec
+	}
+
+	// First channel for this owner — must succeed.
+	body1 := `{"name":"ch1","baseUrl":"http://a","ownerId":"` + owner + `"}`
+	if rec := doPost(body1); rec.Code != 200 {
+		t.Fatalf("create #1 = %d want 200; body=%s", rec.Code, rec.Body)
+	}
+
+	// Second channel for the same owner — must be rejected (limit=1).
+	body2 := `{"name":"ch2","baseUrl":"http://b","ownerId":"` + owner + `"}`
+	rec := doPost(body2)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("create #2 = %d want 403; body=%s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "fallback channel limit reached") {
+		t.Fatalf("create #2 body=%s want limit error", rec.Body)
+	}
 }
 
 func TestFallbackChannelCRUD(t *testing.T) {
@@ -33,8 +101,8 @@ func TestFallbackChannelCRUD(t *testing.T) {
 	defer pool.Close()
 	q := sqlc.New(pool)
 	const secret = "test-secret-padding-to-32-chars!"
-	router := NewRouter(pool, secret, nil, q)
-	ck := adminCookie(t, secret)
+	router := NewRouter(pool, secret, nil, q, false, nil, "")
+	ck := adminCookie(t, ctx, q, secret)
 	do := func(m, p, b string) *httptest.ResponseRecorder {
 		var r *http.Request
 		if b != "" {
@@ -78,10 +146,10 @@ func TestFallbackChannelCRUD(t *testing.T) {
 	if len(rows2) != 0 {
 		t.Fatalf("after delete rows=%d", len(rows2))
 	}
-	// 403 for viewer
-	tok := authIssueViewer(secret)
+	// 403 for viewer (seeded real user so the epoch check passes and the role
+	// gate is what rejects it).
 	r5 := httptest.NewRequest("GET", "/api/admin/fallback-channels", nil)
-	r5.AddCookie(&http.Cookie{Name: "tower_session", Value: tok})
+	r5.AddCookie(seedSessionCookie(t, ctx, q, secret, "u", "viewer"))
 	rec5 := httptest.NewRecorder()
 	router.ServeHTTP(rec5, r5)
 	if rec5.Code != 403 {

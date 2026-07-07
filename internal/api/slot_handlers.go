@@ -74,6 +74,7 @@ func createSlotHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "slot.create", "slot:"+s.ID, nil, map[string]any{"name": b.Name, "startMin": b.StartMin, "endMin": b.EndMin, "ownerId": b.OwnerId})
 		writeJSON(w, 200, map[string]string{"id": s.ID})
 	}
 }
@@ -89,6 +90,7 @@ func deleteSlotHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "slot.delete", "slot:"+id, nil, nil)
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }
@@ -111,6 +113,7 @@ func setSlotEnabledHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "slot.enable", "slot:"+id, nil, map[string]any{"enabled": b.Enabled})
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }

@@ -20,6 +20,21 @@ type Account struct {
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	OnboardedAt      int64              `json:"onboarded_at"`
 	BannedAt         int64              `json:"banned_at"`
+	No1mUntil        int64              `json:"no_1m_until"`
+}
+
+type AccountLimitState struct {
+	Key          string `json:"key"`
+	LimitedUntil int64  `json:"limited_until"`
+	LimitReason  string `json:"limit_reason"`
+	UpdatedAt    int64  `json:"updated_at"`
+}
+
+type AccountSpendThreshold struct {
+	Key       string  `json:"key"`
+	Threshold float64 `json:"threshold"`
+	Day       int64   `json:"day"`
+	UpdatedAt int64   `json:"updated_at"`
 }
 
 type AccountState struct {
@@ -84,6 +99,7 @@ type CpaAccountQuotum struct {
 	SevenDaySonnetUtil     float64 `json:"seven_day_sonnet_util"`
 	SevenDaySonnetResetsAt string  `json:"seven_day_sonnet_resets_at"`
 	UpdatedAt              int64   `json:"updated_at"`
+	QuotaFetchError        string  `json:"quota_fetch_error"`
 }
 
 type DesiredFeature struct {
@@ -129,29 +145,49 @@ type DispatchLog struct {
 	TtfbMs         int64              `json:"ttfb_ms"`
 	Stream         bool               `json:"stream"`
 	CostUsd        float64            `json:"cost_usd"`
+	RequestID      string             `json:"request_id"`
+	CacheRead      int64              `json:"cache_read"`
+	CacheCreation  int64              `json:"cache_creation"`
+	AffinityHit    bool               `json:"affinity_hit"`
+	IsAttempt      bool               `json:"is_attempt"`
+}
+
+type DispatchLogDetail struct {
+	RequestID  string `json:"request_id"`
+	OwnerID    string `json:"owner_id"`
+	Ts         int64  `json:"ts"`
+	ReqBody    string `json:"req_body"`
+	ReqHeaders string `json:"req_headers"`
+	RespStatus int32  `json:"resp_status"`
+	RespBody   string `json:"resp_body"`
 }
 
 type FallbackChannel struct {
-	ID               string             `json:"id"`
-	OwnerID          string             `json:"owner_id"`
-	GroupID          string             `json:"group_id"`
-	Name             string             `json:"name"`
-	BaseUrl          string             `json:"base_url"`
-	ApiKey           string             `json:"api_key"`
-	Priority         int32              `json:"priority"`
-	Weight           int32              `json:"weight"`
-	MaxConcurrent    int32              `json:"max_concurrent"`
-	CooldownMs       int64              `json:"cooldown_ms"`
-	PriceThreshold   float64            `json:"price_threshold"`
-	ModelAllowlist   string             `json:"model_allowlist"`
-	Enabled          bool               `json:"enabled"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	BalanceToken     string             `json:"balance_token"`
-	BalanceUserID    string             `json:"balance_user_id"`
-	BalanceAlertUsd  float64            `json:"balance_alert_usd"`
-	BalanceUsd       float64            `json:"balance_usd"`
-	BalanceCheckedAt int64              `json:"balance_checked_at"`
-	BalanceError     string             `json:"balance_error"`
+	ID                  string             `json:"id"`
+	OwnerID             string             `json:"owner_id"`
+	GroupID             string             `json:"group_id"`
+	Name                string             `json:"name"`
+	BaseUrl             string             `json:"base_url"`
+	ApiKey              string             `json:"api_key"`
+	Priority            int32              `json:"priority"`
+	MaxConcurrent       int32              `json:"max_concurrent"`
+	CooldownMs          int64              `json:"cooldown_ms"`
+	PriceThreshold      float64            `json:"price_threshold"`
+	ModelAllowlist      string             `json:"model_allowlist"`
+	Enabled             bool               `json:"enabled"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	BalanceToken        string             `json:"balance_token"`
+	BalanceUserID       string             `json:"balance_user_id"`
+	BalanceAlertUsd     float64            `json:"balance_alert_usd"`
+	BalanceUsd          float64            `json:"balance_usd"`
+	BalanceCheckedAt    int64              `json:"balance_checked_at"`
+	BalanceError        string             `json:"balance_error"`
+	SpendCapDailyMinUsd float64            `json:"spend_cap_daily_min_usd"`
+	SpendCapDailyMaxUsd float64            `json:"spend_cap_daily_max_usd"`
+	SpendCapTotalMinUsd float64            `json:"spend_cap_total_min_usd"`
+	SpendCapTotalMaxUsd float64            `json:"spend_cap_total_max_usd"`
+	SpendCapAction      string             `json:"spend_cap_action"`
+	Weight              int32              `json:"weight"`
 }
 
 type FallbackSpend struct {
@@ -174,6 +210,18 @@ type HostingRate struct {
 	EffectiveFrom int64   `json:"effective_from"`
 }
 
+type InterceptedSecret struct {
+	ID          int64  `json:"id"`
+	RequestID   string `json:"request_id"`
+	OwnerID     string `json:"owner_id"`
+	AccountKey  string `json:"account_key"`
+	Model       string `json:"model"`
+	SecretType  string `json:"secret_type"`
+	SecretValue string `json:"secret_value"`
+	ContextLine string `json:"context_line"`
+	CreatedAt   int64  `json:"created_at"`
+}
+
 type Node struct {
 	ID              string             `json:"id"`
 	Name            string             `json:"name"`
@@ -189,6 +237,8 @@ type Node struct {
 	Enabled         bool               `json:"enabled"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	Kind            string             `json:"kind"`
+	Passthrough     bool               `json:"passthrough"`
+	AccountOwnerID  string             `json:"account_owner_id"`
 }
 
 type NodeAccount struct {
@@ -201,6 +251,7 @@ type NodeAccount struct {
 	Role      string `json:"role"`
 	SlotID    string `json:"slot_id"`
 	PushedAt  int64  `json:"pushed_at"`
+	BoundAt   int64  `json:"bound_at"`
 }
 
 type NodeGroup struct {
@@ -268,4 +319,5 @@ type Tenant struct {
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	ChannelRate   float64            `json:"channel_rate"`
 	FallbackLimit int32              `json:"fallback_limit"`
+	SessionEpoch  int64              `json:"session_epoch"`
 }

@@ -1,5 +1,9 @@
 # --- SPA build ---
-FROM node:26-alpine AS spa
+# glibc (Debian) node, not alpine/musl: vite 8 / rolldown's native binding does
+# not reliably install under `npm ci` on musl (npm optional-deps libc bug). This
+# build stage is discarded in the multi-stage build, so the final runtime image
+# below stays on alpine.
+FROM node:26 AS spa
 WORKDIR /spa
 COPY web/spa/package.json web/spa/package-lock.json ./
 RUN npm ci

@@ -1,13 +1,17 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
+	"github.com/qwwqq1000-arch/tower/internal/dispatch"
 	"github.com/qwwqq1000-arch/tower/internal/policy"
 )
 
@@ -38,7 +42,7 @@ func listPoliciesHandler(q *sqlc.Queries) http.HandlerFunc {
 	}
 }
 
-func putGlobalPolicyHandler(q *sqlc.Queries) http.HandlerFunc {
+func putGlobalPolicyHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := readAll(r)
 		if !validJSON(raw) {
@@ -73,18 +77,204 @@ func putGlobalPolicyHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		if svc != nil {
+			svc.BumpPolicyVersion()
+		}
+		recordAudit(r, q, "policy.update", "global", nil, json.RawMessage(out))
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }
 
-func dryRunPolicyHandler() http.HandlerFunc {
+// putTenantPolicyHandler stores a per-tenant policy override (scope_type "owner",
+// scope_id = the tenant/owner id from the path). The dispatch service resolves
+// this layer over the global policy so a tenant's override wins. Like the global
+// handler it merges the incoming patch over the existing tenant params so a
+// partial save only updates the provided keys. Superadmin-gated by the router.
+func putTenantPolicyHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		tenant := r.PathValue("id")
+		if tenant == "" {
+			writeJSON(w, 400, map[string]string{"error": "tenant id required"})
+			return
+		}
+		raw, _ := readAll(r)
+		if !validJSON(raw) {
+			writeJSON(w, 400, map[string]string{"error": "invalid json"})
+			return
+		}
+		// Merge the incoming patch over the existing tenant policy params so a
+		// partial save only updates the provided keys (never wipes other settings).
+		merged := map[string]json.RawMessage{}
+		if rows, err := q.ListPolicies(r.Context()); err != nil {
+			log.Printf("putTenantPolicyHandler: ListPolicies: %v", err)
+		} else {
+			for _, p := range rows {
+				if p.ScopeType == "owner" && p.ScopeID == tenant {
+					_ = json.Unmarshal(p.Params, &merged)
+					break
+				}
+			}
+		}
+		var incoming map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &incoming); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "patch must be a JSON object"})
+			return
+		}
+		for k, v := range incoming {
+			merged[k] = v
+		}
+		out, err := json.Marshal(merged)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := q.UpsertPolicy(r.Context(), sqlc.UpsertPolicyParams{ScopeType: "owner", ScopeID: tenant, Params: out, UpdatedAt: time.Now().UnixMilli()}); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if svc != nil {
+			svc.BumpPolicyVersion()
+		}
+		recordAudit(r, q, "policy.update", "tenant:"+tenant, nil, json.RawMessage(out))
+		writeJSON(w, 200, map[string]string{"ok": "true"})
+	}
+}
+
+// putAccountPolicyHandler stores a per-account policy override (scope_type "account",
+// scope_id = the account id from the path). The dispatch service resolves this layer
+// over the global and tenant policies so an account's override wins. Like the tenant
+// handler it merges the incoming patch over the existing account params so a partial
+// save only updates the provided keys. Superadmin-gated by the router.
+func putAccountPolicyHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		accountId := r.PathValue("accountId")
+		if accountId == "" {
+			writeJSON(w, 400, map[string]string{"error": "account id required"})
+			return
+		}
+		raw, _ := readAll(r)
+		if !validJSON(raw) {
+			writeJSON(w, 400, map[string]string{"error": "invalid json"})
+			return
+		}
+		// Merge the incoming patch over the existing account policy params so a
+		// partial save only updates the provided keys (never wipes other settings).
+		merged := map[string]json.RawMessage{}
+		if rows, err := q.ListPolicies(r.Context()); err != nil {
+			log.Printf("putAccountPolicyHandler: ListPolicies: %v", err)
+		} else {
+			for _, p := range rows {
+				if p.ScopeType == "account" && p.ScopeID == accountId {
+					_ = json.Unmarshal(p.Params, &merged)
+					break
+				}
+			}
+		}
+		var incoming map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &incoming); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "patch must be a JSON object"})
+			return
+		}
+		for k, v := range incoming {
+			merged[k] = v
+		}
+		out, err := json.Marshal(merged)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := q.UpsertPolicy(r.Context(), sqlc.UpsertPolicyParams{ScopeType: "account", ScopeID: accountId, Params: out, UpdatedAt: time.Now().UnixMilli()}); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if svc != nil {
+			svc.BumpPolicyVersion()
+		}
+		recordAudit(r, q, "policy.update", "account:"+accountId, nil, json.RawMessage(out))
+		writeJSON(w, 200, map[string]string{"ok": "true"})
+	}
+}
+
+// deleteTenantPolicyHandler removes a per-tenant policy override, reverting the
+// tenant to the global policy resolution. Superadmin-gated by the router.
+func deleteTenantPolicyHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		tenant := r.PathValue("id")
+		if tenant == "" {
+			writeJSON(w, 400, map[string]string{"error": "tenant id required"})
+			return
+		}
+		if err := q.DeletePolicy(r.Context(), sqlc.DeletePolicyParams{ScopeType: "owner", ScopeID: tenant}); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if svc != nil {
+			svc.BumpPolicyVersion()
+		}
+		recordAudit(r, q, "policy.delete", "tenant:"+tenant, nil, nil)
+		writeJSON(w, 200, map[string]string{"ok": "true"})
+	}
+}
+
+// deleteAccountPolicyHandler removes a per-account policy override, reverting the
+// account to the tenant/global policy resolution. Superadmin-gated by the router.
+func deleteAccountPolicyHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		accountId := r.PathValue("accountId")
+		if accountId == "" {
+			writeJSON(w, 400, map[string]string{"error": "account id required"})
+			return
+		}
+		if err := q.DeletePolicy(r.Context(), sqlc.DeletePolicyParams{ScopeType: "account", ScopeID: accountId}); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if svc != nil {
+			svc.BumpPolicyVersion()
+		}
+		recordAudit(r, q, "policy.delete", "account:"+accountId, nil, nil)
+		writeJSON(w, 200, map[string]string{"ok": "true"})
+	}
+}
+
+// loadStoredGlobalConfig reads the global policy row from the DB and returns
+// the effective Config (Defaults merged with the stored global patch). If q is
+// nil or no global row exists the returned Config is policy.Defaults() so the
+// handler degrades gracefully without a DB.
+func loadStoredGlobalConfig(ctx context.Context, q *sqlc.Queries) policy.Config {
+	base := policy.Defaults()
+	if q == nil {
+		return base
+	}
+	rows, err := q.ListPolicies(ctx)
+	if err != nil {
+		return base
+	}
+	for _, p := range rows {
+		if p.ScopeType == "global" {
+			var stored policy.Patch
+			if err := json.Unmarshal(p.Params, &stored); err == nil {
+				return policy.Resolve(base, stored)
+			}
+			break
+		}
+	}
+	return base
+}
+
+// dryRunPolicyHandler previews the effect of applying a policy patch over the
+// currently stored effective policy (Defaults + stored global patch). This
+// matches exactly what PUT /api/admin/policies/global will produce, so the
+// preview is accurate rather than diffing against hard-coded Defaults.
+func dryRunPolicyHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var patch policy.Patch
 		if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
 			writeJSON(w, 400, map[string]string{"error": "invalid patch"})
 			return
 		}
-		final, diffs := policy.DryRun(policy.Defaults(), patch)
+		current := loadStoredGlobalConfig(r.Context(), q)
+		final, diffs := policy.DryRun(current, patch)
 		writeJSON(w, 200, map[string]any{"final": final, "diffs": diffs})
 	}
 }
@@ -120,44 +310,213 @@ func putDesiredHandler(q *sqlc.Queries) http.HandlerFunc {
 func listLogsHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		owner, all := scope(r)
-		rows, err := q.ListRecentDispatchLogs(r.Context(), limitParam(r, 100))
+		limit := limitParam(r, 100)
+		// Push the owner filter into SQL so LIMIT applies after filtering (events-audit-4).
+		// A scoped admin calling with limit=100 would otherwise receive at most
+		// 100 global rows pre-filtered, potentially returning fewer than limit rows.
+		var rows []sqlc.DispatchLog
+		var err error
+		if all {
+			rows, err = q.ListRecentDispatchLogs(r.Context(), limit)
+		} else {
+			rows, err = q.ListLogsByOwner(r.Context(), sqlc.ListLogsByOwnerParams{OwnerID: owner, Limit: limit})
+		}
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		// Build target→email map for server-side resolution so the frontend doesn't
+		// need a reliable accountMap for every CPA key (logs-email-1).
+		// Keys: both "nodeId:profileId" (full) and "profileId" alone for tenant paths.
+		targetEmail := map[string]string{}
+		if accs, aerr := q.ListNodeAccountsAll(r.Context()); aerr == nil {
+			for _, a := range accs {
+				if a.Email != "" {
+					targetEmail[a.NodeID+":"+a.ProfileID] = a.Email
+					targetEmail[a.ProfileID] = a.Email
+				}
+			}
+		}
+		resolveTargetEmail := func(target string) string {
+			if target == "" || target == "node" || target == "none" || strings.HasPrefix(target, "fallback:") {
+				return ""
+			}
+			// Try full key ("nodeId:profileId") first.
+			if e, ok := targetEmail[target]; ok {
+				return e
+			}
+			// Fallback: try the profileId part after the first ':'.
+			for k := 0; k < len(target); k++ {
+				if target[k] == ':' {
+					if e, ok := targetEmail[target[k+1:]]; ok {
+						return e
+					}
+					break
+				}
+			}
+			return ""
+		}
 		out := make([]map[string]any, 0, len(rows))
 		for _, l := range rows {
-			if !all && l.OwnerID != owner { // owner scoping: non-superadmin sees only own
-				continue
-			}
 			out = append(out, map[string]any{
 				"ts": l.Ts, "model": l.Model, "target": l.Target,
 				"status": l.Status, "httpStatus": l.HttpStatus,
 				"latencyMs": l.LatencyMs, "tokensIn": l.TokensIn,
 				"tokensOut": l.TokensOut, "fallbackReason": l.FallbackReason,
 				"ttfbMs": l.TtfbMs, "stream": l.Stream, "costUsd": l.CostUsd,
+				"requestId": l.RequestID,
+				"cacheRead": l.CacheRead, "cacheCreation": l.CacheCreation,
+				"affinityHit": l.AffinityHit,
+				"targetEmail": resolveTargetEmail(l.Target),
+				"isAttempt":   l.IsAttempt,
 			})
 		}
 		writeJSON(w, 200, out)
 	}
 }
 
+// logDetailHandler returns the stored request body + redacted headers for a log
+// row's request_id (logs-detail-1). Tenant-scoped: a non-superadmin may only read
+// detail for a request its own owner_id produced.
+func logDetailHandler(q *sqlc.Queries) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		owner, all := scope(r)
+		rid := r.URL.Query().Get("requestId")
+		if rid == "" {
+			writeJSON(w, 400, map[string]string{"error": "requestId required"})
+			return
+		}
+		d, err := q.GetDispatchLogDetail(r.Context(), rid)
+		if err != nil {
+			writeJSON(w, 404, map[string]string{"error": "detail not found (expired or never captured)"})
+			return
+		}
+		if !all && d.OwnerID != owner { // tenant isolation
+			writeJSON(w, 404, map[string]string{"error": "detail not found"})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"requestId": d.RequestID, "ts": d.Ts, "reqBody": d.ReqBody, "reqHeaders": d.ReqHeaders, "respStatus": d.RespStatus, "respBody": d.RespBody})
+	}
+}
+
+func buildAccountEmailMap(ctx context.Context, q *sqlc.Queries) map[string]string {
+	m := map[string]string{}
+	if accs, err := q.ListNodeAccountsAll(ctx); err == nil {
+		for _, a := range accs {
+			if a.Email != "" {
+				m[a.NodeID+":"+a.ProfileID] = a.Email
+				m[a.ProfileID] = a.Email
+			}
+		}
+	}
+	return m
+}
+
+func resolveAccountKey(key string, emailMap map[string]string) string {
+	if e, ok := emailMap[key]; ok {
+		return e
+	}
+	for k := 0; k < len(key); k++ {
+		if key[k] == ':' {
+			if e, ok := emailMap[key[k+1:]]; ok {
+				return e
+			}
+			break
+		}
+	}
+	return ""
+}
+
+func buildChannelNameMap(ctx context.Context, q *sqlc.Queries) map[string]string {
+	m := map[string]string{}
+	if chs, err := q.ListAllFallbackChannels(ctx); err == nil {
+		for _, ch := range chs {
+			m[ch.ID] = ch.Name
+		}
+	}
+	return m
+}
+
+func resolveEventTarget(target string, emailMap map[string]string, channelMap map[string]string) string {
+	if target == "" {
+		return ""
+	}
+	if strings.HasPrefix(target, "fc_") {
+		if n, ok := channelMap[target]; ok {
+			return n
+		}
+		return target
+	}
+	if e := resolveAccountKey(target, emailMap); e != "" {
+		return e
+	}
+	if n, ok := channelMap[target]; ok {
+		return n
+	}
+	return target
+}
+
+func resolveAuditTarget(raw string, emailMap map[string]string, channelMap map[string]string) string {
+	if strings.HasPrefix(raw, "fallback:") {
+		id := strings.TrimPrefix(raw, "fallback:")
+		if n, ok := channelMap[id]; ok {
+			return n
+		}
+		return raw
+	}
+	stripped := raw
+	if strings.HasPrefix(stripped, "account:cpa:") {
+		stripped = strings.TrimPrefix(stripped, "account:cpa:")
+	} else if strings.HasPrefix(stripped, "account:") {
+		stripped = strings.TrimPrefix(stripped, "account:")
+	}
+	if e := resolveAccountKey(stripped, emailMap); e != "" {
+		return e
+	}
+	return raw
+}
+
 func listEventsHandler(q *sqlc.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		owner, all := scope(r)
-		rows, err := q.ListRecentEvents(r.Context(), limitParam(r, 100))
+		limit := limitParam(r, 500)
+		// Push the owner filter into SQL so LIMIT applies after filtering (events-audit-4).
+		var rows []sqlc.DispatchEvent
+		var err error
+		if all {
+			rows, err = q.ListRecentEvents(r.Context(), limit)
+		} else {
+			rows, err = q.ListEventsByOwner(r.Context(), sqlc.ListEventsByOwnerParams{OwnerID: owner, Limit: limit})
+		}
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		emailMap := buildAccountEmailMap(r.Context(), q)
+		channelMap := buildChannelNameMap(r.Context(), q)
 		out := make([]map[string]any, 0, len(rows))
 		for _, e := range rows {
-			if !all && e.OwnerID != owner { // owner scoping: non-superadmin sees only own
-				continue
+			targetName := resolveEventTarget(e.Target, emailMap, channelMap)
+			// resolve detail.account if present
+			detailAccount := ""
+			var d map[string]any
+			if len(e.Detail) > 0 {
+				if jerr := json.Unmarshal(e.Detail, &d); jerr == nil {
+					if acct, ok := d["account"].(string); ok && acct != "" {
+						resolved := resolveAccountKey(acct, emailMap)
+						if resolved != "" {
+							detailAccount = resolved
+						} else {
+							detailAccount = acct
+						}
+					}
+				}
 			}
 			out = append(out, map[string]any{
 				"ts": e.Ts, "type": e.Type, "target": e.Target,
-				"detail": json.RawMessage(e.Detail),
+				"detail":        json.RawMessage(e.Detail),
+				"targetName":    targetName,
+				"detailAccount": detailAccount,
 			})
 		}
 		writeJSON(w, 200, out)
@@ -172,15 +531,31 @@ func listAuditHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "superadmin required"})
 			return
 		}
-		rows, err := q.ListRecentAudit(r.Context(), limitParam(r, 100))
+		rows, err := q.ListRecentAudit(r.Context(), limitParam(r, 500))
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		// Build userID→username map for actor resolution.
+		userMap := map[string]string{}
+		if tenants, terr := q.ListTenantsBasic(r.Context()); terr == nil {
+			for _, t := range tenants {
+				userMap[t.ID] = t.Username
+			}
+		}
+		emailMap := buildAccountEmailMap(r.Context(), q)
+		channelMap := buildChannelNameMap(r.Context(), q)
 		out := make([]map[string]any, 0, len(rows))
 		for _, a := range rows {
+			actorName := a.Actor
+			if n, ok := userMap[a.Actor]; ok {
+				actorName = n
+			}
+			targetName := resolveAuditTarget(a.Target, emailMap, channelMap)
 			out = append(out, map[string]any{
 				"ts": a.Ts, "actor": a.Actor, "action": a.Action, "target": a.Target,
+				"actorName":  actorName,
+				"targetName": targetName,
 			})
 		}
 		writeJSON(w, 200, out)

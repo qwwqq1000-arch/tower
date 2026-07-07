@@ -10,9 +10,9 @@ import (
 )
 
 const assignAccount = `-- name: AssignAccount :one
-INSERT INTO node_accounts (node_id, account_id, profile_id, egress, weight, role, slot_id)
-VALUES ($1,$2,$3,$4,$5,$6,$7)
-RETURNING node_id, account_id, profile_id, enabled, egress, weight, role, slot_id, pushed_at
+INSERT INTO node_accounts (node_id, account_id, profile_id, egress, weight, role, slot_id, bound_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+RETURNING node_id, account_id, profile_id, enabled, egress, weight, role, slot_id, pushed_at, bound_at
 `
 
 type AssignAccountParams struct {
@@ -23,6 +23,7 @@ type AssignAccountParams struct {
 	Weight    int32  `json:"weight"`
 	Role      string `json:"role"`
 	SlotID    string `json:"slot_id"`
+	BoundAt   int64  `json:"bound_at"`
 }
 
 func (q *Queries) AssignAccount(ctx context.Context, arg AssignAccountParams) (NodeAccount, error) {
@@ -34,6 +35,7 @@ func (q *Queries) AssignAccount(ctx context.Context, arg AssignAccountParams) (N
 		arg.Weight,
 		arg.Role,
 		arg.SlotID,
+		arg.BoundAt,
 	)
 	var i NodeAccount
 	err := row.Scan(
@@ -46,12 +48,42 @@ func (q *Queries) AssignAccount(ctx context.Context, arg AssignAccountParams) (N
 		&i.Role,
 		&i.SlotID,
 		&i.PushedAt,
+		&i.BoundAt,
 	)
 	return i, err
 }
 
+const listBoundAtByTarget = `-- name: ListBoundAtByTarget :many
+SELECT (node_id || ':' || profile_id)::text AS target, bound_at FROM node_accounts WHERE bound_at > 0
+`
+
+type ListBoundAtByTargetRow struct {
+	Target  string `json:"target"`
+	BoundAt int64  `json:"bound_at"`
+}
+
+func (q *Queries) ListBoundAtByTarget(ctx context.Context) ([]ListBoundAtByTargetRow, error) {
+	rows, err := q.db.Query(ctx, listBoundAtByTarget)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListBoundAtByTargetRow
+	for rows.Next() {
+		var i ListBoundAtByTargetRow
+		if err := rows.Scan(&i.Target, &i.BoundAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listNodeAccountsByAccount = `-- name: ListNodeAccountsByAccount :many
-SELECT node_id, account_id, profile_id, enabled, egress, weight, role, slot_id, pushed_at FROM node_accounts WHERE account_id = $1
+SELECT node_id, account_id, profile_id, enabled, egress, weight, role, slot_id, pushed_at, bound_at FROM node_accounts WHERE account_id = $1
 `
 
 func (q *Queries) ListNodeAccountsByAccount(ctx context.Context, accountID string) ([]NodeAccount, error) {
@@ -73,6 +105,7 @@ func (q *Queries) ListNodeAccountsByAccount(ctx context.Context, accountID strin
 			&i.Role,
 			&i.SlotID,
 			&i.PushedAt,
+			&i.BoundAt,
 		); err != nil {
 			return nil, err
 		}
@@ -85,7 +118,7 @@ func (q *Queries) ListNodeAccountsByAccount(ctx context.Context, accountID strin
 }
 
 const listNodeAccountsByNode = `-- name: ListNodeAccountsByNode :many
-SELECT node_id, account_id, profile_id, enabled, egress, weight, role, slot_id, pushed_at FROM node_accounts WHERE node_id = $1
+SELECT node_id, account_id, profile_id, enabled, egress, weight, role, slot_id, pushed_at, bound_at FROM node_accounts WHERE node_id = $1
 `
 
 func (q *Queries) ListNodeAccountsByNode(ctx context.Context, nodeID string) ([]NodeAccount, error) {
@@ -107,6 +140,7 @@ func (q *Queries) ListNodeAccountsByNode(ctx context.Context, nodeID string) ([]
 			&i.Role,
 			&i.SlotID,
 			&i.PushedAt,
+			&i.BoundAt,
 		); err != nil {
 			return nil, err
 		}
@@ -190,11 +224,10 @@ func (q *Queries) UpdateNodeAccount(ctx context.Context, arg UpdateNodeAccountPa
 }
 
 const upsertCpaNodeAccount = `-- name: UpsertCpaNodeAccount :exec
-INSERT INTO node_accounts (node_id, account_id, profile_id, enabled, weight, role)
-VALUES ($1,$2,$3,$4,100,'baseline')
+INSERT INTO node_accounts (node_id, account_id, profile_id, enabled, weight, role, bound_at)
+VALUES ($1,$2,$3,$4,100,'baseline',$5)
 ON CONFLICT (node_id, account_id) DO UPDATE SET
-  profile_id = EXCLUDED.profile_id,
-  enabled = EXCLUDED.enabled
+  profile_id = EXCLUDED.profile_id
 `
 
 type UpsertCpaNodeAccountParams struct {
@@ -202,14 +235,18 @@ type UpsertCpaNodeAccountParams struct {
 	AccountID string `json:"account_id"`
 	ProfileID string `json:"profile_id"`
 	Enabled   bool   `json:"enabled"`
+	BoundAt   int64  `json:"bound_at"`
 }
 
+// On conflict, only update profile_id — never touch enabled so that an admin's
+// manual disable is preserved across discovery cycles (cpa-2).
 func (q *Queries) UpsertCpaNodeAccount(ctx context.Context, arg UpsertCpaNodeAccountParams) error {
 	_, err := q.db.Exec(ctx, upsertCpaNodeAccount,
 		arg.NodeID,
 		arg.AccountID,
 		arg.ProfileID,
 		arg.Enabled,
+		arg.BoundAt,
 	)
 	return err
 }

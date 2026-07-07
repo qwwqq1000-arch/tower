@@ -1,6 +1,6 @@
 -- name: CreateNode :one
-INSERT INTO nodes (id, name, base_url, api_key, mgmt_key, owner_id, group_id, region, short_id, version, fingerprint_seed, kind)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+INSERT INTO nodes (id, name, base_url, api_key, mgmt_key, owner_id, group_id, region, short_id, version, fingerprint_seed, kind, passthrough, account_owner_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 RETURNING *;
 
 -- name: GetNode :one
@@ -17,3 +17,9 @@ UPDATE nodes SET enabled = $2 WHERE id = $1;
 
 -- name: DeleteNode :exec
 DELETE FROM nodes WHERE id = $1;
+
+-- name: SetNodeAccountOwner :exec
+UPDATE nodes SET account_owner_id = $2 WHERE id = $1;
+
+-- name: UpdateNode :exec
+UPDATE nodes SET base_url = $2, api_key = $3 WHERE id = $1;

@@ -6,6 +6,7 @@ export interface User {
   sub: string;
   role: string; // superadmin | admin | operator | tenant | viewer
   perms: string[];
+  mustChangePw?: boolean;
 }
 
 // --- Nodes ---
@@ -16,12 +17,14 @@ export interface NodeRecord {
   ownerId: string;
   enabled: boolean;
   kind?: string; // "meridian" | "cpa"
+  passthrough?: boolean;
   version?: string;
   status?: string;
   createdAt?: number;
   loggedIn?: boolean;
   email?: string;
   liveVersion?: string;
+  banned?: boolean;
 }
 
 // --- Keys (号库) ---
@@ -89,6 +92,11 @@ export interface DashboardData {
   };
   accounts: {
     total: number;
+    enabled: number;
+  };
+  elastic?: {
+    current: number;
+    max: number;
   };
   today: {
     requests: number;
@@ -101,6 +109,8 @@ export interface DashboardData {
   };
   hosting: DashboardHostingRow[];
   totalCostUsd: number;
+  channelTodayCostUsd?: number;
+  channelTotalCostUsd?: number;
   quota5hAvg?: number;
   quota7dAvg?: number;
 }
@@ -129,8 +139,16 @@ export interface Policy {
   params: Record<string, unknown>;
 }
 
+export interface ContentFilterRule {
+  Name: string;
+  Enabled: boolean;
+  Keywords: string[];
+  Action: string; // "fallback" | "block"
+}
+
 // policy.Patch fields (all optional, pointer-like)
 export interface PolicyPatch {
+  IdleFirstSelection?: boolean;
   MaxConcurrent?: number;
   SlotCooldownMinMs?: number;
   SlotCooldownMaxMs?: number;
@@ -140,15 +158,25 @@ export interface PolicyPatch {
   CooldownMaxMs?: number;
   CooldownMult?: number;
   AffinityTTLSec?: number;
+  AffinityWaitMs?: number;
+  DeviceAffinityEnabled?: boolean;
+  PathNormalizeEnabled?: boolean;
   FallbackEnabled?: boolean;
   FallbackPriceThresholdUsd?: number;
   FallbackKeywords?: string[];
   FallbackModels?: string[];
   FallbackProbeEnabled?: boolean;
   BanSignals?: number[];
+  CooldownSignals?: number[];
+  CooldownSignalSec?: number;
   BanKeywords?: string[];
-  QuotaRotateThreshold?: number;
   MaxFailover?: number;
+  DirectFallbackStatusCodes?: number[];
+  DirectFallbackKeywords?: string[];
+  TerminalErrorKeywords?: string[];
+  RetryDelayMs?: number;
+  RetrySameAccountMax?: number;
+  ModelMaxTokens?: Record<string, number>; // per-model output (max_tokens) ceiling; over-limit → 400 no retry
   WarmupHours?: number;
   WarmupMaxConcurrent?: number;
   WarmupBlockOpus?: boolean;
@@ -156,11 +184,64 @@ export interface PolicyPatch {
   SessionCooldownSec?: number;
   ResponseExileEnabled?: boolean;
   ResponseExileKeywords?: string[];
+  QuotaLimitKeywords?: string[];
+  QuotaLimitStatusCodes?: number[];
   ElasticEnabled?: boolean;
   ElasticScaleUpUtil?: number;
   ElasticScaleDownUtil?: number;
   ElasticMaxReserve?: number;
+  ElasticScaleStep?: number;
+  ElasticMaxActive?: number;
   ElasticBaselineCount?: number;
+  // Spend-cap (cumulative today-spend vs raising threshold)
+  SpendCap5hEnabled?: boolean;
+  SpendCap5hUsd?: { Min: number; Max: number };
+  // Phase 3: Cadence (拟人节奏)
+  HumanDelayEnabled?: boolean;
+  HumanDelayDist?: string;
+  HumanDelayP50Ms?: { Min: number; Max: number };
+  HumanDelayP95Ms?: { Min: number; Max: number };
+  RateGovEnabled?: boolean;
+  RateRPM?: { Min: number; Max: number };
+  RateRPH?: { Min: number; Max: number };
+  RateRPD?: { Min: number; Max: number };
+  RateExceedAction?: string;
+  SessionSimEnabled?: boolean;
+  SessionBurstCount?: { Min: number; Max: number };
+  SessionPauseMs?: { Min: number; Max: number };
+  QuietHoursEnabled?: boolean;
+  QuietHoursWindows?: { StartMin: number; EndMin: number }[];
+  QuietHoursRPM?: { Min: number; Max: number };
+  QuietHoursConcurrency?: number;
+  // Phase 4: Disguise (伪装)
+  ModelPinEnabled?: boolean;
+  ModelPinMode?: string;
+  ModelPinTarget?: string;
+  ModelElasticEnabled?: boolean;
+  SerialQueueEnabled?: boolean;
+  SerialQueueWaitMs?: number;
+  BodyPadEnabled?: boolean;
+  BodyPadBytes?: { Min: number; Max: number };
+  // Claude Code 三件套 (envelope strategy)
+  CCEnvelopeEnabled?: boolean;
+  CCEnforceSystemPrompt?: boolean;
+  CCEnforceBetaParam?: boolean;
+  CCEnforceCliHeaders?: boolean;
+  CCEnvelopeAction?: string;
+  CCSystemPromptText?: string;
+  CCCliUserAgent?: string;
+  CCCliAnthropicBeta?: string;
+  CCCliXApp?: string;
+  // 内容过滤 (多类别独立规则)
+  ContentFilterRules?: ContentFilterRule[];
+  // 1M 长上下文门控 (#143)
+  LongContextGateEnabled?: boolean;
+  LongContextTokenThreshold?: number;
+  LongContextModelMarkers?: string[];
+  LongContextSupportedModels?: string[];
+  ExtraUsageKeywords?: string[];
+  ExtraUsageStatusCodes?: number[];
+  No1MRecoveryMs?: number;
 }
 
 // policy.Config (resolved)
@@ -174,10 +255,14 @@ export interface PolicyConfig {
   CooldownMaxMs: number;
   CooldownMult: number;
   AffinityTTLSec: number;
+  DeviceAffinityEnabled: boolean;
+  PathNormalizeEnabled: boolean;
   FallbackEnabled: boolean;
   FallbackPriceThresholdUsd: number;
   BanSignals: number[];
   BanKeywords: string[];
+  CooldownSignals: number[];
+  CooldownSignalSec: number;
 }
 
 export interface PolicyDiff {
@@ -206,9 +291,15 @@ export interface LogEntry {
   ttfbMs?: number;
   tokensIn: number;
   tokensOut: number;
+  cacheRead: number;
+  cacheCreation: number;
   fallbackReason: string;
   stream?: boolean;
   costUsd?: number;
+  requestId?: string; // links to stored request detail (body+headers) for the 点开 view
+  affinityHit?: boolean; // true when request was served by the session-affinity-pinned account
+  targetEmail?: string; // server-resolved email for the dispatch target (logs-email-1)
+  isAttempt?: boolean;  // true for intermediate per-attempt failover errors (retry-chain)
 }
 
 // --- Events ---
@@ -217,6 +308,8 @@ export interface EventRecord {
   type: string;
   target: string;
   detail?: Record<string, unknown>;
+  targetName?: string;    // server-resolved channel name or email
+  detailAccount?: string; // server-resolved email for detail.account
 }
 
 // --- Audit ---
@@ -225,6 +318,8 @@ export interface AuditRecord {
   actor: string;
   action: string;
   target: string;
+  actorName?: string;  // server-resolved username
+  targetName?: string; // server-resolved email or channel name
 }
 
 // --- Settle / Ledger ---
@@ -238,6 +333,7 @@ export interface SettleResult {
   id: string;
   tenantId: string;
   gross: number;
+  settled?: number;
   status: string;
 }
 
@@ -270,13 +366,17 @@ export interface AccountRow {
   egress: string;
   email: string;
   status?: string;
+  limitedUntil?: number;     // quota-limit reset deadline (unix ms) when status==='limited'
   slotId?: string;
   todayCostUsd?: number;
   totalCostUsd?: number;
   expiresAt?: number;        // unix ms
   ownerId?: string;          // tenant owner id ("" = shared)
-  subscriptionType?: string; // e.g. "claude_max_5x"
-  cpaQuota?: CpaQuota | null; // CPA account rate-limit usage (5h/7d/7d-sonnet)
+  subscriptionType?: string;
+  subscriptionCreatedAt?: string;
+  accountCreatedAt?: string;
+  cpaQuota?: CpaQuota | null;
+  no1mUntil?: number;
 }
 
 export interface CpaQuota {
@@ -315,6 +415,7 @@ export interface NodeProfile {
   loggedIn?: boolean;
   subscriptionType?: string;
   type?: string;
+  imported?: boolean;
 }
 
 export interface OAuthStartResult {
@@ -351,6 +452,12 @@ export interface FallbackChannel {
   balanceUserId?: string;
   balanceCheckedAt?: number;
   balanceError?: string;
+  // Spend-cap (保底花费上限)
+  spendCapDailyMinUsd: number;
+  spendCapDailyMaxUsd: number;
+  spendCapTotalMinUsd: number;
+  spendCapTotalMaxUsd: number;
+  spendCapAction: string;
 }
 
 // --- Users ---
@@ -410,11 +517,18 @@ export interface NodeTelemetry {
 export interface DispatchAccountSnapshot {
   key: string;
   label?: string;
-  status: string; // active | banned | half_open | offline | disabled
+  status: string; // active | banned(封控·冷却) | half_open | permanent | offline | disabled
   inflight: number;
   available: number;
+  recoverAt?: number; // ms; when a cooling breaker half-opens (0 if not cooling)
+  limitedUntil?: number; // ms; quota-limit reset deadline when status==='limited'
+  limitReason?: string;  // "5h" | "7d" | "" — typed quota window
+  pausedUntil?: number;  // ms; session-sim burst pause deadline when status==='paused'
   todayCostUsd?: number;
   totalCostUsd?: number;
+  rpm?: number; // requests in the last 60 seconds for this account
+  reserve?: boolean;     // in the elastic reserve set (vs baseline)
+  pinnedModel?: string;  // model this account is currently sticky-pinned to ("" if none)
 }
 
 export interface DispatchTraffic {
@@ -438,7 +552,6 @@ export interface DispatchFallbackChannel {
   name: string;
   enabled: boolean;
   priority: number;
-  weight: number;
   todayRequests: number;
   todayCostUsd: number;
   inflight?: number;
@@ -451,6 +564,7 @@ export interface DispatchStatus {
   traffic: DispatchTraffic;
   events: DispatchEvent[];
   nodes: { total: number; enabled: number };
+  elastic?: { current: number; max: number };
   asOf: number;
   fallbackChannels?: DispatchFallbackChannel[];
   quota5hAvg?: number;
@@ -470,15 +584,21 @@ export interface Slot {
 export interface MeAccountRow {
   nodeName: string;
   accountId: string;
+  nodeId: string;
   profileId: string;
   email: string;
   enabled: boolean;
+  status?: string;           // live breaker status: active|banned|half_open|permanent|cooldown|limited
+  limitedUntil?: number;     // quota-limit reset deadline (unix ms) when status==='limited'
   weight: number;
   role: string;
   expiresAt?: number;        // unix ms
   subscriptionType?: string;
+  subscriptionCreatedAt?: string;
+  accountCreatedAt?: string;
   todayCostUsd?: number;
   totalCostUsd?: number;
+  cpaQuota?: CpaQuota | null;   // CPA 5h/7d util + reset times (same as admin 号库)
 }
 
 export interface MeDashboard {
@@ -509,4 +629,25 @@ export interface ServerStatus {
   netTxMBps?: number;
   netRxTotalMB?: number;
   netTxTotalMB?: number;
+}
+
+// Node egress proxy (透传 meridian 节点 /settings/api/proxy)
+export interface NodeProxyInfo {
+  proxy: string;
+  parsed: unknown;
+}
+export interface NodeProxyTestResult {
+  ok?: boolean;
+  egressIp?: string | null;
+  nodeIp?: string | null;
+  changed?: boolean;
+  error?: string;
+  parsed?: unknown;
+}
+export interface NodeProxySetResult {
+  ok?: boolean;
+  proxy?: string;
+  parsed?: unknown;
+  restarting?: boolean;
+  error?: string;
 }

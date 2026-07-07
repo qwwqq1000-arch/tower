@@ -145,8 +145,9 @@ const NAV_ITEMS: NavItem[] = [
   { path: '/dispatch',  label: '调度',     icon: '⇄', adminOnly: true },
   { path: '/nodes',     label: '节点',     icon: '⬡' },
   { path: '/accounts',  label: '号库',     icon: '⚿' },
-  { path: '/fallback',  label: '保底渠道', icon: '⤵', adminOnly: true },
+  { path: '/fallback',  label: '保底', icon: '⤵', adminOnly: true },
   { path: '/logs',      label: '日志',     icon: '≡' },
+  { path: '/intercepted', label: '拦截', icon: '🛡', adminOnly: true },
   { path: '/billing',   label: '计费',     icon: '₿', adminOnly: true },
   { path: '/settings',  label: '设置',     icon: '⚙', adminOnly: true },
 ];
@@ -156,7 +157,7 @@ const TENANT_NAV: NavItem[] = [
   { path: '/',         label: '看板',     icon: '◈' },
   { path: '/dispatch', label: '调度',     icon: '⇄' },
   { path: '/accounts', label: '号库',     icon: '⚿' },
-  { path: '/fallback', label: '保底渠道', icon: '⤵' },
+  { path: '/fallback', label: '保底', icon: '⤵' },
   { path: '/logs',     label: '日志',     icon: '≡' },
   { path: '/billing',  label: '计费',     icon: '₿' },
   { path: '/settings', label: '设置',     icon: '⚙' },
@@ -169,6 +170,7 @@ const SETTINGS_ITEMS: NavItem[] = [
   { path: '/desired',     label: '配置对账', icon: '⇌', adminOnly: true },
   { path: '/keys',        label: '调度密钥', icon: '🔑', adminOnly: true },
   { path: '/ban-analysis',label: '封号分析', icon: '⚠', adminOnly: true },
+  { path: '/intercepted', label: '信息拦截', icon: '🛡', adminOnly: true },
   { path: '/users',       label: '用户',     icon: '👤', adminOnly: true },
 ];
 
@@ -264,7 +266,6 @@ export function Shell({ children }: { children: ReactNode }) {
   const items = isTenant
     ? TENANT_NAV
     : NAV_ITEMS.filter((i) => !i.adminOnly || isAdmin);
-  const mobileItems = items.slice(0, 5);
   // Palette: primary nav + settings sub-pages (so moved pages remain searchable)
   const paletteItems = isTenant
     ? items
@@ -306,7 +307,7 @@ export function Shell({ children }: { children: ReactNode }) {
       {/* ---- Desktop sidebar (lg+) ---- */}
       <aside className="hidden lg:flex flex-col w-56 shrink-0 border-r border-line bg-surface">
         <div className="px-4 py-5">
-          <span className="text-xl font-bold text-accent">Tower</span>
+          <span className="text-xl font-bold text-accent">CCMAX POOL</span>
         </div>
         <nav className="flex-1 overflow-y-auto px-2 space-y-0.5">
           {items.map((item) => (
@@ -341,7 +342,7 @@ export function Shell({ children }: { children: ReactNode }) {
         {/* Topbar */}
         <header className="flex items-center h-12 px-4 border-b border-line bg-surface shrink-0 gap-3">
           {/* Title (mobile only — desktop/tablet show sidebar) */}
-          <span className="md:hidden text-base font-bold text-accent mr-auto">Tower</span>
+          <span className="md:hidden text-base font-bold text-accent mr-auto">CCMAX POOL</span>
           <span className="hidden md:block text-sm font-medium text-muted mr-auto">控制台</span>
 
           {/* ⌘K button */}
@@ -389,21 +390,23 @@ export function Shell({ children }: { children: ReactNode }) {
       </div>
 
       {/* ---- Mobile bottom nav (<md) ---- */}
+      {/* flex-1 items so the bar fills the full width evenly (no right-side gap);
+          min-w-0 keeps labels from forcing horizontal overflow on narrow phones. */}
       <nav className="md:hidden fixed bottom-0 inset-x-0 flex bg-surface border-t border-line z-40">
-        {mobileItems.map((item) => (
+        {items.map((item) => (
           <NavLink
             key={item.path}
             to={item.path}
             end={item.path === '/'}
             className={({ isActive }) =>
               [
-                'flex-1 flex flex-col items-center gap-0.5 py-2 text-xs transition',
+                'flex-1 min-w-0 flex flex-col items-center gap-0.5 py-2 px-1 text-xs transition',
                 isActive ? 'text-accent' : 'text-muted',
               ].join(' ')
             }
           >
             <span className="text-lg leading-none">{item.icon}</span>
-            <span>{item.label}</span>
+            <span className="whitespace-nowrap">{item.label}</span>
           </NavLink>
         ))}
       </nav>

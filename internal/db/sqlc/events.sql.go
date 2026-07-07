@@ -9,6 +9,43 @@ import (
 	"context"
 )
 
+const getBanEpisodesForProfile = `-- name: GetBanEpisodesForProfile :many
+SELECT id, node_id, profile_id, banned_at, recovered_at, survival_ms, detail FROM ban_episodes WHERE node_id = $1 AND profile_id = $2 ORDER BY banned_at DESC LIMIT 10
+`
+
+type GetBanEpisodesForProfileParams struct {
+	NodeID    string `json:"node_id"`
+	ProfileID string `json:"profile_id"`
+}
+
+func (q *Queries) GetBanEpisodesForProfile(ctx context.Context, arg GetBanEpisodesForProfileParams) ([]BanEpisode, error) {
+	rows, err := q.db.Query(ctx, getBanEpisodesForProfile, arg.NodeID, arg.ProfileID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BanEpisode
+	for rows.Next() {
+		var i BanEpisode
+		if err := rows.Scan(
+			&i.ID,
+			&i.NodeID,
+			&i.ProfileID,
+			&i.BannedAt,
+			&i.RecoveredAt,
+			&i.SurvivalMs,
+			&i.Detail,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const insertBanEpisode = `-- name: InsertBanEpisode :exec
 INSERT INTO ban_episodes (node_id, profile_id, banned_at, detail) VALUES ($1,$2,$3,$4)
 `

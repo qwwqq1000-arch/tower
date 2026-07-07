@@ -2,10 +2,11 @@
 // Tower SPA — 日志 unified page (调度日志 | 审计日志 | 事件)
 // Tabs: DispatchLogsTab | AuditTab | EventsTab
 // ============================================================
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   getLogs, getAudit, getEvents, listFallbackChannels, listAccounts,
   getMeLogs, getMeEvents, listMeFallback, getMeAccounts,
+  getLogDetail, getMeLogDetail, type LogDetail,
 } from '../api';
 import type { LogEntry, AuditRecord, EventRecord } from '../types';
 import { useAuth } from '../auth';
@@ -58,21 +59,115 @@ function fmtCost(usd?: number): string {
   return `$${usd.toFixed(4)}`;
 }
 
-function renderTarget(target: string, channelMap: Map<string, string>, accountMap: Map<string, string>): React.ReactNode {
+const PAGE_SIZE = 25;
+
+function PaginationBar({ page, total, pageSize, onPrev, onNext }: {
+  page: number; total: number; pageSize: number;
+  onPrev: () => void; onNext: () => void;
+}) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  return (
+    <div className="flex items-center justify-between text-xs text-muted">
+      <button
+        onClick={onPrev} disabled={page === 0}
+        className="px-3 py-1.5 border border-line rounded-lg hover:text-ink hover:border-accent transition disabled:opacity-40"
+      >上一页</button>
+      <span>第 {page + 1} / {totalPages} 页 · 共 {total} 条</span>
+      <button
+        onClick={onNext} disabled={(page + 1) * pageSize >= total}
+        className="px-3 py-1.5 border border-line rounded-lg hover:text-ink hover:border-accent transition disabled:opacity-40"
+      >下一页</button>
+    </div>
+  );
+}
+
+// resolveEmail maps a dispatch target to an account email. The target is the dispatch
+// key "<nodeId>:<profileId>"; the admin map is keyed by that full key, the tenant map by
+// profileId alone (no nodeId), so try the full key first then the profileId part.
+function resolveEmail(target: string, accountMap: Map<string, string>): string | undefined {
+  if (!target) return undefined;
+  const direct = accountMap.get(target);
+  if (direct) return direct;
+  const i = target.indexOf(':');
+  return i >= 0 ? accountMap.get(target.slice(i + 1)) : undefined;
+}
+
+function renderTarget(target: string, channelMap: Map<string, string>, accountMap: Map<string, string>, targetEmail?: string): React.ReactNode {
   if (!target) return '—';
   if (target.startsWith('fallback:')) {
     const id = target.slice('fallback:'.length);
     const name = channelMap.get(id);
     return name ? `保底: ${name}` : '保底';
   }
-  const email = accountMap.get(target);
+  // Prefer server-resolved email (logs-email-1): avoids accountMap lookup failures for CPA keys.
+  if (targetEmail) return targetEmail;
+  // Account-less targets: surface a clear label rather than misleading "节点".
+  if (target === 'node') return '无可用节点';
+  if (target === 'none') return '—';
+  // Last-resort: client-side map lookup, then "节点" fallback.
+  const email = resolveEmail(target, accountMap);
   return email ?? '节点';
 }
 
-function LogRow({ row, channelMap, accountMap }: { row: LogEntry; channelMap: Map<string, string>; accountMap: Map<string, string> }) {
-  const targetLabel = renderTarget(row.target, channelMap, accountMap);
+// prettifies a JSON body for the detail view; falls back to the raw string.
+function prettyJSON(s: string): string {
+  if (!s) return '';
+  try { return JSON.stringify(JSON.parse(s), null, 2); } catch { return s; }
+}
+
+// LogDetailModal fetches and shows the stored request body + redacted headers for
+// a clicked log row (logs-detail-1).
+function LogDetailModal({ requestId, isTenant, onClose }: { requestId: string; isTenant: boolean; onClose: () => void }) {
+  const [detail, setDetail] = useState<LogDetail | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    (isTenant ? getMeLogDetail(requestId) : getLogDetail(requestId))
+      .then(setDetail)
+      .catch((e) => setError(e instanceof Error ? e.message : '加载失败'));
+  }, [requestId, isTenant]);
   return (
-    <tr className="border-t border-line hover:bg-line/20 transition text-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div className="bg-surface border border-line rounded-xl w-full max-w-3xl max-h-[85vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-3 border-b border-line">
+          <h3 className="text-sm font-semibold text-ink">请求详情</h3>
+          <button onClick={onClose} className="text-muted hover:text-ink text-lg leading-none">×</button>
+        </div>
+        <div className="overflow-y-auto p-5 space-y-4">
+          {error && <div className="text-err text-sm bg-err/10 border border-err/30 rounded-lg px-3 py-2">{error}</div>}
+          {!error && !detail && <div className="text-muted text-sm animate-pulse">加载中…</div>}
+          {detail && (
+            <>
+              {(detail.respBody || detail.respStatus) ? (() => {
+                const isErr = (detail.respStatus ?? 0) >= 400;
+                return (
+                  <div>
+                    <p className="text-xs uppercase tracking-wide mb-1.5">
+                      <span className={isErr ? 'text-err' : 'text-muted'}>响应{detail.respStatus ? ` · HTTP ${detail.respStatus}` : ''}{isErr ? '(错误)' : ''}</span>
+                    </p>
+                    <pre className={`text-xs rounded-lg px-3 py-2 overflow-x-auto whitespace-pre-wrap break-all max-h-[40vh] border ${isErr ? 'text-err bg-err/10 border-err/30' : 'text-ink bg-bg border-line'}`}>{prettyJSON(detail.respBody ?? '') || <span className="text-muted/40 italic">空</span>}</pre>
+                  </div>
+                );
+              })() : null}
+              <div>
+                <p className="text-xs text-muted uppercase tracking-wide mb-1.5">请求头(密钥已脱敏)</p>
+                <pre className="text-xs text-muted bg-bg border border-line rounded-lg px-3 py-2 overflow-x-auto whitespace-pre-wrap break-all">{prettyJSON(detail.reqHeaders)}</pre>
+              </div>
+              <div>
+                <p className="text-xs text-muted uppercase tracking-wide mb-1.5">请求体</p>
+                <pre className="text-xs text-ink bg-bg border border-line rounded-lg px-3 py-2 overflow-x-auto whitespace-pre-wrap break-all max-h-[45vh]">{prettyJSON(detail.reqBody) || <span className="text-muted/40 italic">空</span>}</pre>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LogRow({ row, channelMap, accountMap, onOpen }: { row: LogEntry; channelMap: Map<string, string>; accountMap: Map<string, string>; onOpen?: () => void }) {
+  const targetLabel = renderTarget(row.target, channelMap, accountMap, row.targetEmail);
+  return (
+    <tr className={`border-t border-line hover:bg-line/20 transition text-sm ${onOpen ? 'cursor-pointer' : ''}`} onClick={onOpen}>
       <td className="px-3 py-2 text-xs text-muted whitespace-nowrap font-mono">{fmtTime(row.ts)}</td>
       <td className="px-3 py-2 text-ink truncate max-w-[140px]" title={row.model}>{row.model || '—'}</td>
       <td className="px-3 py-2 text-ink truncate max-w-[120px] font-mono text-xs">
@@ -83,9 +178,29 @@ function LogRow({ row, channelMap, accountMap }: { row: LogEntry; channelMap: Ma
       <td className="px-3 py-2 text-muted text-xs whitespace-nowrap">{fmtMs(row.latencyMs)}</td>
       <td className="px-3 py-2 text-muted text-xs whitespace-nowrap">{fmtMs(row.ttfbMs)}</td>
       <td className="px-3 py-2 text-muted text-xs whitespace-nowrap">
-        {row.tokensIn ? `↑${row.tokensIn}` : '—'} / {row.tokensOut ? `↓${row.tokensOut}` : '—'}
+        <div>{row.tokensIn ? `↑${row.tokensIn}` : '—'} / {row.tokensOut ? `↓${row.tokensOut}` : '—'}</div>
+        {(row.cacheRead > 0 || row.cacheCreation > 0) && (
+          <div className="text-muted/60 text-[10px] leading-tight mt-0.5">
+            {row.cacheRead > 0 && <span>缓存读 {row.cacheRead.toLocaleString()}</span>}
+            {row.cacheRead > 0 && row.cacheCreation > 0 && <span className="mx-1">·</span>}
+            {row.cacheCreation > 0 && <span>缓存写 {row.cacheCreation.toLocaleString()}</span>}
+          </div>
+        )}
       </td>
-      <td className="px-3 py-2">{streamBadge(row.stream)}</td>
+      <td className="px-3 py-2">
+        <div className="flex flex-wrap gap-1 items-center">
+          {streamBadge(row.stream)}
+          {row.affinityHit && (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border bg-green-500/20 text-green-400 border-green-500/40">亲和</span>
+          )}
+          {row.isAttempt && (
+            <span
+              title={`失败尝试 · ${row.targetEmail || row.target} · HTTP ${row.httpStatus || '—'} · 已自动重试到其他账户（这是被放弃的那次尝试，不是最终结果）`}
+              className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border bg-amber-500/20 text-amber-400 border-amber-500/40 cursor-help"
+            >重试</span>
+          )}
+        </div>
+      </td>
       <td className="px-3 py-2 text-muted text-xs">{fmtCost(row.costUsd)}</td>
       <td className="px-3 py-2 text-xs text-muted truncate max-w-[120px]" title={row.fallbackReason}>
         {row.fallbackReason || <span className="text-muted/40 italic">—</span>}
@@ -94,10 +209,10 @@ function LogRow({ row, channelMap, accountMap }: { row: LogEntry; channelMap: Ma
   );
 }
 
-function LogCard({ row, channelMap, accountMap }: { row: LogEntry; channelMap: Map<string, string>; accountMap: Map<string, string> }) {
-  const targetLabel = renderTarget(row.target, channelMap, accountMap);
+function LogCard({ row, channelMap, accountMap, onOpen }: { row: LogEntry; channelMap: Map<string, string>; accountMap: Map<string, string>; onOpen?: () => void }) {
+  const targetLabel = renderTarget(row.target, channelMap, accountMap, row.targetEmail);
   return (
-    <div className="bg-surface border border-line rounded-xl p-4 space-y-2 text-sm">
+    <div className={`bg-surface border border-line rounded-xl p-4 space-y-2 text-sm ${onOpen ? 'cursor-pointer active:bg-line/20' : ''}`} onClick={onOpen}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="font-medium text-ink truncate">{row.model || '—'}</p>
@@ -110,8 +225,14 @@ function LogCard({ row, channelMap, accountMap }: { row: LogEntry; channelMap: M
         <span>HTTP {row.httpStatus || '—'}</span>
         <span>延迟 {fmtMs(row.latencyMs)}</span>
         <span>首字 {fmtMs(row.ttfbMs)}</span>
-        <span>↑{row.tokensIn ?? 0} / ↓{row.tokensOut ?? 0}</span>
+        <span>↑{row.tokensIn ?? 0} / ↓{row.tokensOut ?? 0}{(row.cacheRead > 0 || row.cacheCreation > 0) && <span className="text-muted/60 ml-1 text-[10px]">{row.cacheRead > 0 ? `缓存读 ${row.cacheRead.toLocaleString()}` : ''}{row.cacheRead > 0 && row.cacheCreation > 0 ? ' · ' : ''}{row.cacheCreation > 0 ? `缓存写 ${row.cacheCreation.toLocaleString()}` : ''}</span>}</span>
         <span>{streamBadge(row.stream)}</span>
+        {row.affinityHit && (
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border bg-green-500/20 text-green-400 border-green-500/40">亲和</span>
+        )}
+        {row.isAttempt && (
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border bg-amber-500/20 text-amber-400 border-amber-500/40">重试</span>
+        )}
         <span>{fmtCost(row.costUsd) !== '—' ? `费用 ${fmtCost(row.costUsd)}` : ''}</span>
       </div>
       {row.fallbackReason && (
@@ -130,6 +251,8 @@ function DispatchLogsTab({ isTenant }: { isTenant: boolean }) {
   const [query, setQuery] = useState('');
   const [channelMap, setChannelMap] = useState<Map<string, string>>(new Map());
   const [accountMap, setAccountMap] = useState<Map<string, string>>(new Map());
+  const [detailId, setDetailId] = useState<string | null>(null); // requestId of the row being inspected
+  const [dispatchPage, setDispatchPage] = useState(0);
 
   useEffect(() => {
     (isTenant ? listMeFallback() : listFallbackChannels())
@@ -167,7 +290,7 @@ function DispatchLogsTab({ isTenant }: { isTenant: boolean }) {
   const fetchLogs = useCallback(async () => {
     setLoading(true);
     try {
-      const data = isTenant ? await getMeLogs(200) : await getLogs({ limit: '200' });
+      const data = isTenant ? await getMeLogs(500) : await getLogs({ limit: '500' });
       setRows(Array.isArray(data) ? data : []);
       setError(null);
     } catch (e) {
@@ -180,7 +303,7 @@ function DispatchLogsTab({ isTenant }: { isTenant: boolean }) {
   useEffect(() => { void fetchLogs(); }, [fetchLogs]);
 
   const q = query.trim().toLowerCase();
-  const filtered = q
+  const filtered = useMemo(() => q
     ? rows.filter(
         (r) =>
           r.model?.toLowerCase().includes(q) ||
@@ -189,12 +312,17 @@ function DispatchLogsTab({ isTenant }: { isTenant: boolean }) {
           r.fallbackReason?.toLowerCase().includes(q) ||
           String(r.httpStatus).includes(q),
       )
-    : rows;
+    : rows, [rows, q]);
+
+  useEffect(() => { setDispatchPage(0); }, [q]);
+
+  const pagedDispatch = filtered.slice(dispatchPage * PAGE_SIZE, (dispatchPage + 1) * PAGE_SIZE);
 
   return (
     <div className="space-y-4">
+      {detailId && <LogDetailModal requestId={detailId} isTenant={isTenant} onClose={() => setDetailId(null)} />}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <p className="text-xs text-muted">最近 200 条请求记录</p>
+        <p className="text-xs text-muted">最近 500 条请求记录{!isTenant && ' · 点击行查看完整请求'}</p>
         <button
           onClick={() => { void fetchLogs(); }}
           disabled={loading}
@@ -250,18 +378,22 @@ function DispatchLogsTab({ isTenant }: { isTenant: boolean }) {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((row, i) => (
-                  <LogRow key={i} row={row} channelMap={channelMap} accountMap={accountMap} />
+                {pagedDispatch.map((row, i) => (
+                  <LogRow key={i} row={row} channelMap={channelMap} accountMap={accountMap}
+                    onOpen={!isTenant && row.requestId ? () => setDetailId(row.requestId!) : undefined} />
                 ))}
               </tbody>
             </table>
           </div>
           <div className="md:hidden space-y-3">
-            {filtered.map((row, i) => <LogCard key={i} row={row} channelMap={channelMap} accountMap={accountMap} />)}
+            {pagedDispatch.map((row, i) => <LogCard key={i} row={row} channelMap={channelMap} accountMap={accountMap}
+              onOpen={!isTenant && row.requestId ? () => setDetailId(row.requestId!) : undefined} />)}
           </div>
-          <p className="text-xs text-muted text-right">
-            显示 {filtered.length} / {rows.length} 条
-          </p>
+          <PaginationBar
+            page={dispatchPage} total={filtered.length} pageSize={PAGE_SIZE}
+            onPrev={() => setDispatchPage((p) => Math.max(0, p - 1))}
+            onNext={() => setDispatchPage((p) => p + 1)}
+          />
         </>
       )}
     </div>
@@ -290,24 +422,28 @@ function actionBadge(action: string) {
 }
 
 function AuditRow({ row }: { row: AuditRecord }) {
+  const actorDisplay = row.actorName ?? row.actor;
+  const targetDisplay = row.targetName ?? row.target;
   return (
     <tr className="border-t border-line hover:bg-line/20 transition text-sm">
       <td className="px-3 py-2 text-xs text-muted whitespace-nowrap font-mono">{fmtTime(row.ts)}</td>
-      <td className="px-3 py-2 text-ink font-mono text-xs truncate max-w-[120px]" title={row.actor}>{row.actor || '—'}</td>
+      <td className="px-3 py-2 text-ink font-mono text-xs truncate max-w-[120px]" title={row.actor}>{actorDisplay || '—'}</td>
       <td className="px-3 py-2">{actionBadge(row.action)}</td>
-      <td className="px-3 py-2 text-muted text-xs truncate max-w-[200px]" title={row.target}>{row.target || '—'}</td>
+      <td className="px-3 py-2 text-muted text-xs truncate max-w-[200px]" title={row.target}>{targetDisplay || '—'}</td>
     </tr>
   );
 }
 
 function AuditCard({ row }: { row: AuditRecord }) {
+  const actorDisplay = row.actorName ?? row.actor;
+  const targetDisplay = row.targetName ?? row.target;
   return (
     <div className="bg-surface border border-line rounded-xl p-4 space-y-2 text-sm">
       <div className="flex items-start justify-between gap-2">
-        <span className="text-ink font-mono text-xs truncate">{row.actor || '—'}</span>
+        <span className="text-ink font-mono text-xs truncate" title={row.actor}>{actorDisplay || '—'}</span>
         {actionBadge(row.action)}
       </div>
-      <p className="text-xs text-muted truncate">{row.target || '—'}</p>
+      <p className="text-xs text-muted truncate" title={row.target}>{targetDisplay || '—'}</p>
       <p className="text-xs text-muted/60 font-mono">{fmtTime(row.ts)}</p>
     </div>
   );
@@ -318,11 +454,12 @@ function AuditTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [auditPage, setAuditPage] = useState(0);
 
   const fetchAudit = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await getAudit({ limit: '200' });
+      const data = await getAudit({ limit: '500' });
       setRows(Array.isArray(data) ? data : []);
       setError(null);
     } catch (e) {
@@ -335,14 +472,20 @@ function AuditTab() {
   useEffect(() => { void fetchAudit(); }, [fetchAudit]);
 
   const q = query.trim().toLowerCase();
-  const filtered = q
+  const filtered = useMemo(() => q
     ? rows.filter(
         (r) =>
           r.actor?.toLowerCase().includes(q) ||
+          r.actorName?.toLowerCase().includes(q) ||
           r.action?.toLowerCase().includes(q) ||
-          r.target?.toLowerCase().includes(q),
+          r.target?.toLowerCase().includes(q) ||
+          r.targetName?.toLowerCase().includes(q),
       )
-    : rows;
+    : rows, [rows, q]);
+
+  useEffect(() => { setAuditPage(0); }, [q]);
+
+  const pagedAudit = filtered.slice(auditPage * PAGE_SIZE, (auditPage + 1) * PAGE_SIZE);
 
   return (
     <div className="space-y-4">
@@ -396,16 +539,18 @@ function AuditTab() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((row, i) => <AuditRow key={i} row={row} />)}
+                {pagedAudit.map((row, i) => <AuditRow key={i} row={row} />)}
               </tbody>
             </table>
           </div>
           <div className="md:hidden space-y-3">
-            {filtered.map((row, i) => <AuditCard key={i} row={row} />)}
+            {pagedAudit.map((row, i) => <AuditCard key={i} row={row} />)}
           </div>
-          <p className="text-xs text-muted text-right">
-            显示 {filtered.length} / {rows.length} 条
-          </p>
+          <PaginationBar
+            page={auditPage} total={filtered.length} pageSize={PAGE_SIZE}
+            onPrev={() => setAuditPage((p) => Math.max(0, p - 1))}
+            onNext={() => setAuditPage((p) => p + 1)}
+          />
         </>
       )}
     </div>
@@ -470,25 +615,26 @@ function renderTargetText(
   detail: Record<string, unknown>,
   accountMap: Map<string, string>,
   channelMap: Map<string, string>,
+  serverTargetName?: string,
 ): string {
   if (type === 'dispatch_ok') {
-    const email = accountMap.get(target);
-    return email ? `派单成功 · ${email}` : `派单成功 · ${target || '节点'}`;
+    const email = serverTargetName || resolveEmail(target, accountMap) || target || '节点';
+    return `派单成功 · ${email}`;
   }
   if (type === 'ban') {
-    const email = accountMap.get(target);
-    return email ? `封控 · ${email}` : `封控 · ${target || '节点'}`;
+    const email = serverTargetName || resolveEmail(target, accountMap) || target || '节点';
+    return `封控 · ${email}`;
   }
   if (type === 'fallback') {
     const cn = FALLBACK_REASON_CN[target] ?? target;
     const channelId = typeof detail['channel'] === 'string' ? detail['channel'] : '';
-    const channelName = channelId ? channelMap.get(channelId) : undefined;
+    const channelName = (channelId ? channelMap.get(channelId) : undefined) ?? serverTargetName;
     const base = cn ? `保底触发 · ${cn}` : '保底触发';
     return channelName ? `${base} · ${channelName}` : base;
   }
   if (type === 'quota_limited') {
-    const email = accountMap.get(target);
-    return email ? `账户限额 · ${email}` : `账户限额 · ${target || '节点'}`;
+    const email = serverTargetName || resolveEmail(target, accountMap) || target || '节点';
+    return `账户限额 · ${email}`;
   }
   if (type === 'session_exile') {
     const suffix = SESSION_EXILE_SUFFIX[target] ?? target;
@@ -501,7 +647,7 @@ function renderTargetText(
     return `弹性缩容 · ${target || ''}`.trimEnd().replace(/ · $/, '');
   }
   if (type === 'balance_low') {
-    const channelName = channelMap.get(target) ?? target;
+    const channelName = serverTargetName ?? channelMap.get(target) ?? target;
     const balance = typeof detail['balance'] === 'number' ? `$${(detail['balance'] as number).toFixed(2)}` : undefined;
     const alert = typeof detail['alert'] === 'number' ? `$${(detail['alert'] as number).toFixed(2)}` : undefined;
     const base = `余额不足 · ${channelName}`;
@@ -524,8 +670,18 @@ function EventItem({
   const { dot, badge } = style;
   const label = style.label ?? row.type;
   const detail = parseDetail(row.detail as Record<string, unknown> | string | undefined);
-  const targetText = renderTargetText(row.type, row.target ?? '', detail, accountMap, channelMap);
+  const targetText = renderTargetText(row.type, row.target ?? '', detail, accountMap, channelMap, row.targetName);
   const showDetail = row.detail && Object.keys(row.detail).length > 0 && row.type !== 'fallback' && row.type !== 'balance_low';
+
+  // Build display detail: replace detail.account with resolved email if available
+  const displayDetail = showDetail && (row.detailAccount || detail['account'])
+    ? (() => {
+        const copy = { ...detail };
+        if (row.detailAccount && copy['account']) copy['account'] = row.detailAccount;
+        return copy;
+      })()
+    : detail;
+
   return (
     <div className="flex gap-4">
       <div className="flex flex-col items-center">
@@ -544,7 +700,7 @@ function EventItem({
         )}
         {showDetail && (
           <pre className="mt-1.5 text-xs text-muted bg-bg border border-line rounded-lg px-3 py-2 overflow-x-auto max-w-full">
-            {JSON.stringify(row.detail, null, 2)}
+            {JSON.stringify(displayDetail, null, 2)}
           </pre>
         )}
       </div>
@@ -559,11 +715,12 @@ function EventsTab({ isTenant }: { isTenant: boolean }) {
   const [query, setQuery] = useState('');
   const [accountMap, setAccountMap] = useState<Map<string, string>>(new Map());
   const [channelMap, setChannelMap] = useState<Map<string, string>>(new Map());
+  const [eventsPage, setEventsPage] = useState(0);
 
   const fetchEvents = useCallback(async () => {
     setLoading(true);
     try {
-      const data = isTenant ? await getMeEvents(200) : await getEvents({ limit: '200' });
+      const data = isTenant ? await getMeEvents(500) : await getEvents({ limit: '500' });
       setRows(Array.isArray(data) ? data : []);
       setError(null);
     } catch (e) {
@@ -611,18 +768,23 @@ function EventsTab({ isTenant }: { isTenant: boolean }) {
   }, [isTenant]);
 
   const q = query.trim().toLowerCase();
-  const filtered = q
+  const filtered = useMemo(() => q
     ? rows.filter(
         (r) =>
           r.type?.toLowerCase().includes(q) ||
-          r.target?.toLowerCase().includes(q),
+          r.target?.toLowerCase().includes(q) ||
+          r.targetName?.toLowerCase().includes(q),
       )
-    : rows;
+    : rows, [rows, q]);
+
+  useEffect(() => { setEventsPage(0); }, [q]);
+
+  const pagedEvents = filtered.slice(eventsPage * PAGE_SIZE, (eventsPage + 1) * PAGE_SIZE);
 
   return (
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <p className="text-xs text-muted">最近 200 条系统事件时间线</p>
+        <p className="text-xs text-muted">最近 500 条系统事件时间线</p>
         <button
           onClick={() => { void fetchEvents(); }}
           disabled={loading}
@@ -659,16 +821,18 @@ function EventsTab({ isTenant }: { isTenant: boolean }) {
         </div>
       )}
       {!loading && !error && filtered.length > 0 && (
-        <div className="bg-surface border border-line rounded-xl px-5 pt-5 pb-0">
-          {filtered.map((row, i) => (
-            <EventItem key={i} row={row} accountMap={accountMap} channelMap={channelMap} />
-          ))}
-        </div>
-      )}
-      {!loading && !error && filtered.length > 0 && (
-        <p className="text-xs text-muted text-right">
-          显示 {filtered.length} / {rows.length} 条
-        </p>
+        <>
+          <div className="bg-surface border border-line rounded-xl px-5 pt-5 pb-0">
+            {pagedEvents.map((row, i) => (
+              <EventItem key={i} row={row} accountMap={accountMap} channelMap={channelMap} />
+            ))}
+          </div>
+          <PaginationBar
+            page={eventsPage} total={filtered.length} pageSize={PAGE_SIZE}
+            onPrev={() => setEventsPage((p) => Math.max(0, p - 1))}
+            onNext={() => setEventsPage((p) => p + 1)}
+          />
+        </>
       )}
     </div>
   );

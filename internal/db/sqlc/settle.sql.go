@@ -19,3 +19,14 @@ func (q *Queries) SumCostForOwner(ctx context.Context, scopeID string) (float64,
 	err := row.Scan(&column_1)
 	return column_1, err
 }
+
+const sumSettledForOwner = `-- name: SumSettledForOwner :one
+SELECT COALESCE(SUM(settled_usd), 0)::double precision FROM settlements WHERE tenant_id = $1 AND status = 'paid'
+`
+
+func (q *Queries) SumSettledForOwner(ctx context.Context, tenantID string) (float64, error) {
+	row := q.db.QueryRow(ctx, sumSettledForOwner, tenantID)
+	var column_1 float64
+	err := row.Scan(&column_1)
+	return column_1, err
+}

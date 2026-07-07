@@ -2,21 +2,18 @@
 // Tower SPA — Tenant-mode views (role === 'tenant')
 // Own-data only, via /api/me/* endpoints.
 // ============================================================
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   getMeDashboard,
   getMeAccounts,
   pauseMeAccount,
   getMeLedger,
   getMeDispatchStatus,
-  getMeSlots,
-  createMeSlot,
-  deleteMeSlot,
-  setMeSlotEnabled,
   getMeDispatchKeys,
   createMeDispatchKey,
   deleteMeDispatchKey,
   getMeBanAnalysis,
+  listMeFallback,
 } from '../api';
 import type {
   MeAccountRow,
@@ -24,13 +21,56 @@ import type {
   LedgerEntry,
   DispatchStatus,
   DispatchFallbackChannel,
-  Slot,
   DispatchKeyRecord,
 } from '../types';
-import type { BanAnalysis, BanBucket } from '../api';
-import { EventTimeline } from './Dispatch';
+import type { BanAnalysis, BanBucket, BanAccountEntry } from '../api';
+import { EventTimeline, ConcurrencyPanel, useElementHeight } from './Dispatch';
+import { CpaQuotaCell } from './Accounts';
 import { copyText } from '../lib/clipboard';
-import { statusColor, statusLabel } from '../lib/status';
+import { StatusBadge, statusRank } from '../components/AccountStatus';
+
+// ------------------------------------------------------------------
+// Subscription helpers
+// ------------------------------------------------------------------
+function shortSubType(raw?: string): string {
+  if (!raw) return '—';
+  const m = raw.match(/claude_max_\w+/);
+  return m ? m[0] : raw;
+}
+
+function fmtDate(iso?: string): string {
+  if (!iso) return '—';
+  try {
+    return new Date(iso).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
+  } catch { return '—'; }
+}
+
+// ------------------------------------------------------------------
+// Pagination
+// ------------------------------------------------------------------
+// 10/page so the 号库 (27 accounts) and homepage 号库列表 actually chunk into
+// pages — 25 was too coarse to be useful. Matches admin dashboard + dispatch panel.
+const PAGE_SIZE = 10;
+
+function PaginationBar({ page, total, pageSize, onPrev, onNext }: {
+  page: number; total: number; pageSize: number;
+  onPrev: () => void; onNext: () => void;
+}) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  return (
+    <div className="flex items-center justify-between text-xs text-muted">
+      <button
+        onClick={onPrev} disabled={page === 0}
+        className="px-3 py-1.5 border border-line rounded-lg hover:text-ink hover:border-accent transition disabled:opacity-40"
+      >上一页</button>
+      <span>第 {page + 1} / {totalPages} 页 · 共 {total} 条</span>
+      <button
+        onClick={onNext} disabled={(page + 1) * pageSize >= total}
+        className="px-3 py-1.5 border border-line rounded-lg hover:text-ink hover:border-accent transition disabled:opacity-40"
+      >下一页</button>
+    </div>
+  );
+}
 
 // ------------------------------------------------------------------
 // Shared formatters
@@ -54,7 +94,7 @@ function fmtUsd(amount: number): string {
   return `$${amount.toFixed(6)}`;
 }
 
-function fmtDate(ms: number | undefined): string {
+function fmtDateMs(ms: number | undefined): string {
   if (!ms) return '—';
   return new Date(ms).toISOString().slice(0, 10);
 }
@@ -85,6 +125,7 @@ export function TenantDashboard() {
   const [accounts, setAccounts] = useState<MeAccountRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
 
   const load = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true);
@@ -105,6 +146,12 @@ export function TenantDashboard() {
     const timer = setInterval(() => void load(false), REFRESH_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [load]);
+
+  // Sort the same way every account table does (status priority), before pagination.
+  const dashAccountsSorted = useMemo(
+    () => [...accounts].sort((x, y) => statusRank(x.status) - statusRank(y.status)),
+    [accounts],
+  );
 
   if (loading) {
     return (
@@ -147,39 +194,56 @@ export function TenantDashboard() {
       {/* Account list (read-only) */}
       <section>
         <h2 className="text-xs font-medium text-muted uppercase tracking-wide mb-3">号库列表</h2>
-        <div className="bg-surface border border-line rounded-xl overflow-x-auto">
+        <div className="bg-surface border border-line rounded-xl overflow-hidden">
           {accounts.length === 0 ? (
             <p className="p-6 text-center text-sm text-muted">暂无账户</p>
           ) : (
-            <table className="w-full text-left min-w-[640px]">
-              <thead>
-                <tr className="text-xs text-muted uppercase tracking-wide">
-                  <th className="py-2 pr-3 pl-3 font-medium">邮箱</th>
-                  <th className="py-2 pr-3 font-medium">节点</th>
-                  <th className="py-2 pr-3 font-medium">订阅类型</th>
-                  <th className="py-2 pr-3 font-medium">状态</th>
-                  <th className="py-2 pr-3 font-medium text-right">今日消费</th>
-                  <th className="py-2 pr-3 font-medium text-right">总消费</th>
-                </tr>
-              </thead>
-              <tbody>
-                {accounts.map((a) => (
-                  <tr key={a.accountId} className="border-t border-line hover:bg-line/20 transition">
-                    <td className="py-2 pr-3 pl-3 text-sm text-ink truncate max-w-[200px]">{a.email || '—'}</td>
-                    <td className="py-2 pr-3 text-xs text-muted">{a.nodeName || '—'}</td>
-                    <td className="py-2 pr-3 text-xs text-muted">{a.subscriptionType || '—'}</td>
-                    <td className="py-2 pr-3">
-                      <span className={`inline-flex items-center gap-1 text-xs ${a.enabled ? 'text-ok' : 'text-muted'}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${a.enabled ? 'bg-ok' : 'bg-muted'}`} />
-                        {a.enabled ? '启用' : '暂停'}
-                      </span>
-                    </td>
-                    <td className="py-2 pr-3 text-xs text-muted text-right tabular-nums">{fmtCost(a.todayCostUsd)}</td>
-                    <td className="py-2 pr-3 text-xs text-muted text-right tabular-nums">{fmtCost(a.totalCostUsd)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left min-w-[640px]">
+                  <thead>
+                    <tr className="text-xs text-muted uppercase tracking-wide">
+                      <th className="py-2 pr-3 pl-3 font-medium">邮箱</th>
+                      <th className="py-2 pr-3 font-medium">节点</th>
+                      <th className="py-2 pr-3 font-medium">订阅类型</th>
+                      <th className="py-2 pr-3 font-medium">状态</th>
+                      <th className="py-2 pr-3 font-medium text-right">今日消费</th>
+                      <th className="py-2 pr-3 font-medium text-right">总消费</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dashAccountsSorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map((a) => (
+                      <tr key={a.accountId} className="border-t border-line hover:bg-line/20 transition">
+                        <td className="py-2 pr-3 pl-3 text-sm text-ink truncate max-w-[200px]">{a.email || '—'}</td>
+                        <td className="py-2 pr-3 text-xs text-muted">{a.nodeName || '—'}</td>
+                        <td className="py-2 pr-3 text-xs text-muted">{shortSubType(a.subscriptionType)}</td>
+                        <td className="py-2 pr-3">
+                          {isLiveStatus(a.status) ? (
+                            <StatusBadge status={a.status} limitedUntil={a.limitedUntil} />
+                          ) : (
+                            <span className={`inline-flex items-center gap-1 text-xs ${a.enabled ? 'text-ok' : 'text-muted'}`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${a.enabled ? 'bg-ok' : 'bg-muted'}`} />
+                              {a.enabled ? '启用' : '暂停'}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2 pr-3 text-xs text-muted text-right tabular-nums">{fmtCost(a.todayCostUsd)}</td>
+                        <td className="py-2 pr-3 text-xs text-muted text-right tabular-nums">{fmtCost(a.totalCostUsd)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {accounts.length > PAGE_SIZE && (
+                <div className="px-3 py-2 border-t border-line">
+                  <PaginationBar
+                    page={page} total={accounts.length} pageSize={PAGE_SIZE}
+                    onPrev={() => setPage((p) => Math.max(0, p - 1))}
+                    onNext={() => setPage((p) => p + 1)}
+                  />
+                </div>
+              )}
+            </>
           )}
         </div>
       </section>
@@ -195,9 +259,25 @@ function daysRemaining(ms: number | undefined): number | null {
   return Math.floor((ms - Date.now()) / 86400000);
 }
 
+// isLiveStatus: a live breaker/quota state worth surfacing as a status badge — the
+// SAME set the admin 号库 renders (banned/half_open/permanent/cooldown/limited). 'active'
+// deliberately falls through to the 启用/暂停 indicator (the tenant-actionable state).
+function isLiveStatus(status?: string): boolean {
+  return status === 'permanent' || status === 'banned' || status === 'half_open'
+    || status === 'cooldown' || status === 'limited';
+}
+
 function TenantAccountRow({ account, onChanged }: { account: MeAccountRow; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
-  const days = daysRemaining(account.expiresAt);
+  const expiryMs = (() => {
+    if (!account.subscriptionCreatedAt) return undefined;
+    const d = new Date(account.subscriptionCreatedAt);
+    d.setMonth(d.getMonth() + 1);
+    return d.getTime();
+  })();
+  const days = daysRemaining(expiryMs);
+  const permanent = account.status === 'permanent';
+  const liveBanned = isLiveStatus(account.status);
 
   async function toggle() {
     setBusy(true);
@@ -216,33 +296,44 @@ function TenantAccountRow({ account, onChanged }: { account: MeAccountRow; onCha
         <p className="text-[10px] text-muted font-mono mt-0.5">{account.profileId || '—'}</p>
       </td>
       <td className="px-4 py-3 text-sm text-ink">{account.nodeName || '—'}</td>
-      <td className="px-4 py-3 text-xs text-muted">{account.subscriptionType || '—'}</td>
+      <td className="px-4 py-3 text-xs text-muted">{shortSubType(account.subscriptionType)}</td>
       <td className="px-4 py-3">
         <span className={`text-xs font-mono ${days !== null && days < 7 ? 'text-red-400' : 'text-muted'}`}>
-          {fmtDate(account.expiresAt)}
+          {fmtDateMs(expiryMs)}
           {days !== null && <span className="ml-1">({days < 0 ? `过期${Math.abs(days)}天` : `${days}天`})</span>}
         </span>
       </td>
       <td className="px-4 py-3 text-sm text-muted">{account.weight}</td>
-      <td className="px-4 py-3 text-xs text-muted">{account.role || '—'}</td>
+      <td className="px-4 py-3 text-xs text-muted">{fmtDate(account.accountCreatedAt)}</td>
       <td className="px-4 py-3 text-xs text-muted text-right tabular-nums">{fmtCost(account.todayCostUsd)}</td>
       <td className="px-4 py-3 text-xs text-muted text-right tabular-nums">{fmtCost(account.totalCostUsd)}</td>
       <td className="px-4 py-3">
-        <span className={`flex items-center gap-1 text-xs ${account.enabled ? 'text-ok' : 'text-muted'}`}>
-          <span className={`w-1.5 h-1.5 rounded-full ${account.enabled ? 'bg-ok' : 'bg-muted'}`} />
-          {account.enabled ? '启用' : '暂停'}
-        </span>
+        {account.cpaQuota ? <CpaQuotaCell q={account.cpaQuota} /> : <span className="text-xs text-muted">—</span>}
       </td>
       <td className="px-4 py-3">
-        <button
-          onClick={() => { void toggle(); }}
-          disabled={busy}
-          className={`text-xs transition disabled:opacity-50 ${
-            account.enabled ? 'text-yellow-500 hover:text-yellow-400' : 'text-ok hover:text-ok/70'
-          }`}
-        >
-          {busy ? '…' : account.enabled ? '暂停' : '启用'}
-        </button>
+        {liveBanned ? (
+          <StatusBadge status={account.status} limitedUntil={account.limitedUntil} />
+        ) : (
+          <span className={`flex items-center gap-1 text-xs ${account.enabled ? 'text-ok' : 'text-muted'}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${account.enabled ? 'bg-ok' : 'bg-muted'}`} />
+            {account.enabled ? '启用' : '暂停'}
+          </span>
+        )}
+      </td>
+      <td className="px-4 py-3">
+        {permanent ? (
+          <span className="text-xs text-muted" title="永久封禁，无法启用，请联系管理员恢复">无法启用</span>
+        ) : (
+          <button
+            onClick={() => { void toggle(); }}
+            disabled={busy}
+            className={`text-xs transition disabled:opacity-50 ${
+              account.enabled ? 'text-yellow-500 hover:text-yellow-400' : 'text-ok hover:text-ok/70'
+            }`}
+          >
+            {busy ? '…' : account.enabled ? '暂停' : '启用'}
+          </button>
+        )}
       </td>
     </tr>
   );
@@ -250,7 +341,15 @@ function TenantAccountRow({ account, onChanged }: { account: MeAccountRow; onCha
 
 function TenantAccountCard({ account, onChanged }: { account: MeAccountRow; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
-  const days = daysRemaining(account.expiresAt);
+  const expiryMs = (() => {
+    if (!account.subscriptionCreatedAt) return undefined;
+    const d = new Date(account.subscriptionCreatedAt);
+    d.setMonth(d.getMonth() + 1);
+    return d.getTime();
+  })();
+  const days = daysRemaining(expiryMs);
+  const permanent = account.status === 'permanent';
+  const liveBanned = isLiveStatus(account.status);
 
   async function toggle() {
     setBusy(true);
@@ -269,28 +368,41 @@ function TenantAccountCard({ account, onChanged }: { account: MeAccountRow; onCh
           <p className="text-sm font-semibold text-ink truncate">{account.email || '—'}</p>
           <p className="text-xs text-muted mt-0.5 truncate">{account.nodeName || '—'}</p>
         </div>
-        <button
-          onClick={() => { void toggle(); }}
-          disabled={busy}
-          className={`text-xs transition disabled:opacity-50 shrink-0 ${
-            account.enabled ? 'text-yellow-500 hover:text-yellow-400' : 'text-ok hover:text-ok/70'
-          }`}
-        >
-          {busy ? '…' : account.enabled ? '暂停' : '启用'}
-        </button>
+        {permanent ? (
+          <span className="text-xs text-muted shrink-0" title="永久封禁，无法启用，请联系管理员恢复">无法启用</span>
+        ) : (
+          <button
+            onClick={() => { void toggle(); }}
+            disabled={busy}
+            className={`text-xs transition disabled:opacity-50 shrink-0 ${
+              account.enabled ? 'text-yellow-500 hover:text-yellow-400' : 'text-ok hover:text-ok/70'
+            }`}
+          >
+            {busy ? '…' : account.enabled ? '暂停' : '启用'}
+          </button>
+        )}
       </div>
       <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
-        <span className={`flex items-center gap-1 ${account.enabled ? 'text-ok' : 'text-muted'}`}>
-          <span className={`w-1.5 h-1.5 rounded-full ${account.enabled ? 'bg-ok' : 'bg-muted'}`} />
-          {account.enabled ? '启用' : '暂停'}
-        </span>
-        {account.subscriptionType && <span>{account.subscriptionType}</span>}
+        {liveBanned ? (
+          <StatusBadge status={account.status} limitedUntil={account.limitedUntil} />
+        ) : (
+          <span className={`flex items-center gap-1 ${account.enabled ? 'text-ok' : 'text-muted'}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${account.enabled ? 'bg-ok' : 'bg-muted'}`} />
+            {account.enabled ? '启用' : '暂停'}
+          </span>
+        )}
+        {account.subscriptionType && <span>{shortSubType(account.subscriptionType)}</span>}
         <span>权重 {account.weight}</span>
-        {account.role && <span>角色 {account.role}</span>}
-        <span>到期 {fmtDate(account.expiresAt)}{days !== null ? `(${days < 0 ? `过期${Math.abs(days)}天` : `${days}天`})` : ''}</span>
+        {account.accountCreatedAt && <span>创建 {fmtDate(account.accountCreatedAt)}</span>}
+        <span>到期 {fmtDateMs(expiryMs)}{days !== null ? `(${days < 0 ? `过期${Math.abs(days)}天` : `${days}天`})` : ''}</span>
         <span>今日 {fmtCost(account.todayCostUsd)}</span>
         <span>总计 {fmtCost(account.totalCostUsd)}</span>
       </div>
+      {account.cpaQuota && (
+        <div className="pt-1">
+          <CpaQuotaCell q={account.cpaQuota} />
+        </div>
+      )}
     </div>
   );
 }
@@ -299,6 +411,7 @@ export function TenantAccounts() {
   const [accounts, setAccounts] = useState<MeAccountRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -314,6 +427,12 @@ export function TenantAccounts() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  const sorted = useMemo(
+    () => [...accounts].sort((x, y) => statusRank(x.status) - statusRank(y.status)),
+    [accounts],
+  );
+  const paged = sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   return (
     <div className="p-4 md:p-6 space-y-6">
@@ -354,25 +473,33 @@ export function TenantAccounts() {
                   <th className="px-4 py-3 font-medium">订阅类型</th>
                   <th className="px-4 py-3 font-medium">订阅到期</th>
                   <th className="px-4 py-3 font-medium">权重</th>
-                  <th className="px-4 py-3 font-medium">角色</th>
+                  <th className="px-4 py-3 font-medium">账户创建时间</th>
                   <th className="px-4 py-3 font-medium text-right">今日消费</th>
                   <th className="px-4 py-3 font-medium text-right">总消费</th>
+                  <th className="px-4 py-3 font-medium">额度 (5h/7d)</th>
                   <th className="px-4 py-3 font-medium">状态</th>
                   <th className="px-4 py-3 font-medium">操作</th>
                 </tr>
               </thead>
               <tbody>
-                {accounts.map((a) => (
+                {paged.map((a) => (
                   <TenantAccountRow key={a.accountId} account={a} onChanged={() => { void load(); }} />
                 ))}
               </tbody>
             </table>
           </div>
           <div className="md:hidden space-y-3">
-            {accounts.map((a) => (
+            {paged.map((a) => (
               <TenantAccountCard key={a.accountId} account={a} onChanged={() => { void load(); }} />
             ))}
           </div>
+          {sorted.length > PAGE_SIZE && (
+            <PaginationBar
+              page={page} total={sorted.length} pageSize={PAGE_SIZE}
+              onPrev={() => setPage((p) => Math.max(0, p - 1))}
+              onNext={() => setPage((p) => p + 1)}
+            />
+          )}
         </>
       )}
     </div>
@@ -387,6 +514,8 @@ export function TenantBilling() {
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [ledgerPage, setLedgerPage] = useState(0);
+  const pagedLedger = ledger.slice(ledgerPage * PAGE_SIZE, (ledgerPage + 1) * PAGE_SIZE);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -470,10 +599,10 @@ export function TenantBilling() {
                       </tr>
                     </thead>
                     <tbody>
-                      {ledger.map((row, i) => {
+                      {pagedLedger.map((row, i) => {
                         const isDebit = row.amount < 0;
                         return (
-                          <tr key={i} className="border-t border-line hover:bg-line/20 transition text-sm">
+                          <tr key={ledgerPage * PAGE_SIZE + i} className="border-t border-line hover:bg-line/20 transition text-sm">
                             <td className="px-3 py-2 text-xs text-muted whitespace-nowrap font-mono">{fmtTime(row.ts)}</td>
                             <td className="px-3 py-2 text-ink">{row.type || '—'}</td>
                             <td className={`px-3 py-2 font-mono text-xs font-medium ${isDebit ? 'text-err' : 'text-ok'}`}>
@@ -488,10 +617,10 @@ export function TenantBilling() {
                   </table>
                 </div>
                 <div className="md:hidden space-y-3">
-                  {ledger.map((row, i) => {
+                  {pagedLedger.map((row, i) => {
                     const isDebit = row.amount < 0;
                     return (
-                      <div key={i} className="bg-surface border border-line rounded-xl p-4 space-y-1.5 text-sm">
+                      <div key={ledgerPage * PAGE_SIZE + i} className="bg-surface border border-line rounded-xl p-4 space-y-1.5 text-sm">
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-ink font-medium">{row.type || '—'}</span>
                           <span className={`font-mono text-sm font-semibold ${isDebit ? 'text-err' : 'text-ok'}`}>
@@ -504,7 +633,15 @@ export function TenantBilling() {
                     );
                   })}
                 </div>
-                <p className="text-xs text-muted text-right">{ledger.length} 条记录</p>
+                {ledger.length > PAGE_SIZE ? (
+                  <PaginationBar
+                    page={ledgerPage} total={ledger.length} pageSize={PAGE_SIZE}
+                    onPrev={() => setLedgerPage((p) => Math.max(0, p - 1))}
+                    onNext={() => setLedgerPage((p) => p + 1)}
+                  />
+                ) : (
+                  <p className="text-xs text-muted text-right">{ledger.length} 条记录</p>
+                )}
               </>
             )}
           </div>
@@ -546,7 +683,6 @@ function TenantFallbackChannelsPanel({ channels }: { channels: DispatchFallbackC
                 <th className="px-4 py-2 font-medium">渠道名</th>
                 <th className="px-4 py-2 font-medium">状态</th>
                 <th className="px-4 py-2 font-medium text-right">优先级</th>
-                <th className="px-4 py-2 font-medium text-right">权重</th>
                 <th className="px-4 py-2 font-medium text-right">余额($)</th>
                 <th className="px-4 py-2 font-medium text-right">今日消费</th>
                 <th className="px-4 py-2 font-medium text-right">并发中</th>
@@ -565,7 +701,6 @@ function TenantFallbackChannelsPanel({ channels }: { channels: DispatchFallbackC
                     </span>
                   </td>
                   <td className="px-4 py-2 text-right tabular-nums">{ch.priority}</td>
-                  <td className="px-4 py-2 text-right tabular-nums">{ch.weight}</td>
                   <td className="px-4 py-2 text-right tabular-nums">{formatBalance(ch.balanceUsd)}</td>
                   <td className="px-4 py-2 text-right tabular-nums">{formatCost(ch.todayCostUsd)}</td>
                   <td className="px-4 py-2 text-right tabular-nums">{ch.inflight ?? '—'}</td>
@@ -580,15 +715,14 @@ function TenantFallbackChannelsPanel({ channels }: { channels: DispatchFallbackC
   );
 }
 
-function dispStatusCls(status: string): string {
-  return statusColor(status);
-}
-
 const DISPATCH_REFRESH_MS = 5_000;
 
 export function TenantDispatch() {
   const [data, setData] = useState<DispatchStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [fallbackNames, setFallbackNames] = useState<Map<string, string>>(new Map());
+  const [accountNames, setAccountNames] = useState<Map<string, string>>(new Map());
+  const [concurrencyRef, concurrencyH] = useElementHeight<HTMLDivElement>();
 
   const load = useCallback(async () => {
     try {
@@ -598,6 +732,33 @@ export function TenantDispatch() {
     } catch (e) {
       setError(e instanceof Error ? e.message : '加载失败');
     }
+  }, []);
+
+  useEffect(() => {
+    // Fetch resolver maps once on mount (best-effort).
+    listMeFallback()
+      .then((channels) => {
+        const m = new Map<string, string>();
+        for (const ch of channels) m.set(ch.id, ch.name);
+        setFallbackNames(m);
+      })
+      .catch(() => {});
+    getMeAccounts()
+      .then((accounts) => {
+        // Key by `${nodeId}:${profileId}` — the SAME format the admin event timeline
+        // uses (Dispatch.tsx) — so 节点报错 etc. resolve to the email instead of the raw
+        // n_<id>:claude-<email>.json target. Also key by accountId/profileId for events
+        // whose target is the bare account id (e.g. account_recovered).
+        const m = new Map<string, string>();
+        for (const a of accounts) {
+          if (!a.email) continue;
+          if (a.nodeId && a.profileId) m.set(`${a.nodeId}:${a.profileId}`, a.email);
+          m.set(a.accountId, a.email);
+          if (a.profileId) m.set(a.profileId, a.email);
+        }
+        setAccountNames(m);
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -640,47 +801,15 @@ export function TenantDispatch() {
             <StatCard label="并发中" value={inflight} sub={`成功率 ${traffic && traffic.total > 0 ? rate + '%' : '—'}`} accent />
           </div>
 
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-            {/* Concurrency */}
-            <div className="bg-surface border border-line rounded-xl overflow-hidden">
-              <div className="px-4 py-3 border-b border-line text-sm font-medium text-ink">并发 / 账户</div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-line text-left text-xs text-muted">
-                      <th className="px-4 py-2 font-medium">邮箱</th>
-                      <th className="px-4 py-2 font-medium">状态</th>
-                      <th className="px-4 py-2 font-medium text-right">并发中</th>
-                      <th className="px-4 py-2 font-medium text-right">可用</th>
-                      <th className="px-4 py-2 font-medium text-right">今日消费</th>
-                      <th className="px-4 py-2 font-medium text-right">总消费</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {accounts.length === 0 && (
-                      <tr><td colSpan={6} className="px-4 py-6 text-center text-muted text-xs">无数据</td></tr>
-                    )}
-                    {accounts.map((a) => (
-                      <tr key={a.key} className="border-b border-line/50 hover:bg-line/30 transition">
-                        <td className="px-4 py-2 text-sm text-ink font-medium truncate max-w-[200px]">{a.label || '—'}</td>
-                        <td className="px-4 py-2">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded border text-xs font-mono ${dispStatusCls(a.status)}`}>
-                            {statusLabel(a.status)}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2 text-right tabular-nums">{a.inflight}</td>
-                        <td className="px-4 py-2 text-right tabular-nums">{a.available}</td>
-                        <td className="px-4 py-2 text-right tabular-nums text-xs text-muted">{fmtCost(a.todayCostUsd)}</td>
-                        <td className="px-4 py-2 text-right tabular-nums text-xs text-muted">{fmtCost(a.totalCostUsd)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
+            {/* Concurrency — reuse the SAME admin panel so 待命/亲和/限额 status, sorting
+                and pagination are identical for tenant and admin (one code path). */}
+            <div ref={concurrencyRef}>
+              <ConcurrencyPanel accounts={accounts} />
             </div>
 
-            {/* Event timeline (reuse shared rendering) */}
-            <EventTimeline events={data.events} fallbackNames={new Map()} accountNames={new Map()} />
+            {/* Event timeline tracks the concurrency panel's height (scrolls if longer). */}
+            <EventTimeline events={data.events} fallbackNames={fallbackNames} accountNames={accountNames} maxHeightPx={concurrencyH > 0 ? concurrencyH : undefined} />
           </div>
 
           {/* Fallback channels */}
@@ -692,170 +821,13 @@ export function TenantDispatch() {
 }
 
 // ============================================================
-// TenantSettings (/settings) — slots + dispatch keys + ban analysis
+// TenantSettings (/settings) — dispatch keys + ban analysis
+// (时段槽位 removed from the tenant surface per product decision — slots are an
+//  admin-managed concept; tenants no longer create/see them.)
 // ============================================================
-function minsToHHMM(mins: number): string {
-  const h = Math.floor(mins / 60).toString().padStart(2, '0');
-  const m = (mins % 60).toString().padStart(2, '0');
-  return `${h}:${m}`;
-}
-
-function hhmmToMins(hhmm: string): number {
-  const [h, m] = hhmm.split(':').map(Number);
-  return (h || 0) * 60 + (m || 0);
-}
-
 const tenantInputCls =
   'w-full bg-bg border border-line rounded-lg px-3 py-1.5 text-sm text-ink ' +
   'placeholder:text-muted focus:outline-none focus:border-accent transition';
-
-// ---- Slot enable toggle ----
-function MeSlotToggle({ slot, onChanged }: { slot: Slot; onChanged: (id: string, enabled: boolean) => void }) {
-  const [busy, setBusy] = useState(false);
-  async function toggle() {
-    setBusy(true);
-    try {
-      await setMeSlotEnabled(slot.id, !slot.enabled);
-      onChanged(slot.id, !slot.enabled);
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <button
-      onClick={() => { void toggle(); }}
-      disabled={busy}
-      title={slot.enabled ? '点击禁用' : '点击启用'}
-      className={[
-        'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition',
-        slot.enabled ? 'bg-ok' : 'bg-line',
-        busy ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
-      ].join(' ')}
-    >
-      <span className={[
-        'inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform',
-        slot.enabled ? 'translate-x-4' : 'translate-x-1',
-      ].join(' ')} />
-    </button>
-  );
-}
-
-// ---- Slots section ----
-function TenantSlotsSection() {
-  const [slots, setSlots] = useState<Slot[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
-  const [name, setName] = useState('');
-  const [startTime, setStartTime] = useState('00:00');
-  const [endTime, setEndTime] = useState('08:00');
-  const [creating, setCreating] = useState(false);
-  const [createErr, setCreateErr] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      setSlots(await getMeSlots());
-      setErr(null);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : '加载失败');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { void load(); }, [load]);
-
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault();
-    setCreating(true);
-    setCreateErr(null);
-    try {
-      await createMeSlot({ name, startMin: hhmmToMins(startTime), endMin: hhmmToMins(endTime) });
-      setName(''); setStartTime('00:00'); setEndTime('08:00');
-      await load();
-    } catch (e) {
-      setCreateErr(e instanceof Error ? e.message : '创建失败');
-    } finally {
-      setCreating(false);
-    }
-  }
-
-  async function handleDelete(id: string) {
-    try {
-      await deleteMeSlot(id);
-      setSlots((prev) => prev.filter((s) => s.id !== id));
-    } catch { /* ignore */ }
-  }
-
-  function handleEnabledChanged(id: string, enabled: boolean) {
-    setSlots((prev) => prev.map((s) => s.id === id ? { ...s, enabled } : s));
-  }
-
-  return (
-    <div className="space-y-4">
-      {loading && <p className="text-muted text-sm animate-pulse">加载中…</p>}
-      {!loading && err && (
-        <div className="bg-err/10 border border-err/30 rounded-xl p-4 text-err text-sm">{err}</div>
-      )}
-      {!loading && !err && (
-        <>
-          {slots.length === 0 ? (
-            <p className="text-sm text-muted">暂无时段槽位，在下方新建。</p>
-          ) : (
-            <div className="bg-surface border border-line rounded-xl overflow-hidden">
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="text-xs text-muted uppercase tracking-wide border-b border-line bg-bg/50">
-                    <th className="px-4 py-3 font-medium">名称</th>
-                    <th className="px-4 py-3 font-medium">时间窗</th>
-                    <th className="px-4 py-3 font-medium">状态</th>
-                    <th className="px-4 py-3 font-medium">操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {slots.map((slot) => (
-                    <tr key={slot.id} className="border-t border-line/50 hover:bg-line/30 transition">
-                      <td className="px-4 py-3 font-medium text-ink">{slot.name}</td>
-                      <td className="px-4 py-3 font-mono text-sm text-muted">
-                        {minsToHHMM(slot.startMin)}–{minsToHHMM(slot.endMin)}
-                      </td>
-                      <td className="px-4 py-3"><MeSlotToggle slot={slot} onChanged={handleEnabledChanged} /></td>
-                      <td className="px-4 py-3">
-                        <button onClick={() => { void handleDelete(slot.id); }} className="text-xs text-muted hover:text-err transition">删除</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          <form onSubmit={(e) => { void handleCreate(e); }} className="bg-surface border border-line rounded-xl p-5 space-y-3">
-            <h3 className="text-sm font-semibold text-ink">新建时段槽位</h3>
-            {createErr && <div className="bg-err/10 border border-err/30 rounded-lg p-3 text-err text-sm">{createErr}</div>}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div>
-                <label className="block text-xs text-muted mb-1">名称 *</label>
-                <input required value={name} onChange={(e) => setName(e.target.value)} placeholder="早高峰" autoComplete="off" className={tenantInputCls} />
-              </div>
-              <div>
-                <label className="block text-xs text-muted mb-1">开始时间</label>
-                <input type="time" required value={startTime} onChange={(e) => setStartTime(e.target.value)} className={tenantInputCls} />
-              </div>
-              <div>
-                <label className="block text-xs text-muted mb-1">结束时间</label>
-                <input type="time" required value={endTime} onChange={(e) => setEndTime(e.target.value)} className={tenantInputCls} />
-              </div>
-            </div>
-            <button type="submit" disabled={creating} className="px-4 py-2 text-sm font-medium bg-accent text-white rounded-lg hover:bg-accent/80 disabled:opacity-50 transition">
-              {creating ? '创建中…' : '创建槽位'}
-            </button>
-          </form>
-        </>
-      )}
-    </div>
-  );
-}
 
 // ---- Copy button ----
 function CopyBtn({ text }: { text: string }) {
@@ -1032,6 +1004,46 @@ function fillHour(data: BanBucket[]): BanBucket[] {
   return Array.from({ length: 24 }, (_, i) => ({ bucket: i, count: map.get(i) ?? 0 }));
 }
 
+function TenantAccountBanTable({ rows }: { rows: BanAccountEntry[] }) {
+  const [page, setPage] = useState(0);
+  const paged = rows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  return (
+    <div className="space-y-3">
+      <div className="bg-surface border border-line rounded-xl overflow-x-auto">
+        <table className="w-full text-left">
+          <thead>
+            <tr className="text-xs text-muted uppercase tracking-wide border-b border-line">
+              <th className="px-4 py-3 font-medium">#</th>
+              <th className="px-4 py-3 font-medium">邮箱</th>
+              <th className="px-4 py-3 font-medium text-right">封号次数</th>
+            </tr>
+          </thead>
+          <tbody>
+            {paged.map((row, i) => (
+              <tr key={row.email} className="border-t border-line hover:bg-line/20 transition text-sm">
+                <td className="px-4 py-2 text-xs text-muted tabular-nums">{page * PAGE_SIZE + i + 1}</td>
+                <td className="px-4 py-2 text-ink font-mono text-xs truncate max-w-[240px]" title={row.email}>{row.email}</td>
+                <td className="px-4 py-2 text-right">
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold tabular-nums ${
+                    row.count >= 5 ? 'bg-err/20 text-err' : row.count >= 2 ? 'bg-warn/20 text-warn' : 'bg-surface text-muted border border-line'
+                  }`}>{row.count}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {rows.length > PAGE_SIZE && (
+        <PaginationBar
+          page={page} total={rows.length} pageSize={PAGE_SIZE}
+          onPrev={() => setPage((p) => Math.max(0, p - 1))}
+          onNext={() => setPage((p) => p + 1)}
+        />
+      )}
+    </div>
+  );
+}
+
 function TenantBanSection() {
   const [data, setData] = useState<BanAnalysis | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1088,19 +1100,27 @@ function TenantBanSection() {
             </div>
             <TenantBarChart data={hourData} labelFn={(b) => String(b).padStart(2, '0')} color="bg-warn" />
           </div>
+          {data.byAccount && data.byAccount.length > 0 && (
+            <div className="bg-surface border border-line rounded-xl p-5 space-y-3">
+              <div>
+                <h3 className="text-sm font-semibold text-ink">各账户封号次数</h3>
+                <p className="text-xs text-muted">同一邮箱多次封号均计入，按封号次数降序</p>
+              </div>
+              <TenantAccountBanTable rows={data.byAccount} />
+            </div>
+          )}
         </>
       )}
     </div>
   );
 }
 
-type SettingsTab = 'slots' | 'keys' | 'ban';
+type SettingsTab = 'keys' | 'ban';
 
 export function TenantSettings() {
-  const [tab, setTab] = useState<SettingsTab>('slots');
+  const [tab, setTab] = useState<SettingsTab>('keys');
 
   const tabs: { id: SettingsTab; label: string }[] = [
-    { id: 'slots', label: '时段槽位' },
     { id: 'keys', label: '调度密钥' },
     { id: 'ban', label: '封号分析' },
   ];
@@ -1109,7 +1129,7 @@ export function TenantSettings() {
     <div className="p-4 md:p-6 space-y-6 max-w-4xl mx-auto">
       <div>
         <h1 className="text-2xl font-semibold text-ink">设置</h1>
-        <p className="text-xs text-muted mt-1">管理我的时段槽位、调度密钥与封号分析</p>
+        <p className="text-xs text-muted mt-1">管理我的调度密钥与封号分析</p>
       </div>
 
       <div className="flex gap-2 border-b border-line">
@@ -1127,7 +1147,6 @@ export function TenantSettings() {
         ))}
       </div>
 
-      {tab === 'slots' && <TenantSlotsSection />}
       {tab === 'keys' && <TenantKeysSection />}
       {tab === 'ban' && <TenantBanSection />}
     </div>

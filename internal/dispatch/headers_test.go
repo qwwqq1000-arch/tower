@@ -1,7 +1,9 @@
 package dispatch
 
 import (
+	"context"
 	"net/http"
+	"net/url"
 	"testing"
 )
 
@@ -22,17 +24,6 @@ func TestStripHopByHop(t *testing.T) {
 	}
 }
 
-func TestForgeClaudeCodeHeaders(t *testing.T) {
-	h := http.Header{}
-	ForgeClaudeCodeHeaders(h)
-	if h.Get("x-app") != "cli" {
-		t.Fatalf("x-app=%q", h.Get("x-app"))
-	}
-	if ua := h.Get("User-Agent"); ua == "" {
-		t.Fatal("User-Agent must be set")
-	}
-}
-
 func TestCopyForwardableHeaders(t *testing.T) {
 	src := http.Header{}
 	src.Set("Content-Type", "application/json")
@@ -50,5 +41,19 @@ func TestCopyForwardableHeaders(t *testing.T) {
 		if dst.Get(k) != "" {
 			t.Fatalf("%s must NOT be copied", k)
 		}
+	}
+}
+
+func TestRequestQueryAndInjectCtx(t *testing.T) {
+	ctx := WithRequestQuery(context.Background(), url.Values{"beta": {"true"}})
+	if requestQueryFrom(ctx).Get("beta") != "true" {
+		t.Fatal("query round-trip failed")
+	}
+	ctx = withEnvelopeInject(ctx, []EnvelopePiece{PieceBetaParam})
+	if got := envelopeInjectFrom(ctx); len(got) != 1 || got[0] != PieceBetaParam {
+		t.Fatalf("inject round-trip failed: %v", got)
+	}
+	if envelopeInjectFrom(context.Background()) != nil {
+		t.Fatal("absent inject should be nil")
 	}
 }

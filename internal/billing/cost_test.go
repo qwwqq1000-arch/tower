@@ -40,6 +40,24 @@ func TestCostUsd(t *testing.T) {
 	}
 }
 
+func TestKnownModel(t *testing.T) {
+	if !KnownModel("claude-opus-4-8") {
+		t.Fatal("claude-opus-4-8 should be known")
+	}
+	if !KnownModel("claude-sonnet-4-6") {
+		t.Fatal("claude-sonnet-4-6 should be known")
+	}
+	if !KnownModel("claude-haiku-4-5") {
+		t.Fatal("claude-haiku-4-5 should be known")
+	}
+	if KnownModel("gpt-4") {
+		t.Fatal("gpt-4 should not be known")
+	}
+	if KnownModel("unknown-model") {
+		t.Fatal("unknown-model should not be known")
+	}
+}
+
 func TestCostUsdFull_ReferenceOpus(t *testing.T) {
 	// Reference: claude-opus-4-8, inTok=2, outTok=7353, cacheRead=301197, cache5m=0, cache1h=5154
 	// Expected ≈ 0.385974 (within 1e-5)

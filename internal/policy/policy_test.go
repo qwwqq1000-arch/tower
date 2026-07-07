@@ -5,15 +5,41 @@ import (
 	"testing"
 )
 
-func ptrI(i int) *int         { return &i }
-func ptrB(b bool) *bool       { return &b }
-func ptrF(f float64) *float64 { return &f }
+func ptrI(i int) *int             { return &i }
+func ptrB(b bool) *bool           { return &b }
+func ptrF(f float64) *float64     { return &f }
 func ptrSS(ss []string) *[]string { return &ss }
+func ptrRF(rf RangeF) *RangeF     { return &rf }
+func ptrI64(i int64) *int64       { return &i }
+
+func TestMaxTokensFor(t *testing.T) {
+	c := Defaults()
+	cases := []struct {
+		model string
+		want  int
+	}{
+		{"claude-opus-4-8", 128000},
+		{"claude-haiku-4-5-20251001", 64000}, // dated suffix matches the base key
+		{"claude-sonnet-4-6", 64000},
+		{"claude-3-opus-20240229", 0}, // no key matches → unlimited
+		{"gpt-4", 0},
+	}
+	for _, tc := range cases {
+		if got := c.MaxTokensFor(tc.model); got != tc.want {
+			t.Errorf("MaxTokensFor(%q)=%d, want %d", tc.model, got, tc.want)
+		}
+	}
+	// Tenant patch overrides the whole map.
+	patched := Resolve(c, Patch{ModelMaxTokens: &map[string]int{"claude-opus-4-8": 32000}})
+	if got := patched.MaxTokensFor("claude-opus-4-8"); got != 32000 {
+		t.Errorf("patched opus limit=%d, want 32000", got)
+	}
+}
 
 func TestResolve_LayeredOverride(t *testing.T) {
 	base := Defaults()
 	got := Resolve(base,
-		Patch{MaxConcurrent: ptrI(5)},          // group layer
+		Patch{MaxConcurrent: ptrI(5)},                              // group layer
 		Patch{MaxConcurrent: ptrI(2), FallbackEnabled: ptrB(true)}, // node layer wins for MaxConcurrent
 	)
 	if got.MaxConcurrent != 2 {
@@ -22,6 +48,24 @@ func TestResolve_LayeredOverride(t *testing.T) {
 	if !got.FallbackEnabled {
 		t.Fatal("FallbackEnabled should be true")
 	}
+	if got.BanPersistStreak != base.BanPersistStreak {
+		t.Fatal("unset fields keep base value")
+	}
+}
+
+func TestResolve_TenantOverGlobal(t *testing.T) {
+	base := Defaults()
+	global := Patch{MaxConcurrent: ptrI(5), FallbackEnabled: ptrB(true)}
+	tenant := Patch{MaxConcurrent: ptrI(2)} // tenant layer wins for MaxConcurrent
+	got := Resolve(base, global, tenant)
+	if got.MaxConcurrent != 2 {
+		t.Fatalf("MaxConcurrent=%d, want 2 (tenant patch wins over global)", got.MaxConcurrent)
+	}
+	// Global-only field is preserved when tenant does not override it.
+	if !got.FallbackEnabled {
+		t.Fatal("FallbackEnabled should remain true from global layer")
+	}
+	// Unset-in-both fields keep the base value.
 	if got.BanPersistStreak != base.BanPersistStreak {
 		t.Fatal("unset fields keep base value")
 	}
@@ -62,41 +106,6 @@ func TestDryRun_NoChangeNoDiffs(t *testing.T) {
 	_, diffs := DryRun(base, Patch{MaxConcurrent: ptrI(base.MaxConcurrent)})
 	if len(diffs) != 0 {
 		t.Fatalf("setting same value should produce 0 diffs, got %v", diffs)
-	}
-}
-
-func TestResolve_QuotaRotateThreshold(t *testing.T) {
-	base := Defaults() // default 0.95
-
-	// Valid value applies.
-	got := Resolve(base, Patch{QuotaRotateThreshold: ptrF(0.8)})
-	if got.QuotaRotateThreshold != 0.8 {
-		t.Fatalf("QuotaRotateThreshold=%v, want 0.8", got.QuotaRotateThreshold)
-	}
-
-	// Invalid value (>1) falls back to 0.95.
-	got = Resolve(base, Patch{QuotaRotateThreshold: ptrF(1.5)})
-	if got.QuotaRotateThreshold != 0.95 {
-		t.Fatalf("QuotaRotateThreshold=%v, want 0.95 (out-of-range reset)", got.QuotaRotateThreshold)
-	}
-
-	// Invalid value (<=0) falls back to 0.95.
-	got = Resolve(base, Patch{QuotaRotateThreshold: ptrF(0)})
-	if got.QuotaRotateThreshold != 0.95 {
-		t.Fatalf("QuotaRotateThreshold=%v, want 0.95 (zero reset)", got.QuotaRotateThreshold)
-	}
-
-	// DryRun reports the changed field.
-	_, diffs := DryRun(base, Patch{QuotaRotateThreshold: ptrF(0.7)})
-	seen := map[string]Diff{}
-	for _, d := range diffs {
-		seen[d.Field] = d
-	}
-	if _, ok := seen["QuotaRotateThreshold"]; !ok {
-		t.Fatal("DryRun missing diff for QuotaRotateThreshold")
-	}
-	if d := seen["QuotaRotateThreshold"]; d.To != "0.7" {
-		t.Fatalf("QuotaRotateThreshold diff To=%q, want 0.7", d.To)
 	}
 }
 
@@ -153,5 +162,126 @@ func TestResolve_FallbackStrategyTriggers(t *testing.T) {
 		if _, ok := seen[field]; !ok {
 			t.Fatalf("DryRun missing diff for %s", field)
 		}
+	}
+}
+
+// TestPickMaxConcurrent covers the shared MaxConcurrent pickup so CPA and
+// meridian per-account capacity track the live global policy identically.
+func TestPickMaxConcurrent(t *testing.T) {
+	const def = 3
+	cases := []struct {
+		name string
+		json []byte
+		want int
+	}{
+		{"override 7", []byte(`{"MaxConcurrent":7}`), 7},
+		{"field absent", []byte(`{}`), def},
+		{"non-positive ignored", []byte(`{"MaxConcurrent":0}`), def},
+		{"negative ignored", []byte(`{"MaxConcurrent":-2}`), def},
+		{"empty json", []byte(``), def},
+		{"invalid json", []byte(`not-json`), def},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := PickMaxConcurrent(tc.json, def); got != tc.want {
+				t.Fatalf("PickMaxConcurrent(%q, %v) = %v, want %v", tc.json, def, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSpendCapDefaults(t *testing.T) {
+	d := Defaults()
+	if d.SpendCap5hUsd.Min != 100 || d.SpendCap5hUsd.Max != 200 {
+		t.Fatal("5h 默认区间错")
+	}
+}
+
+func TestSpendCapPatch(t *testing.T) {
+	c := Defaults()
+	en := true
+	apply(&c, Patch{SpendCap5hEnabled: &en, SpendCap5hUsd: ptrRF(RangeF{Min: 50, Max: 60})})
+	if !c.SpendCap5hEnabled || c.SpendCap5hUsd.Max != 60 {
+		t.Fatal("patch 未生效")
+	}
+}
+
+func TestCCEnvelopeDefaultsAndApply(t *testing.T) {
+	d := Defaults()
+	if d.CCEnvelopeEnabled || d.CCEnforceSystemPrompt || d.CCEnforceBetaParam || d.CCEnforceCliHeaders {
+		t.Fatal("CC envelope toggles must default false")
+	}
+	if d.CCSystemPromptText == "" || d.CCCliXApp == "" {
+		t.Fatal("CC value defaults must be set")
+	}
+	on := true
+	act := "complete"
+	c := Defaults()
+	apply(&c, Patch{CCEnvelopeEnabled: &on, CCEnforceBetaParam: &on, CCEnvelopeAction: &act})
+	if !c.CCEnvelopeEnabled || !c.CCEnforceBetaParam || c.CCEnvelopeAction != "complete" {
+		t.Fatalf("apply did not patch CC fields: %+v", c)
+	}
+}
+
+func TestApplyLongContextFields(t *testing.T) {
+	c := Defaults()
+	if c.LongContextGateEnabled {
+		t.Fatal("default LongContextGateEnabled must be false (behavior-neutral)")
+	}
+	if c.LongContextTokenThreshold != 200000 {
+		t.Fatalf("default threshold=%d want 200000", c.LongContextTokenThreshold)
+	}
+	if c.No1MRecoveryMs != 86400000 {
+		t.Fatalf("default recovery=%d want 86400000", c.No1MRecoveryMs)
+	}
+	en := true
+	thr := 150000
+	rec := int64(3600000)
+	mk := []string{"1m", "[1m]"}
+	kw := []string{"extra usage"}
+	sc := []int{400, 402}
+	apply(&c, Patch{
+		LongContextGateEnabled:    &en,
+		LongContextTokenThreshold: &thr,
+		LongContextModelMarkers:   &mk,
+		ExtraUsageKeywords:        &kw,
+		ExtraUsageStatusCodes:     &sc,
+		No1MRecoveryMs:            &rec,
+	})
+	if !c.LongContextGateEnabled || c.LongContextTokenThreshold != 150000 || c.No1MRecoveryMs != 3600000 {
+		t.Fatalf("apply scalar mismatch: %+v", c)
+	}
+	if len(c.LongContextModelMarkers) != 2 || c.LongContextModelMarkers[0] != "1m" {
+		t.Fatalf("markers mismatch: %v", c.LongContextModelMarkers)
+	}
+	if len(c.ExtraUsageStatusCodes) != 2 || c.ExtraUsageStatusCodes[1] != 402 {
+		t.Fatalf("codes mismatch: %v", c.ExtraUsageStatusCodes)
+	}
+}
+
+func TestQuietWindowOvernight(t *testing.T) {
+	// 21:00-04:00 跨夜: 23:00(=1380) 命中, 12:00(=720) 不命中
+	windows := []TimeWindow{{StartMin: 1260, EndMin: 240}}
+	if !InAnyWindow(23*60, windows) {
+		t.Fatal("23点应命中安静窗口")
+	}
+	if InAnyWindow(12*60, windows) {
+		t.Fatal("12点不应命中安静窗口")
+	}
+	// Normal window (non-overnight): 09:00-18:00
+	normal := []TimeWindow{{StartMin: 9 * 60, EndMin: 18 * 60}}
+	if !InAnyWindow(10*60, normal) {
+		t.Fatal("10点应命中正常窗口")
+	}
+	if InAnyWindow(20*60, normal) {
+		t.Fatal("20点不应命中正常窗口")
+	}
+	// Edge: exactly at start
+	if !InAnyWindow(1260, windows) {
+		t.Fatal("21:00整应命中安静窗口")
+	}
+	// Edge: exactly at end (exclusive)
+	if InAnyWindow(240, windows) {
+		t.Fatal("04:00整不应命中(端点排除)")
 	}
 }

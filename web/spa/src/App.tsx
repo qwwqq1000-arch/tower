@@ -1,6 +1,5 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import { AuthProvider } from './auth';
-import { LoginGate } from './auth';
+import { AuthProvider, LoginGate, RequireRole } from './auth';
 import { Shell } from './Shell';
 
 import Dashboard    from './pages/Dashboard';
@@ -18,6 +17,15 @@ import Fallback     from './pages/Fallback';
 import Users        from './pages/Users';
 import Slots        from './pages/Slots';
 import Settings     from './pages/Settings';
+import Intercepted  from './pages/Intercepted';
+
+// Roles that count as admin-or-above.
+const ADMIN_ROLES = ['admin', 'superadmin', 'operator'];
+// Mixed views that admins AND tenants can reach (the page renders the tenant
+// variant internally when isTenant is true).
+const TENANT_ACCESSIBLE = [...ADMIN_ROLES, 'tenant'];
+// Only superadmin can reach certain pages.
+const SUPERADMIN_ROLES = ['superadmin'];
 
 export default function App() {
   return (
@@ -26,21 +34,49 @@ export default function App() {
         <LoginGate>
           <Shell>
             <Routes>
+              {/* Public (authenticated) routes */}
               <Route path="/"          element={<Dashboard />} />
-              <Route path="/dispatch"  element={<Dispatch />} />
               <Route path="/nodes"     element={<Nodes />} />
               <Route path="/nodes/:id" element={<NodeDetail />} />
               <Route path="/accounts"  element={<Accounts />} />
-              <Route path="/keys"      element={<Keys />} />
-              <Route path="/policies"  element={<Policies />} />
-              <Route path="/slots"     element={<Slots />} />
-              <Route path="/desired"   element={<Desired />} />
               <Route path="/logs"      element={<Logs />} />
-              <Route path="/billing"   element={<Billing />} />
-              <Route path="/ban-analysis" element={<BanAnalysis />} />
-              <Route path="/fallback"     element={<Fallback />} />
-              <Route path="/users"        element={<Users />} />
-              <Route path="/settings"     element={<Settings />} />
+
+              {/* Admin-or-above routes */}
+              <Route path="/dispatch"  element={
+                <RequireRole allow={TENANT_ACCESSIBLE}><Dispatch /></RequireRole>
+              } />
+              <Route path="/keys"      element={
+                <RequireRole allow={ADMIN_ROLES}><Keys /></RequireRole>
+              } />
+              <Route path="/slots"     element={
+                <RequireRole allow={ADMIN_ROLES}><Slots /></RequireRole>
+              } />
+              <Route path="/billing"   element={
+                <RequireRole allow={TENANT_ACCESSIBLE}><Billing /></RequireRole>
+              } />
+              <Route path="/ban-analysis" element={
+                <RequireRole allow={ADMIN_ROLES}><BanAnalysis /></RequireRole>
+              } />
+              <Route path="/fallback"     element={
+                <RequireRole allow={TENANT_ACCESSIBLE}><Fallback /></RequireRole>
+              } />
+              <Route path="/settings"     element={
+                <RequireRole allow={TENANT_ACCESSIBLE}><Settings /></RequireRole>
+              } />
+              <Route path="/desired"   element={
+                <RequireRole allow={ADMIN_ROLES}><Desired /></RequireRole>
+              } />
+
+              {/* Superadmin-only routes */}
+              <Route path="/policies"  element={
+                <RequireRole allow={SUPERADMIN_ROLES}><Policies /></RequireRole>
+              } />
+              <Route path="/users"     element={
+                <RequireRole allow={SUPERADMIN_ROLES}><Users /></RequireRole>
+              } />
+              <Route path="/intercepted" element={
+                <RequireRole allow={SUPERADMIN_ROLES}><Intercepted /></RequireRole>
+              } />
             </Routes>
           </Shell>
         </LoginGate>

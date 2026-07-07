@@ -46,6 +46,39 @@ func (c *Cipher) Encrypt(plaintext []byte) (string, error) {
 	return base64.StdEncoding.EncodeToString(sealed), nil
 }
 
+// EncryptStr encrypts plain and returns base64 ciphertext. It is a string-typed
+// convenience over Encrypt for secret columns. A nil Cipher (plaintext-mode
+// deployments / tests without a master key) or an empty input returns plain
+// unchanged, so callers can encrypt-on-write unconditionally. On encryption
+// error it falls back to returning plain rather than persisting a lost secret.
+func (c *Cipher) EncryptStr(plain string) string {
+	if c == nil || plain == "" {
+		return plain
+	}
+	enc, err := c.Encrypt([]byte(plain))
+	if err != nil {
+		return plain
+	}
+	return enc
+}
+
+// DecryptOrPlaintext is the transparent read shim for secret columns
+// (vault-crypto-3). It returns the decrypted plaintext when s is a ciphertext
+// produced by this cipher, and otherwise returns s unchanged. This makes reads
+// tolerant of legacy plaintext rows written before encryption-at-rest was
+// enabled: an admin re-save upgrades a row to ciphertext, but un-migrated rows
+// keep working. A nil Cipher (plaintext-mode) returns s unchanged.
+func (c *Cipher) DecryptOrPlaintext(s string) string {
+	if c == nil || s == "" {
+		return s
+	}
+	plain, err := c.Decrypt(s)
+	if err != nil {
+		return s // not our ciphertext (or wrong key) → treat as plaintext.
+	}
+	return string(plain)
+}
+
 // Decrypt reverses Encrypt; returns an error on tamper or wrong key.
 func (c *Cipher) Decrypt(s string) ([]byte, error) {
 	raw, err := base64.StdEncoding.DecodeString(s)

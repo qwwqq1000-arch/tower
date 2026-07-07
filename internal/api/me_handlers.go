@@ -3,10 +3,10 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 
 	"github.com/qwwqq1000-arch/tower/internal/auth"
 	"github.com/qwwqq1000-arch/tower/internal/billing"
+	"github.com/qwwqq1000-arch/tower/internal/crypto"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 	"github.com/qwwqq1000-arch/tower/internal/dispatch"
 )
@@ -22,7 +22,7 @@ func ownerFrom(r *http.Request) (string, bool) {
 }
 
 // meAccountsHandler returns ONLY the accounts owned by the caller. Read-only.
-func meAccountsHandler(q *sqlc.Queries) http.HandlerFunc {
+func meAccountsHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		owner, ok := ownerFrom(r)
 		if !ok {
@@ -35,10 +35,48 @@ func meAccountsHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		// CPA per-account quota (5h/7d util + reset times), keyed by account id — so the
+		// tenant 号库 shows the same 额度/重置时间 as the admin 号库 (cpa-3 parity).
+		quotaByAccount := map[string]sqlc.CpaAccountQuotum{}
+		if qrows, qerr := q.ListCpaQuota(ctx); qerr == nil {
+			for _, qr := range qrows {
+				quotaByAccount[qr.AccountID] = qr
+			}
+		}
+		// Live status overlay (banned/half_open/permanent/cooldown + quota limit) from
+		// the store — mirrors the admin 号库 so a tenant sees the same live state.
+		liveStatus := map[string]string{}
+		liveLimitedUntil := map[string]int64{} // key -> quota-limit reset deadline
+		if svc != nil && svc.Store != nil {
+			now := int64(0)
+			if svc.Now != nil {
+				now = svc.Now()
+			}
+			for _, snap := range svc.Store.Snapshot(now) {
+				liveStatus[snap.Key] = snap.Status
+				if snap.Limited {
+					liveLimitedUntil[snap.Key] = snap.LimitedUntil
+				}
+			}
+		}
+		boundAtMap := map[string]int64{}
+		if baRows, err := q.ListBoundAtByTarget(ctx); err == nil {
+			for _, r := range baRows {
+				boundAtMap[r.Target] = r.BoundAt
+			}
+		}
+		todayStart := startOfTodayMs()
 		todayCostMap := map[string]float64{}
-		if todayRows, err := q.CostByTargetSince(ctx, startOfTodayMs()); err == nil {
+		if todayRows, err := q.CostByTargetSince(ctx, todayStart); err == nil {
 			for _, t := range todayRows {
 				todayCostMap[t.Target] = t.Cost
+			}
+		}
+		for target, ba := range boundAtMap {
+			if ba > todayStart {
+				if cost, err := q.CostByTargetSinceOne(ctx, sqlc.CostByTargetSinceOneParams{Target: target, Ts: ba}); err == nil {
+					todayCostMap[target] = cost
+				}
 			}
 		}
 		totalCostMap := map[string]float64{}
@@ -47,24 +85,61 @@ func meAccountsHandler(q *sqlc.Queries) http.HandlerFunc {
 				totalCostMap[t.Target] = t.Cost
 			}
 		}
+		for target, ba := range boundAtMap {
+			if ba > 0 {
+				if cost, err := q.CostByTargetSinceOne(ctx, sqlc.CostByTargetSinceOneParams{Target: target, Ts: ba}); err == nil {
+					totalCostMap[target] = cost
+				}
+			}
+		}
 		out := make([]map[string]any, 0)
 		for _, a := range rows {
 			if a.AcctOwnerID != owner { // strict owner scoping
 				continue
 			}
 			key := a.NodeID + ":" + a.ProfileID
-			out = append(out, map[string]any{
+			status := a.AcctStatus
+			if ls, ok := liveStatus[key]; ok {
+				status = ls // live ban/half_open/permanent/cooldown wins over stored value
+			}
+			limitedUntil := liveLimitedUntil[key]
+			if limitedUntil > 0 {
+				status = "limited" // quota-rotated out — show 限额 like the admin 号库
+			}
+			var cpaQuota map[string]any
+			if qr, ok := quotaByAccount[a.AccountID]; ok {
+				cpaQuota = map[string]any{
+					"fiveHourUtil": qr.FiveHourUtil, "fiveHourResetsAt": qr.FiveHourResetsAt,
+					"sevenDayUtil": qr.SevenDayUtil, "sevenDayResetsAt": qr.SevenDayResetsAt,
+					"sevenDaySonnetUtil": qr.SevenDaySonnetUtil, "sevenDaySonnetResetsAt": qr.SevenDaySonnetResetsAt,
+					"updatedAt": qr.UpdatedAt, "fetchError": qr.QuotaFetchError,
+				}
+			}
+			row := map[string]any{
 				"accountId":        a.AccountID,
+				"nodeId":           a.NodeID,
+				"profileId":        a.ProfileID,
 				"nodeName":         a.NodeName,
+				"cpaQuota":         cpaQuota,
 				"email":            a.Email,
 				"expiresAt":        a.ExpiresAt,
 				"subscriptionType": a.SubscriptionType,
 				"weight":           a.Weight,
 				"role":             a.Role,
 				"enabled":          a.Enabled,
+				"status":           status,
+				"limitedUntil":     limitedUntil,
 				"todayCostUsd":     todayCostMap[key],
 				"totalCostUsd":     totalCostMap[key],
-			})
+			}
+			if h, ok := getHealthCache(a.NodeID); ok {
+				if row["subscriptionType"] == "" {
+					row["subscriptionType"] = h.SubscriptionType
+				}
+				row["subscriptionCreatedAt"] = h.SubscriptionCreatedAt
+				row["accountCreatedAt"] = h.AccountCreatedAt
+			}
+			out = append(out, row)
 		}
 		writeJSON(w, 200, out)
 	}
@@ -147,24 +222,26 @@ func meDashboardHandler(q *sqlc.Queries) http.HandlerFunc {
 		}
 		consumption, _ := q.SumCostForOwner(ctx, owner)
 		rate, _ := q.GetHostingRate(ctx, owner)
-		unsettled, accumulated := billing.ComputeHostingFee(consumption, 0, rate)
-		// separate channel hosting billing at the tenant's channel_rate.
+		settled, _ := q.SumSettledForOwner(ctx, owner) // sum of settled FEE (billing-fee-1)
 		channelConsumption, _ := q.SumFallbackSpendByOwner(ctx, owner)
 		var channelRate float64
 		if t, err := q.GetTenantByID(ctx, owner); err == nil {
 			channelRate = t.ChannelRate
 		}
-		channelHostingFee := channelConsumption * channelRate
+		nodeFee := consumption * rate                         // 累计托管费
+		channelHostingFee := channelConsumption * channelRate // 渠道托管费
+		// Unsettled is the COMBINED outstanding fee (node + channel) minus settled fee.
+		unsettled, _ := billing.ComputeHostingFee(nodeFee+channelHostingFee, settled)
 		writeJSON(w, 200, map[string]any{
-			"accounts": map[string]any{"total": accTotal, "active": accActive},
-			"today":    map[string]any{"requests": todayReq, "costUsd": todayCost},
-			"consumptionUsd":        consumption,
+			"accounts":              map[string]any{"total": accTotal, "active": accActive},
+			"today":                 map[string]any{"requests": todayReq, "costUsd": todayCost},
+			"consumptionUsd":        billing.RoundUSD(consumption),
 			"hostingRate":           rate,
-			"unsettledUsd":          unsettled,
-			"accumulatedUsd":        accumulated,
-			"channelConsumptionUsd": channelConsumption,
+			"unsettledUsd":          billing.RoundUSD(unsettled),
+			"accumulatedUsd":        billing.RoundUSD(nodeFee),
+			"channelConsumptionUsd": billing.RoundUSD(channelConsumption),
 			"channelRate":           channelRate,
-			"channelHostingFeeUsd":  channelHostingFee,
+			"channelHostingFeeUsd":  billing.RoundUSD(channelHostingFee),
 		})
 	}
 }
@@ -179,12 +256,14 @@ func meLogsHandler(q *sqlc.Queries) http.HandlerFunc {
 		}
 		rows, err := q.ListLogsByOwner(r.Context(), sqlc.ListLogsByOwnerParams{
 			OwnerID: owner,
-			Limit:   limitParam(r, 100),
+			Limit:   limitParam(r, 500),
 		})
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		// Build target→email map scoped to owner (mirrors admin listLogsHandler).
+		emailMap := buildAccountEmailMap(r.Context(), q)
 		out := make([]map[string]any, 0, len(rows))
 		for _, l := range rows {
 			out = append(out, map[string]any{
@@ -193,9 +272,18 @@ func meLogsHandler(q *sqlc.Queries) http.HandlerFunc {
 				"latencyMs": l.LatencyMs, "tokensIn": l.TokensIn,
 				"tokensOut": l.TokensOut, "fallbackReason": l.FallbackReason,
 				"ttfbMs": l.TtfbMs, "stream": l.Stream, "costUsd": l.CostUsd,
+				"requestId":   l.RequestID,
+				"targetEmail": resolveAccountKey(l.Target, emailMap),
 			})
 		}
 		writeJSON(w, 200, out)
+	}
+}
+
+// meLogDetailHandler is disabled — tenants may not view request/response details.
+func meLogDetailHandler(q *sqlc.Queries) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
 	}
 }
 
@@ -209,17 +297,37 @@ func meEventsHandler(q *sqlc.Queries) http.HandlerFunc {
 		}
 		rows, err := q.ListEventsByOwner(r.Context(), sqlc.ListEventsByOwnerParams{
 			OwnerID: owner,
-			Limit:   limitParam(r, 100),
+			Limit:   limitParam(r, 500),
 		})
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		// Resolve target→email and channel→name (mirrors admin listEventsHandler).
+		emailMap := buildAccountEmailMap(r.Context(), q)
+		channelMap := buildChannelNameMap(r.Context(), q)
 		out := make([]map[string]any, 0, len(rows))
 		for _, e := range rows {
+			targetName := resolveEventTarget(e.Target, emailMap, channelMap)
+			detailAccount := ""
+			var d map[string]any
+			if len(e.Detail) > 0 {
+				if jerr := json.Unmarshal(e.Detail, &d); jerr == nil {
+					if acct, ok := d["account"].(string); ok && acct != "" {
+						resolved := resolveAccountKey(acct, emailMap)
+						if resolved != "" {
+							detailAccount = resolved
+						} else {
+							detailAccount = acct
+						}
+					}
+				}
+			}
 			out = append(out, map[string]any{
 				"ts": e.Ts, "type": e.Type, "target": e.Target,
-				"detail": json.RawMessage(e.Detail),
+				"detail":        json.RawMessage(e.Detail),
+				"targetName":    targetName,
+				"detailAccount": detailAccount,
 			})
 		}
 		writeJSON(w, 200, out)
@@ -266,23 +374,28 @@ func meListFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 			todaySpend, _ := q.GetFallbackSpendToday(r.Context(), sqlc.GetFallbackSpendTodayParams{ChannelID: c.ID, Day: today})
 			totalSpend, _ := q.GetFallbackSpendTotal(r.Context(), c.ID)
 			out = append(out, map[string]any{
-				"id":              c.ID,
-				"name":            c.Name,
-				"baseUrl":         c.BaseUrl,
-				"hasKey":          c.ApiKey != "",
-				"priority":        c.Priority,
-				"weight":          c.Weight,
-				"maxConcurrent":   c.MaxConcurrent,
-				"cooldownMs":      c.CooldownMs,
-				"priceThreshold":  c.PriceThreshold,
-				"modelAllowlist":  c.ModelAllowlist,
-				"enabled":         c.Enabled,
-				"todayCostUsd":    todaySpend.Cost,
-				"todayRequests":   todaySpend.Requests,
-				"totalCostUsd":    totalSpend.Cost,
-				"totalRequests":   totalSpend.Requests,
-				"balanceUsd":      c.BalanceUsd,
-				"balanceAlertUsd": c.BalanceAlertUsd,
+				"id":                  c.ID,
+				"name":                c.Name,
+				"baseUrl":             c.BaseUrl,
+				"hasKey":              c.ApiKey != "",
+				"priority":            c.Priority,
+				"weight":              c.Weight,
+				"maxConcurrent":       c.MaxConcurrent,
+				"cooldownMs":          c.CooldownMs,
+				"priceThreshold":      c.PriceThreshold,
+				"modelAllowlist":      c.ModelAllowlist,
+				"enabled":             c.Enabled,
+				"todayCostUsd":        todaySpend.Cost,
+				"todayRequests":       todaySpend.Requests,
+				"totalCostUsd":        totalSpend.Cost,
+				"totalRequests":       totalSpend.Requests,
+				"balanceUsd":          c.BalanceUsd,
+				"balanceAlertUsd":     c.BalanceAlertUsd,
+				"spendCapDailyMinUsd": c.SpendCapDailyMinUsd,
+				"spendCapDailyMaxUsd": c.SpendCapDailyMaxUsd,
+				"spendCapTotalMinUsd": c.SpendCapTotalMinUsd,
+				"spendCapTotalMaxUsd": c.SpendCapTotalMaxUsd,
+				"spendCapAction":      c.SpendCapAction,
 			})
 		}
 		writeJSON(w, 200, out)
@@ -291,7 +404,7 @@ func meListFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 
 // meCreateFallbackHandler creates a fallback channel owned by the caller.
 // owner_id is forced to the session sub — the request body cannot override it.
-func meCreateFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
+func meCreateFallbackHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		owner, ok := ownerFrom(r)
 		if !ok {
@@ -303,6 +416,12 @@ func meCreateFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 400, map[string]string{"error": "name/baseUrl required"})
 			return
 		}
+		// SSRF guard: tenant-set channels are untrusted — block loopback/metadata/
+		// private so a tenant cannot point Tower at internal services (security-audit).
+		if verr := validateUpstreamURL(b.BaseUrl, false); verr != nil {
+			writeJSON(w, 400, map[string]string{"error": verr.Error()})
+			return
+		}
 		// Enforce per-tenant fallback channel limit. Default (or 0) = max 1.
 		limit := int32(1)
 		if t, err := q.GetTenantByID(r.Context(), owner); err == nil && t.FallbackLimit > 0 {
@@ -312,27 +431,38 @@ func meCreateFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "fallback channel limit reached"})
 			return
 		}
+		// Encrypt channel secrets at rest (vault-crypto-3); nil cipher = no-op.
+		meCreateSpendCapAction := b.SpendCapAction
+		if meCreateSpendCapAction == "" {
+			meCreateSpendCapAction = "skip"
+		}
 		c, err := q.CreateFallbackChannel(r.Context(), sqlc.CreateFallbackChannelParams{
-			ID:              randHex("fc_"),
-			OwnerID:         owner, // forced — never trust body ownerId
-			GroupID:         b.GroupId,
-			Name:            b.Name,
-			BaseUrl:         b.BaseUrl,
-			ApiKey:          b.ApiKey,
-			Priority:        b.Priority,
-			Weight:          b.Weight,
-			MaxConcurrent:   b.MaxConcurrent,
-			CooldownMs:      b.CooldownMs,
-			PriceThreshold:  b.PriceThreshold,
-			ModelAllowlist:  b.ModelAllowlist,
-			BalanceToken:    b.BalanceToken,
-			BalanceUserID:   b.BalanceUserId,
-			BalanceAlertUsd: b.BalanceAlertUsd,
+			ID:                  randHex("fc_"),
+			OwnerID:             owner, // forced — never trust body ownerId
+			GroupID:             b.GroupId,
+			Name:                b.Name,
+			BaseUrl:             b.BaseUrl,
+			ApiKey:              cipher.EncryptStr(b.ApiKey),
+			Priority:            b.Priority,
+			Weight:              b.Weight,
+			MaxConcurrent:       b.MaxConcurrent,
+			CooldownMs:          b.CooldownMs,
+			PriceThreshold:      b.PriceThreshold,
+			ModelAllowlist:      b.ModelAllowlist,
+			BalanceToken:        cipher.EncryptStr(b.BalanceToken),
+			BalanceUserID:       b.BalanceUserId,
+			BalanceAlertUsd:     b.BalanceAlertUsd,
+			SpendCapDailyMinUsd: b.SpendCapDailyMinUsd,
+			SpendCapDailyMaxUsd: b.SpendCapDailyMaxUsd,
+			SpendCapTotalMinUsd: b.SpendCapTotalMinUsd,
+			SpendCapTotalMaxUsd: b.SpendCapTotalMaxUsd,
+			SpendCapAction:      meCreateSpendCapAction,
 		})
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "fallback.create", "channel:"+c.ID, nil, map[string]any{"name": b.Name, "baseUrl": b.BaseUrl, "ownerId": owner})
 		writeJSON(w, 200, map[string]string{"id": c.ID})
 	}
 }
@@ -357,7 +487,7 @@ func meOwnFallback(q *sqlc.Queries, w http.ResponseWriter, r *http.Request) (sql
 	return ch, owner, true
 }
 
-func meUpdateFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
+func meUpdateFallbackHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ch, _, ok := meOwnFallback(q, w, r)
 		if !ok {
@@ -368,31 +498,50 @@ func meUpdateFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 400, map[string]string{"error": "bad body"})
 			return
 		}
-		// Preserve existing secrets when blank (留空表示不更改).
+		// Secrets at rest (vault-crypto-3): non-blank → freshly encrypted; blank
+		// (留空表示不更改) → preserve the stored ciphertext verbatim (do NOT re-encrypt).
+		apiKeyEnc := cipher.EncryptStr(b.ApiKey)
 		if b.ApiKey == "" {
-			b.ApiKey = ch.ApiKey
+			apiKeyEnc = ch.ApiKey
 		}
+		balTokenEnc := cipher.EncryptStr(b.BalanceToken)
 		if b.BalanceToken == "" {
-			b.BalanceToken = ch.BalanceToken
+			balTokenEnc = ch.BalanceToken
+		}
+		meUpdateSpendCapAction := b.SpendCapAction
+		if meUpdateSpendCapAction == "" {
+			meUpdateSpendCapAction = "skip"
+		}
+		if b.BaseUrl != "" { // SSRF guard on update (security-audit)
+			if verr := validateUpstreamURL(b.BaseUrl, false); verr != nil {
+				writeJSON(w, 400, map[string]string{"error": verr.Error()})
+				return
+			}
 		}
 		if err := q.UpdateFallbackChannel(r.Context(), sqlc.UpdateFallbackChannelParams{
-			ID:              ch.ID,
-			Name:            b.Name,
-			BaseUrl:         b.BaseUrl,
-			ApiKey:          b.ApiKey,
-			Priority:        b.Priority,
-			Weight:          b.Weight,
-			MaxConcurrent:   b.MaxConcurrent,
-			CooldownMs:      b.CooldownMs,
-			PriceThreshold:  b.PriceThreshold,
-			ModelAllowlist:  b.ModelAllowlist,
-			BalanceToken:    b.BalanceToken,
-			BalanceUserID:   b.BalanceUserId,
-			BalanceAlertUsd: b.BalanceAlertUsd,
+			ID:                  ch.ID,
+			Name:                b.Name,
+			BaseUrl:             b.BaseUrl,
+			ApiKey:              apiKeyEnc,
+			Priority:            b.Priority,
+			Weight:              b.Weight,
+			MaxConcurrent:       b.MaxConcurrent,
+			CooldownMs:          b.CooldownMs,
+			PriceThreshold:      b.PriceThreshold,
+			ModelAllowlist:      b.ModelAllowlist,
+			BalanceToken:        balTokenEnc,
+			BalanceUserID:       b.BalanceUserId,
+			BalanceAlertUsd:     b.BalanceAlertUsd,
+			SpendCapDailyMinUsd: b.SpendCapDailyMinUsd,
+			SpendCapDailyMaxUsd: b.SpendCapDailyMaxUsd,
+			SpendCapTotalMinUsd: b.SpendCapTotalMinUsd,
+			SpendCapTotalMaxUsd: b.SpendCapTotalMaxUsd,
+			SpendCapAction:      meUpdateSpendCapAction,
 		}); err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "fallback.update", "channel:"+ch.ID, nil, map[string]any{"name": b.Name, "baseUrl": b.BaseUrl})
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }
@@ -415,6 +564,7 @@ func meEnableFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "fallback.enable", "channel:"+ch.ID, nil, map[string]any{"enabled": b.Enabled})
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }
@@ -429,6 +579,7 @@ func meDeleteFallbackHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "fallback.delete", "channel:"+ch.ID, nil, nil)
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }
@@ -488,6 +639,7 @@ func meCreateSlotHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "slot.create", "slot:"+s.ID, nil, map[string]any{"name": b.Name, "startMin": b.StartMin, "endMin": b.EndMin, "ownerId": owner})
 		writeJSON(w, 200, map[string]string{"id": s.ID})
 	}
 }
@@ -522,6 +674,7 @@ func meDeleteSlotHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "slot.delete", "slot:"+s.ID, nil, nil)
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }
@@ -543,6 +696,7 @@ func meSetSlotEnabledHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "slot.enable", "slot:"+s.ID, nil, map[string]any{"enabled": b.Enabled})
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }
@@ -600,6 +754,7 @@ func meCreateDispatchKeyHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "dispatchKey.create", "key:"+id, nil, map[string]any{"label": body.Label, "ownerId": owner, "prefix": prefix})
 		writeJSON(w, 200, map[string]string{"id": id, "key": plaintext})
 	}
 }
@@ -633,14 +788,18 @@ func meDeleteDispatchKeyHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "dispatchKey.delete", "key:"+id, nil, nil)
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }
 
 // ---- Tenant dispatch status (own concurrency) ----
 
-// meDispatchStatusHandler returns an owner-scoped dispatch snapshot: accounts
-// limited to the caller's, with traffic/events computed from owner-scoped logs.
+// meDispatchStatusHandler returns an owner-scoped dispatch snapshot. It delegates
+// to the SAME buildDispatchStatus used by the admin dispatch panel (all=false), so
+// tenants see identical status semantics — elastic 待命/亲和 overlay, 限额 reason, and
+// per-account RPM — instead of a drifting parallel implementation that showed every
+// account as 活跃 (为什么只改一遍: one code path now serves admin and tenant alike).
 func meDispatchStatusHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		owner, ok := ownerFrom(r)
@@ -648,125 +807,7 @@ func meDispatchStatusHandler(q *sqlc.Queries, svc *dispatch.Service) http.Handle
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 			return
 		}
-		ctx := r.Context()
-		now := nowUnix() * 1000
-		// owner-owned account keys (node:profile) + labels.
-		ownKeys := map[string]string{}
-		if accs, err := q.ListNodeAccountsAll(ctx); err == nil {
-			for _, a := range accs {
-				if a.AcctOwnerID != owner {
-					continue
-				}
-				label := a.NodeName
-				if a.Email != "" {
-					label = a.Email
-				}
-				ownKeys[a.NodeID+":"+a.ProfileID] = label
-			}
-		}
-		todayCostMap := map[string]float64{}
-		if rows, err := q.CostByTargetSince(ctx, startOfTodayMs()); err == nil {
-			for _, t := range rows {
-				todayCostMap[t.Target] = t.Cost
-			}
-		}
-		totalCostMap := map[string]float64{}
-		if rows, err := q.CostByTargetTotal(ctx); err == nil {
-			for _, t := range rows {
-				totalCostMap[t.Target] = t.Cost
-			}
-		}
-		accounts := []map[string]any{}
-		if svc != nil && svc.Store != nil {
-			for _, s := range svc.Store.Snapshot(now) {
-				if strings.HasPrefix(s.Key, "fb:") {
-					continue
-				}
-				label, mine := ownKeys[s.Key]
-				if !mine { // strict: only the caller's accounts
-					continue
-				}
-				accounts = append(accounts, map[string]any{
-					"key": s.Key, "label": label, "status": s.Status,
-					"inflight": s.Inflight, "available": s.Available,
-					"todayCostUsd": todayCostMap[s.Key], "totalCostUsd": totalCostMap[s.Key],
-				})
-			}
-		}
-		// traffic scoped to owner via owner-scoped logs.
-		var okc, errc int
-		var in, out int64
-		if logs, err := q.ListLogsByOwner(ctx, sqlc.ListLogsByOwnerParams{OwnerID: owner, Limit: 200}); err == nil {
-			for _, l := range logs {
-				switch l.Status {
-				case "ok":
-					okc++
-				case "error":
-					errc++
-				}
-				in += l.TokensIn
-				out += l.TokensOut
-			}
-		}
-		var total, rpm int64
-		if t, err := q.CountDispatchLogsByOwner(ctx, owner); err == nil {
-			total = t
-		}
-		if rr, err := q.CountDispatchLogsByOwnerSince(ctx, sqlc.CountDispatchLogsByOwnerSinceParams{OwnerID: owner, Ts: now - 60000}); err == nil {
-			rpm = rr
-		}
-		traffic := map[string]any{
-			"total": total, "rpm": rpm, "ok": okc, "error": errc,
-			"tokensIn": in, "tokensOut": out,
-		}
-		events := []map[string]any{}
-		if evs, err := q.ListEventsByOwner(ctx, sqlc.ListEventsByOwnerParams{OwnerID: owner, Limit: 20}); err == nil {
-			for _, e := range evs {
-				events = append(events, map[string]any{
-					"ts": e.Ts, "type": e.Type, "target": e.Target,
-					"detail": json.RawMessage(e.Detail),
-				})
-			}
-		}
-		// fallbackChannels: the caller's OWN channels (mirrors admin buildDispatchStatus shape).
-		snapMap := map[string]struct{ Inflight, Available int }{}
-		if svc != nil && svc.Store != nil {
-			for _, s := range svc.Store.Snapshot(now) {
-				snapMap[s.Key] = struct{ Inflight, Available int }{s.Inflight, s.Available}
-			}
-		}
-		fallbackChannels := []map[string]any{}
-		if chs, err := q.ListFallbackChannelsByOwner(ctx, owner); err == nil {
-			today := todayDayStr()
-			for _, ch := range chs {
-				var todayReq int64
-				var todayCost float64
-				if spend, serr := q.GetFallbackSpendToday(ctx, sqlc.GetFallbackSpendTodayParams{ChannelID: ch.ID, Day: today}); serr == nil {
-					todayReq = spend.Requests
-					todayCost = spend.Cost
-				}
-				fbKey := "fb:" + ch.ID
-				inflight, available := 0, int(ch.MaxConcurrent)
-				if available <= 0 {
-					available = 1000
-				}
-				if snap, ok := snapMap[fbKey]; ok {
-					inflight = snap.Inflight
-					available = snap.Available
-				}
-				fallbackChannels = append(fallbackChannels, map[string]any{
-					"id": ch.ID, "name": ch.Name, "enabled": ch.Enabled,
-					"priority": ch.Priority, "weight": ch.Weight,
-					"todayRequests": todayReq, "todayCostUsd": todayCost,
-					"inflight": inflight, "available": available,
-					"balanceUsd": ch.BalanceUsd,
-				})
-			}
-		}
-		writeJSON(w, 200, map[string]any{
-			"accounts": accounts, "traffic": traffic, "events": events,
-			"fallbackChannels": fallbackChannels, "asOf": now,
-		})
+		writeJSON(w, 200, buildDispatchStatus(r.Context(), q, svc, nowUnix()*1000, owner, false))
 	}
 }
 
@@ -785,6 +826,7 @@ func meBanAnalysisHandler(q *sqlc.Queries) http.HandlerFunc {
 		total, _ := q.BanTotalByOwner(ctx, owner)
 		wd, _ := q.BanCountsByWeekdayForOwner(ctx, owner)
 		hr, _ := q.BanCountsByHourForOwner(ctx, owner)
+		ac, _ := q.BanCountsPerAccountForOwner(ctx, owner)
 		byWeekday := make([]map[string]any, 0, len(wd))
 		for _, x := range wd {
 			byWeekday = append(byWeekday, map[string]any{"bucket": x.Bucket, "count": x.N})
@@ -793,6 +835,10 @@ func meBanAnalysisHandler(q *sqlc.Queries) http.HandlerFunc {
 		for _, x := range hr {
 			byHour = append(byHour, map[string]any{"bucket": x.Bucket, "count": x.N})
 		}
-		writeJSON(w, 200, map[string]any{"total": total, "byWeekday": byWeekday, "byHour": byHour})
+		byAccount := make([]map[string]any, 0, len(ac))
+		for _, x := range ac {
+			byAccount = append(byAccount, map[string]any{"email": x.Email, "count": x.N})
+		}
+		writeJSON(w, 200, map[string]any{"total": total, "byWeekday": byWeekday, "byHour": byHour, "byAccount": byAccount})
 	}
 }

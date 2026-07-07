@@ -40,6 +40,23 @@ func (q *Queries) CostByTargetSince(ctx context.Context, ts int64) ([]CostByTarg
 	return items, nil
 }
 
+const costByTargetSinceOne = `-- name: CostByTargetSinceOne :one
+SELECT coalesce(sum(cost_usd),0)::float8 AS cost
+FROM dispatch_logs WHERE target = $1 AND ts >= $2 AND status='ok'
+`
+
+type CostByTargetSinceOneParams struct {
+	Target string `json:"target"`
+	Ts     int64  `json:"ts"`
+}
+
+func (q *Queries) CostByTargetSinceOne(ctx context.Context, arg CostByTargetSinceOneParams) (float64, error) {
+	row := q.db.QueryRow(ctx, costByTargetSinceOne, arg.Target, arg.Ts)
+	var cost float64
+	err := row.Scan(&cost)
+	return cost, err
+}
+
 const costByTargetTotal = `-- name: CostByTargetTotal :many
 SELECT target, coalesce(sum(cost_usd),0)::float8 AS cost, count(*)::bigint AS requests
 FROM dispatch_logs WHERE status='ok' GROUP BY target
@@ -121,11 +138,22 @@ func (q *Queries) ListTenantsBasic(ctx context.Context) ([]ListTenantsBasicRow, 
 }
 
 const sumAllCost = `-- name: SumAllCost :one
-SELECT coalesce(sum(cost_usd),0)::float8 AS total FROM cost_rollup
+SELECT coalesce(sum(cost_usd),0)::float8 AS total FROM dispatch_logs WHERE status='ok'
 `
 
 func (q *Queries) SumAllCost(ctx context.Context) (float64, error) {
 	row := q.db.QueryRow(ctx, sumAllCost)
+	var total float64
+	err := row.Scan(&total)
+	return total, err
+}
+
+const sumAllCostFromLogs = `-- name: SumAllCostFromLogs :one
+SELECT coalesce(sum(cost_usd),0)::float8 AS total FROM dispatch_logs WHERE status='ok' AND owner_id = $1
+`
+
+func (q *Queries) SumAllCostFromLogs(ctx context.Context, ownerID string) (float64, error) {
+	row := q.db.QueryRow(ctx, sumAllCostFromLogs, ownerID)
 	var total float64
 	err := row.Scan(&total)
 	return total, err

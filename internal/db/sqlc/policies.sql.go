@@ -9,6 +9,20 @@ import (
 	"context"
 )
 
+const deletePolicy = `-- name: DeletePolicy :exec
+DELETE FROM policies WHERE scope_type=$1 AND scope_id=$2
+`
+
+type DeletePolicyParams struct {
+	ScopeType string `json:"scope_type"`
+	ScopeID   string `json:"scope_id"`
+}
+
+func (q *Queries) DeletePolicy(ctx context.Context, arg DeletePolicyParams) error {
+	_, err := q.db.Exec(ctx, deletePolicy, arg.ScopeType, arg.ScopeID)
+	return err
+}
+
 const listPolicies = `-- name: ListPolicies :many
 SELECT scope_type, scope_id, params, updated_at FROM policies
 `

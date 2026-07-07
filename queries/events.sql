@@ -13,3 +13,6 @@ INSERT INTO ban_episodes (node_id, profile_id, banned_at, detail) VALUES ($1,$2,
 -- name: RecoverBanEpisode :exec
 UPDATE ban_episodes SET recovered_at = $3, survival_ms = $3 - banned_at
 WHERE node_id = $1 AND profile_id = $2 AND recovered_at = 0;
+
+-- name: GetBanEpisodesForProfile :many
+SELECT * FROM ban_episodes WHERE node_id = $1 AND profile_id = $2 ORDER BY banned_at DESC LIMIT 10;

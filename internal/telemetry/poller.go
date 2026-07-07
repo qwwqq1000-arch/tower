@@ -2,13 +2,12 @@ package telemetry
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/qwwqq1000-arch/tower/internal/crypto"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
-	"github.com/qwwqq1000-arch/tower/internal/events"
 	"github.com/qwwqq1000-arch/tower/internal/nodeclient"
 	"github.com/qwwqq1000-arch/tower/internal/policy"
 	"github.com/qwwqq1000-arch/tower/internal/state"
@@ -18,10 +17,13 @@ import (
 type Poller struct {
 	Q            *sqlc.Queries
 	Store        *state.Store
-	Threshold    float64
 	DefaultTTLMs int64
 	Capacity     int
 	Now          func() int64
+
+	// Cipher decrypts a node's stored api_key before building the meridian
+	// client (vault-crypto-3). May be nil when secrets are stored as plaintext.
+	Cipher *crypto.Cipher
 
 	// limitedMu guards lastLimited — the per-key last-known limited state used
 	// to detect false→true transitions and emit quota_limited events exactly once.
@@ -31,13 +33,11 @@ type Poller struct {
 
 // PollOnce refreshes every enabled node's accounts once.
 func (p *Poller) PollOnce(ctx context.Context) error {
-	thresh := p.threshold(ctx)
 	mc := p.maxConcurrent(ctx)
 	nodes, err := p.Q.ListNodes(ctx)
 	if err != nil {
 		return err
 	}
-	now := p.Now()
 	var sum5h, sum7d float64
 	var cnt5h, cnt7d int
 	for _, n := range nodes {
@@ -54,68 +54,33 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 		if err != nil || len(accs) == 0 {
 			continue
 		}
-		cl := nodeclient.New(n.BaseUrl, n.ApiKey)
+		cl := nodeclient.New(n.BaseUrl, p.Cipher.DecryptOrPlaintext(n.ApiKey))
 		health, healthErr := cl.Health(ctx)
-		offline := OfflineFromHealth(health, healthErr)
+		// nodeDown is true when the node is unreachable or reports unhealthy.
+		// In that case all profiles on the node go offline regardless of quota.
+		nodeDown := healthErr != nil || health.Status == "unhealthy"
 
-		var quota nodeclient.QuotaAll
-		if !offline {
-			quota, _ = cl.QuotaAll(ctx)
-			if healthErr == nil && health.Version != "" {
-				_ = p.Q.UpdateNodeVersion(ctx, sqlc.UpdateNodeVersionParams{ID: n.ID, Version: health.Version})
-			}
-			// Accumulate utilization across every profile window for averaging.
-			for _, pr := range quota.Profiles {
-				for _, win := range pr.Windows {
-					switch win.Type {
-					case "five_hour":
-						sum5h += win.Utilization
-						cnt5h++
-					case "seven_day":
-						sum7d += win.Utilization
-						cnt7d++
-					}
-				}
-			}
+		if !nodeDown && health.Version != "" {
+			_ = p.Q.UpdateNodeVersion(ctx, sqlc.UpdateNodeVersionParams{ID: n.ID, Version: health.Version})
 		}
 
 		for _, a := range accs {
 			if !a.Enabled {
 				continue
 			}
+			// Backfill email once the node finishes loading account info (email lags
+			// OAuth login by a few seconds, so onboarding lands an empty email).
+			if !nodeDown && health.Auth.Email != "" {
+				_ = p.Q.UpdateAccountEmailIfEmpty(ctx, sqlc.UpdateAccountEmailIfEmptyParams{ID: a.AccountID, Email: health.Auth.Email})
+			}
 			key := n.ID + ":" + a.ProfileID
-			if offline {
-				p.Store.SetOffline(key, p.Capacity, true)
-				p.Store.SetCapacity(key, mc)
-				continue
-			}
-			p.Store.SetOffline(key, p.Capacity, false)
+			p.Store.SetOffline(key, p.Capacity, nodeDown)
 			p.Store.SetCapacity(key, mc)
-			if pq, ok := findProfile(quota, a.ProfileID); ok {
-				wasLimited := p.Store.IsLimited(key, now)
-				limits := LimitsFromQuota(pq, thresh, now, p.DefaultTTLMs)
-				p.Store.SetLimited(key, p.Capacity, limits)
-				isLimited := p.Store.IsLimited(key, now)
-
-				p.limitedMu.Lock()
-				if p.lastLimited == nil {
-					p.lastLimited = make(map[string]bool)
-				}
-				prev := p.lastLimited[key]
-				if isLimited {
-					p.lastLimited[key] = true
-				} else {
-					delete(p.lastLimited, key)
-				}
-				p.limitedMu.Unlock()
-
-				// Record event only on false→true transition.
-				if !wasLimited && isLimited && !prev {
-					_ = events.Record(ctx, p.Q, now, events.Event{Type: "quota_limited", Target: key, OwnerID: ""})
-				}
-			}
 		}
 	}
+	// Calculate cluster-wide average utilization for display/monitoring only.
+	// This does not drive elastic scaling or dispatch decisions; per-account quotas
+	// and account-level rate-limit logic (LimitedUntil) own those responsibilities.
 	var avg5h, avg7d float64
 	if cnt5h > 0 {
 		avg5h = sum5h / float64(cnt5h)
@@ -127,36 +92,6 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 	return nil
 }
 
-// pickThreshold extracts QuotaRotateThreshold from a JSON policy patch.
-// If the patch is absent, unparseable, or contains an invalid value (<=0 or >1),
-// it returns def unchanged.
-func pickThreshold(patchJSON []byte, def float64) float64 {
-	var p policy.Patch
-	if err := json.Unmarshal(patchJSON, &p); err != nil {
-		return def
-	}
-	if p.QuotaRotateThreshold != nil {
-		if v := *p.QuotaRotateThreshold; v > 0 && v <= 1 {
-			return v
-		}
-	}
-	return def
-}
-
-// threshold reads the global policy row and returns the effective QuotaRotateThreshold.
-func (p *Poller) threshold(ctx context.Context) float64 {
-	rows, err := p.Q.ListPolicies(ctx)
-	if err != nil {
-		return p.Threshold
-	}
-	for _, row := range rows {
-		if row.ScopeType == "global" {
-			return pickThreshold(row.Params, p.Threshold)
-		}
-	}
-	return p.Threshold
-}
-
 // maxConcurrent reads the global policy row and returns the effective MaxConcurrent.
 // Falls back to p.Capacity when the policy row is absent or does not override it.
 func (p *Poller) maxConcurrent(ctx context.Context) int {
@@ -166,25 +101,10 @@ func (p *Poller) maxConcurrent(ctx context.Context) int {
 	}
 	for _, row := range rows {
 		if row.ScopeType == "global" {
-			var patch policy.Patch
-			if json.Unmarshal(row.Params, &patch) == nil {
-				if patch.MaxConcurrent != nil && *patch.MaxConcurrent > 0 {
-					return *patch.MaxConcurrent
-				}
-			}
-			break
+			return policy.PickMaxConcurrent(row.Params, p.Capacity)
 		}
 	}
 	return p.Capacity
-}
-
-func findProfile(q nodeclient.QuotaAll, id string) (nodeclient.ProfileQuota, bool) {
-	for _, pr := range q.Profiles {
-		if pr.ID == id {
-			return pr, true
-		}
-	}
-	return nodeclient.ProfileQuota{}, false
 }
 
 // Run polls on an interval until ctx is cancelled.

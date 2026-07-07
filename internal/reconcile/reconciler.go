@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/qwwqq1000-arch/tower/internal/crypto"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 	"github.com/qwwqq1000-arch/tower/internal/nodeclient"
 )
@@ -36,6 +37,10 @@ func ReconcileNode(ctx context.Context, api NodeAPI, desired map[string]map[stri
 // Reconciler periodically enforces desired features across all enabled nodes.
 type Reconciler struct {
 	Q *sqlc.Queries
+
+	// Cipher decrypts a node's stored api_key before building the meridian
+	// client (vault-crypto-3). May be nil when secrets are stored as plaintext.
+	Cipher *crypto.Cipher
 }
 
 // RunOnce reconciles every enabled node once (best-effort per node).
@@ -61,12 +66,21 @@ func (r *Reconciler) RunOnce(ctx context.Context) error {
 		if strings.EqualFold(n.Kind, "cpa") {
 			continue
 		}
-		_, _ = ReconcileNode(ctx, nodeclient.New(n.BaseUrl, n.ApiKey), desired)
+		_, _ = ReconcileNode(ctx, nodeclient.New(n.BaseUrl, r.Cipher.DecryptOrPlaintext(n.ApiKey)), desired)
 	}
 	return nil
 }
 
 // Run reconciles on an interval until ctx is cancelled.
+//
+// Activation note (provision-1): in the current deployment the reconciler is
+// constructed but its Run loop is not started by default. To enable active
+// feature reconciliation, call r.Run(ctx, interval) from cmd/tower/main.go
+// after building the Reconciler. A 5-minute interval is recommended for most
+// fleets. Leave the loop disabled if your nodes are managed solely through
+// the dashboard (desired-state pushes are applied immediately on save via
+// the PUT /api/admin/desired-features route); the reconciler is only needed
+// for eventual-consistency healing after network interruptions or node restarts.
 func (r *Reconciler) Run(ctx context.Context, interval time.Duration) {
 	t := time.NewTicker(interval)
 	defer t.Stop()

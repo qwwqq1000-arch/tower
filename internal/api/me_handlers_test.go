@@ -15,8 +15,10 @@ import (
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 )
 
+// sessionCookie issues a token at epoch 0. Callers seed the subject as a real
+// tenant row (default session_epoch 0) so requireSession's epoch check accepts it.
 func sessionCookie(secret, sub, role string) *http.Cookie {
-	tok := auth.IssueSession(secret, sub, role, nowUnix(), 3600)
+	tok := auth.IssueSession(secret, sub, role, 0, nowUnix(), 3600)
 	return &http.Cookie{Name: "tower_session", Value: tok}
 }
 
@@ -40,7 +42,7 @@ func TestMeEndpointsOwnerScoping(t *testing.T) {
 	t.Cleanup(pool.Close)
 	q := sqlc.New(pool)
 	const secret = "test-secret-padding-to-32-chars!"
-	router := NewRouter(pool, secret, nil, q)
+	router := NewRouter(pool, secret, nil, q, false, nil, "")
 
 	ownerA := randHex("owA_")
 	ownerB := randHex("owB_")
@@ -279,10 +281,22 @@ func TestMeSettingsOwnerScoping(t *testing.T) {
 	t.Cleanup(pool.Close)
 	q := sqlc.New(pool)
 	const secret = "test-secret-padding-to-32-chars!"
-	router := NewRouter(pool, secret, nil, q)
+	router := NewRouter(pool, secret, nil, q, false, nil, "")
 
 	ownerA := randHex("owA_")
 	ownerB := randHex("owB_")
+	// Seed real tenant rows so requireSession's epoch check (auth-session-1)
+	// accepts the sessions; tokens are issued at the default epoch 0.
+	for _, o := range []string{ownerA, ownerB} {
+		if _, err := q.CreateTenant(ctx, sqlc.CreateTenantParams{ID: o, Username: o, PwHash: "h", Salt: "s", Role: "tenant", IngestKey: randHex("ik_")}); err != nil {
+			t.Fatalf("create tenant %s: %v", o, err)
+		}
+	}
+	t.Cleanup(func() {
+		cctx := context.Background()
+		_ = q.DeleteTenant(cctx, ownerA)
+		_ = q.DeleteTenant(cctx, ownerB)
+	})
 	ckA := sessionCookie(secret, ownerA, "tenant")
 	ckB := sessionCookie(secret, ownerB, "tenant")
 
@@ -425,7 +439,7 @@ func TestFallbackChannelLimit(t *testing.T) {
 	t.Cleanup(pool.Close)
 	q := sqlc.New(pool)
 	const secret = "test-secret-padding-to-32-chars!"
-	router := NewRouter(pool, secret, nil, q)
+	router := NewRouter(pool, secret, nil, q, false, nil, "")
 
 	owner := randHex("owL_")
 	// tenant created with default fallback_limit=1.

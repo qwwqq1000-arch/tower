@@ -2,15 +2,18 @@ package dispatch
 
 import (
 	"context"
+	"time"
 
+	"github.com/qwwqq1000-arch/tower/internal/policy"
 	"github.com/qwwqq1000-arch/tower/internal/state"
 )
 
 // ProxyResult is the outcome of forwarding a request to one account.
 type ProxyResult struct {
-	Status int
-	Body   string
-	Banned bool // ban signal (401/403/keyword) classified by the proxy
+	Status         int
+	Body           string
+	Banned         bool // ban signal (401/403/keyword) classified by the proxy
+	RetryAfterSec  int  // parsed Retry-After header (seconds); 0 = absent
 }
 
 // Proxy forwards a request to the account identified by key.
@@ -26,9 +29,45 @@ type Orchestrator struct {
 	Cfg         state.BreakerCfg
 	CooldownMin int64
 	CooldownMax int64
+	// CooldownDist selects the inter-slot cooldown distribution: "uniform" (default)
+	// uses CooldownMin/CooldownMax; "lognormal" uses CooldownP50/CooldownP95 (RangeI,
+	// resolved per-key at Complete time).
+	CooldownDist string
+	CooldownP50  policy.RangeI // used when CooldownDist == "lognormal"
+	CooldownP95  policy.RangeI // used when CooldownDist == "lognormal"
 	MaxAttempts int
 	OnBan       func(key string, status int)                 // optional: fired when an account is (re)banned
-	OnAttempt   func(key string, status int, ok bool, banned bool) // optional: fired after each attempt
+	OnRecover   func(key string)                             // optional: fired when a half-open trial succeeds (account recovers)
+	OnAttempt   func(key string, res ProxyResult, ok bool) // optional: fired after each attempt (res carries Status/Body/Banned)
+	IsCooldownSignal func(status int) bool                   // optional: status that cools (not bans) the account, e.g. 429
+
+	// SerialWait: bounded slot-wait for accounts with SerialQueueEnabled.
+	// When SerialWaitKeys[key] is true and SerialWaitMs[key] > 0, Dispatch waits
+	// up to SerialWaitMs[key] ms for a free slot before skipping the account.
+	// When nil/empty these maps add zero overhead (feature is off by default).
+	NowMs          func() int64       // clock used for serial-wait deadline; nil disables feature
+	SerialWaitKeys map[string]bool    // which keys have serial wait enabled
+	SerialWaitMs   map[string]int64   // per-key wait deadline in ms
+
+	// DirectFallback: when non-nil, called after a failed dispatched attempt; if it
+	// returns true, Dispatch stops trying further accounts immediately and returns
+	// ok=false (the caller routes to fallback as if the pool were exhausted).
+	DirectFallback func(res ProxyResult) bool
+
+	// Terminal: when non-nil, called after a failed dispatched attempt; if it
+	// returns true, Dispatch stops immediately and returns ok=false with the
+	// terminal result. The caller MUST return the result directly to the client
+	// without retrying or going to the fallback channel.
+	// Distinct from DirectFallback: DirectFallback → go to fallback; Terminal → no fallback.
+	Terminal func(res ProxyResult) bool
+
+	// RetryDelayMs is the delay between failover attempts (and same-account retries).
+	// 0 = no delay (default).
+	RetryDelayMs int
+
+	// RetrySameAccountMax is the number of additional same-account retries before
+	// moving to the next account. 0 = move on immediately (default).
+	RetrySameAccountMax int
 }
 
 // attempt sends one request to key with guaranteed settlement. ok reports a clean
@@ -51,19 +90,33 @@ func (o *Orchestrator) attempt(ctx context.Context, model, key string, px Proxy)
 			return
 		}
 		settled = true
-		o.Store.Complete(key, o.CooldownMin, o.CooldownMax)
+		o.Store.CompleteDelay(key, o.CooldownDist,
+			o.CooldownP50.Resolve(key, "p50"), o.CooldownP95.Resolve(key, "p95"),
+			o.CooldownMin, o.CooldownMax)
 		if !sendReturned {
 			// proxy panicked — only release slot, no breaker penalty
 			return
 		}
 		if trial {
-			o.Store.OnTrialResult(key, o.Cfg, success)
-			if !success && o.OnBan != nil {
-				o.OnBan(key, res.Status)
+			if !success && o.IsCooldownSignal != nil && o.IsCooldownSignal(res.Status) {
+				// Transient cooldown signal (e.g. 429) during recovery: resolve the
+				// trial without reopening/escalating; the error-cooldown owns backoff.
+				o.Store.OnTrialCooldown(key)
+			} else {
+				o.Store.OnTrialResult(key, o.Cfg, success, res.Banned)
+				if success {
+					if o.OnRecover != nil {
+						o.OnRecover(key)
+					}
+				} else if res.Banned && o.OnBan != nil {
+					o.OnBan(key, res.Status)
+				}
 			}
 		} else if success {
 			o.Store.OnSuccess(key)
-		} else {
+		} else if res.Banned {
+			// Only a classified ban signal (per BanSignals/BanKeywords) advances the
+			// breaker. Transient failures (502/429/network) fail over without banning.
 			if o.Store.OnBanSignal(key, o.Cfg) && o.OnBan != nil {
 				o.OnBan(key, res.Status)
 			}
@@ -88,24 +141,82 @@ func (o *Orchestrator) attempt(ctx context.Context, model, key string, px Proxy)
 func (o *Orchestrator) Dispatch(ctx context.Context, model string, order []string, px Proxy) (ProxyResult, string, bool) {
 	var last ProxyResult
 	attempts := 0
+	firstKey := true
 	for _, key := range order {
 		if attempts >= o.MaxAttempts {
 			break
 		}
-		res, ok, dispatched := o.attempt(ctx, model, key, px)
-		if !dispatched {
-			// account not contacted (breaker open/permanent/slot busy/limited) —
-			// not a real attempt: don't count it, log it, or emit a retry event.
-			continue
+		// RetryDelayMs between different-account attempts (not before the very first).
+		if !firstKey && o.RetryDelayMs > 0 {
+			if ctx.Err() != nil {
+				break
+			}
+			time.Sleep(time.Duration(o.RetryDelayMs) * time.Millisecond)
+			if ctx.Err() != nil {
+				break
+			}
 		}
-		attempts++
-		if o.OnAttempt != nil {
-			o.OnAttempt(key, res.Status, ok, res.Banned)
+		firstKey = false
+		// Serial-wait: if this key has bounded wait enabled, block until a slot
+		// frees or the deadline expires. On timeout we skip (same as slot-busy).
+		// Zero overhead when feature is off (nil maps / NowMs not set).
+		if o.NowMs != nil && o.SerialWaitKeys[key] {
+			if waitMs := o.SerialWaitMs[key]; waitMs > 0 {
+				if !o.Store.WaitForSlot(ctx, key, o.NowMs()+waitMs, o.NowMs) {
+					attempts++
+					continue
+				}
+			}
 		}
-		if ok {
-			return res, key, true
+		// Same-account retry: try this key up to RetrySameAccountMax+1 times on failure.
+		maxInner := 1
+		if o.RetrySameAccountMax > 0 {
+			maxInner = o.RetrySameAccountMax + 1
 		}
-		last = res
+		innerFirst := true
+		for inner := 0; inner < maxInner; inner++ {
+			if attempts >= o.MaxAttempts {
+				break
+			}
+			// RetryDelayMs between same-account retries (not before the first inner attempt).
+			if !innerFirst && o.RetryDelayMs > 0 {
+				if ctx.Err() != nil {
+					break
+				}
+				time.Sleep(time.Duration(o.RetryDelayMs) * time.Millisecond)
+				if ctx.Err() != nil {
+					break
+				}
+			}
+			innerFirst = false
+
+			res, ok, dispatched := o.attempt(ctx, model, key, px)
+			if !dispatched {
+				// account not contactable — not a real attempt; stop inner retries for this key
+				break
+			}
+			attempts++
+			if o.OnAttempt != nil {
+				o.OnAttempt(key, res, ok)
+			}
+			if ok {
+				return res, key, true
+			}
+			last = res
+			// Terminal: deterministic errors that fail identically on every account
+			// (e.g. invalid_request_error 400). Stop immediately; the caller must
+			// return this result directly to the client without fallback.
+			if o.Terminal != nil && o.Terminal(res) {
+				return last, "", false
+			}
+			// DirectFallback: if this response matches the direct-fallback pattern,
+			// stop immediately (don't try more accounts or same-account retries).
+			if o.DirectFallback != nil && o.DirectFallback(res) {
+				return last, "", false
+			}
+			// On same-account retry loop: if we've reached inner retries, break out
+			// to let the outer loop move to the next account.
+		}
 	}
 	return last, "", false
 }

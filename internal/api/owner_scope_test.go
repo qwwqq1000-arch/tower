@@ -32,7 +32,24 @@ func TestOwnerScoping(t *testing.T) {
 	defer pool.Close()
 	q := sqlc.New(pool)
 	const secret = "test-secret-padding-to-32-chars!"
-	router := NewRouter(pool, secret, nil, q)
+	router := NewRouter(pool, secret, nil, q, false, nil, "")
+
+	// Seed the session subjects as real tenant rows so requireSession's epoch
+	// check (auth-session-1) accepts them; tokens are issued at epoch 0.
+	for _, s := range []struct{ id, role string }{
+		{"ownerA", "admin"}, {"ownerB", "admin"}, {"ownerC", "admin"}, {"root", "superadmin"},
+	} {
+		if _, err := q.CreateTenant(ctx, sqlc.CreateTenantParams{ID: s.id, Username: s.id, PwHash: "h", Salt: "s", Role: s.role, IngestKey: "ik_" + s.id}); err != nil {
+			// May already exist from a prior run in the shared DB; ensure the role.
+			_ = q.SetTenantRole(ctx, sqlc.SetTenantRoleParams{ID: s.id, Role: s.role})
+		}
+	}
+	t.Cleanup(func() {
+		cctx := context.Background()
+		for _, id := range []string{"ownerA", "ownerB", "ownerC", "root"} {
+			_ = q.DeleteTenant(cctx, id)
+		}
+	})
 
 	// Two owners, each with their own node.
 	nodeA := randHex("n_")
@@ -46,7 +63,7 @@ func TestOwnerScoping(t *testing.T) {
 
 	get := func(path, sub, role string) []map[string]any {
 		r := httptest.NewRequest("GET", path, nil)
-		r.AddCookie(&http.Cookie{Name: "tower_session", Value: auth.IssueSession(secret, sub, role, nowUnix(), 3600)})
+		r.AddCookie(&http.Cookie{Name: "tower_session", Value: auth.IssueSession(secret, sub, role, 0, nowUnix(), 3600)})
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, r)
 		if rec.Code != 200 {
@@ -97,7 +114,7 @@ func TestOwnerScoping(t *testing.T) {
 	// A non-superadmin creating a node without ownerId owns it.
 	body := `{"baseUrl":"http://c","name":"nodeC"}`
 	r := httptest.NewRequest("POST", "/api/admin/nodes", strings.NewReader(body))
-	r.AddCookie(&http.Cookie{Name: "tower_session", Value: auth.IssueSession(secret, "ownerC", "admin", nowUnix(), 3600)})
+	r.AddCookie(&http.Cookie{Name: "tower_session", Value: auth.IssueSession(secret, "ownerC", "admin", 0, nowUnix(), 3600)})
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, r)
 	if rec.Code != 200 {
@@ -111,7 +128,7 @@ func TestOwnerScoping(t *testing.T) {
 	// --- write-path owner enforcement ---
 	do := func(method, path, sub, role string) int {
 		rr := httptest.NewRequest(method, path, nil)
-		rr.AddCookie(&http.Cookie{Name: "tower_session", Value: auth.IssueSession(secret, sub, role, nowUnix(), 3600)})
+		rr.AddCookie(&http.Cookie{Name: "tower_session", Value: auth.IssueSession(secret, sub, role, 0, nowUnix(), 3600)})
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, rr)
 		return rec.Code

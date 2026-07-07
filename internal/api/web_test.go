@@ -8,7 +8,7 @@ import (
 )
 
 func TestServesIndex(t *testing.T) {
-	h := NewRouter(nil, "test-secret-padding-to-32-chars!", nil, nil)
+	h := NewRouter(nil, "test-secret-padding-to-32-chars!", nil, nil, false, nil, "")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 	if rec.Code != http.StatusOK {
@@ -17,7 +17,7 @@ func TestServesIndex(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
 		t.Fatalf("content-type=%q", ct)
 	}
-	if !strings.Contains(rec.Body.String(), "Tower") {
-		t.Fatal("index should contain Tower")
+	if !strings.Contains(rec.Body.String(), "CCMAX POOL") {
+		t.Fatal("index should contain CCMAX POOL")
 	}
 }

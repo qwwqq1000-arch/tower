@@ -2,7 +2,7 @@
 // Tower SPA — Dashboard page (comprehensive rewrite)
 // GET /api/dashboard → DashboardData (multi-card overview)
 // ============================================================
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { getDashboard } from '../api';
 import type { DashboardData, DashboardNodeItem, DashboardByModel, DashboardHostingRow } from '../types';
 import { useAuth } from '../auth';
@@ -141,6 +141,33 @@ function HostingRow({ row }: { row: DashboardHostingRow }) {
 }
 
 // ------------------------------------------------------------------
+// Shared pagination for dashboard tables
+// ------------------------------------------------------------------
+// 10/page so lists like the 节点列表 (17 nodes) actually paginate — 25 was too
+// coarse and the pager never appeared. Matches the dispatch panel's page size.
+const PAGE_SIZE = 10;
+
+function PaginationBar({ page, total, pageSize, onPrev, onNext }: {
+  page: number; total: number; pageSize: number;
+  onPrev: () => void; onNext: () => void;
+}) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  return (
+    <div className="flex items-center justify-between text-xs text-muted px-3 py-2 border-t border-line">
+      <button
+        onClick={onPrev} disabled={page === 0}
+        className="px-3 py-1.5 border border-line rounded-lg hover:text-ink hover:border-accent transition disabled:opacity-40"
+      >上一页</button>
+      <span>第 {page + 1} / {totalPages} 页 · 共 {total} 条</span>
+      <button
+        onClick={onNext} disabled={(page + 1) * pageSize >= total}
+        className="px-3 py-1.5 border border-line rounded-lg hover:text-ink hover:border-accent transition disabled:opacity-40"
+      >下一页</button>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------
 // Dashboard page
 // ------------------------------------------------------------------
 const REFRESH_INTERVAL_MS = 30_000;
@@ -155,6 +182,9 @@ function AdminDashboard() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [modelPage, setModelPage] = useState(0);
+  const [hostingPage, setHostingPage] = useState(0);
+  const [nodePage, setNodePage] = useState(0);
 
   const load = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true);
@@ -174,6 +204,19 @@ function AdminDashboard() {
     const timer = setInterval(() => void load(false), REFRESH_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [load]);
+
+  const pagedModels = useMemo(
+    () => data ? data.today.byModel.slice(modelPage * PAGE_SIZE, (modelPage + 1) * PAGE_SIZE) : [],
+    [data, modelPage],
+  );
+  const pagedHosting = useMemo(
+    () => data ? data.hosting.slice(hostingPage * PAGE_SIZE, (hostingPage + 1) * PAGE_SIZE) : [],
+    [data, hostingPage],
+  );
+  const pagedNodes = useMemo(
+    () => data ? data.nodes.list.slice(nodePage * PAGE_SIZE, (nodePage + 1) * PAGE_SIZE) : [],
+    [data, nodePage],
+  );
 
   // ------ loading ------
   if (loading) {
@@ -195,7 +238,7 @@ function AdminDashboard() {
 
   if (!data) return null;
 
-  const { nodes, accounts, today, hosting, totalCostUsd, quota5hAvg, quota7dAvg } = data;
+  const { nodes, accounts, today, hosting, totalCostUsd, channelTodayCostUsd, channelTotalCostUsd, quota5hAvg, quota7dAvg } = data;
   const byStatus = nodes.byStatus ?? {};
 
   return (
@@ -206,17 +249,12 @@ function AdminDashboard() {
       {/* ---- Top stat cards ---- */}
       <section>
         <h2 className="text-xs font-medium text-muted uppercase tracking-wide mb-3">总览</h2>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           <StatCard
-            label="节点"
-            value={`${nodes.enabled} / ${nodes.total}`}
+            label="号库"
+            value={`${accounts.enabled} / ${accounts.total}`}
             sub="启用 / 总数"
             accent
-          />
-          <StatCard
-            label="账户"
-            value={accounts.total}
-            sub="号库总数"
           />
           <StatCard
             label="今日请求"
@@ -226,12 +264,20 @@ function AdminDashboard() {
             warn={today.successRate < 0.8}
           />
           <StatCard
-            label="今日消耗"
+            label="号库今日消费"
             value={fmtCost(today.costUsd)}
           />
           <StatCard
-            label="总消耗"
+            label="号库总消费"
             value={fmtCost(totalCostUsd)}
+          />
+          <StatCard
+            label="渠道今日消费"
+            value={fmtCost(channelTodayCostUsd ?? 0)}
+          />
+          <StatCard
+            label="渠道总消费"
+            value={fmtCost(channelTotalCostUsd ?? 0)}
           />
           <StatCard
             label="5h 均额度"
@@ -265,22 +311,31 @@ function AdminDashboard() {
           {today.byModel.length === 0 ? (
             <p className="p-6 text-center text-sm text-muted">今日暂无请求数据</p>
           ) : (
-            <table className="w-full text-left">
-              <thead>
-                <tr>
-                  <th className="py-2 pr-3 pl-3 text-xs text-muted font-medium">模型</th>
-                  <th className="py-2 pr-3 text-xs text-muted font-medium text-right">请求</th>
-                  <th className="py-2 pr-3 text-xs text-muted font-medium text-right">入 Token</th>
-                  <th className="py-2 pr-3 text-xs text-muted font-medium text-right">出 Token</th>
-                  <th className="py-2 pr-3 text-xs text-muted font-medium text-right">成本</th>
-                </tr>
-              </thead>
-              <tbody>
-                {today.byModel.map((row) => (
-                  <ModelRow key={row.model} row={row} />
-                ))}
-              </tbody>
-            </table>
+            <>
+              <table className="w-full text-left">
+                <thead>
+                  <tr>
+                    <th className="py-2 pr-3 pl-3 text-xs text-muted font-medium">模型</th>
+                    <th className="py-2 pr-3 text-xs text-muted font-medium text-right">请求</th>
+                    <th className="py-2 pr-3 text-xs text-muted font-medium text-right">入 Token</th>
+                    <th className="py-2 pr-3 text-xs text-muted font-medium text-right">出 Token</th>
+                    <th className="py-2 pr-3 text-xs text-muted font-medium text-right">成本</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pagedModels.map((row) => (
+                    <ModelRow key={row.model} row={row} />
+                  ))}
+                </tbody>
+              </table>
+              {today.byModel.length > PAGE_SIZE && (
+                <PaginationBar
+                  page={modelPage} total={today.byModel.length} pageSize={PAGE_SIZE}
+                  onPrev={() => setModelPage((p) => Math.max(0, p - 1))}
+                  onNext={() => setModelPage((p) => p + 1)}
+                />
+              )}
+            </>
           )}
         </div>
       </section>
@@ -302,11 +357,18 @@ function AdminDashboard() {
                 </tr>
               </thead>
               <tbody>
-                {hosting.map((row) => (
+                {pagedHosting.map((row) => (
                   <HostingRow key={row.tenantId} row={row} />
                 ))}
               </tbody>
             </table>
+            {hosting.length > PAGE_SIZE && (
+              <PaginationBar
+                page={hostingPage} total={hosting.length} pageSize={PAGE_SIZE}
+                onPrev={() => setHostingPage((p) => Math.max(0, p - 1))}
+                onNext={() => setHostingPage((p) => p + 1)}
+              />
+            )}
           </div>
         </section>
       )}
@@ -318,21 +380,30 @@ function AdminDashboard() {
           {nodes.list.length === 0 ? (
             <p className="p-6 text-center text-sm text-muted">暂无节点 — 前往「节点」页面添加</p>
           ) : (
-            <table className="w-full text-left">
-              <thead>
-                <tr>
-                  <th className="py-2 pr-3 pl-3 text-xs text-muted font-medium">名称</th>
-                  <th className="py-2 pr-3 text-xs text-muted font-medium">地址</th>
-                  <th className="py-2 pr-3 text-xs text-muted font-medium">状态</th>
-                  <th className="py-2 text-xs text-muted font-medium">版本</th>
-                </tr>
-              </thead>
-              <tbody>
-                {nodes.list.map((node) => (
-                  <NodeRow key={node.id} node={node} />
-                ))}
-              </tbody>
-            </table>
+            <>
+              <table className="w-full text-left">
+                <thead>
+                  <tr>
+                    <th className="py-2 pr-3 pl-3 text-xs text-muted font-medium">名称</th>
+                    <th className="py-2 pr-3 text-xs text-muted font-medium">地址</th>
+                    <th className="py-2 pr-3 text-xs text-muted font-medium">状态</th>
+                    <th className="py-2 text-xs text-muted font-medium">版本</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pagedNodes.map((node) => (
+                    <NodeRow key={node.id} node={node} />
+                  ))}
+                </tbody>
+              </table>
+              {nodes.list.length > PAGE_SIZE && (
+                <PaginationBar
+                  page={nodePage} total={nodes.list.length} pageSize={PAGE_SIZE}
+                  onPrev={() => setNodePage((p) => Math.max(0, p - 1))}
+                  onNext={() => setNodePage((p) => p + 1)}
+                />
+              )}
+            </>
           )}
         </div>
       </section>

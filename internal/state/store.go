@@ -5,8 +5,10 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
+	"github.com/qwwqq1000-arch/tower/internal/policy"
 )
 
 // Store is the thread-safe in-memory registry of per-account state.
@@ -24,6 +26,9 @@ type Store struct {
 }
 
 // SetQuotaAvg caches the latest average 5h/7d utilization (0..1 fractions).
+// This is a display-only aggregate metric (nodeclient-telemetry-3) and does not
+// drive elastic scaling or rate-limiting decisions; those use per-account quotas
+// and the dispatcher's breaker/cooldown logic instead.
 func (s *Store) SetQuotaAvg(a5h, a7d float64) {
 	s.quotaMu.Lock()
 	defer s.quotaMu.Unlock()
@@ -32,6 +37,8 @@ func (s *Store) SetQuotaAvg(a5h, a7d float64) {
 }
 
 // QuotaAvg returns the cached average 5h/7d utilization (0..1 fractions).
+// This is a display-only aggregate metric for monitoring/dashboard visibility.
+// It is not consulted by dispatch, elastic scaling, or policy logic.
 func (s *Store) QuotaAvg() (float64, float64) {
 	s.quotaMu.Lock()
 	defer s.quotaMu.Unlock()
@@ -111,11 +118,11 @@ func (s *Store) TryDispatchTrial(key, model string, cfg BreakerCfg) (ok bool, tr
 
 // OnTrialResult settles a half-open trial: success closes the breaker, failure
 // reopens it (always clearing the in-flight trial flag — no wedge possible).
-func (s *Store) OnTrialResult(key string, cfg BreakerCfg, ok bool) {
+func (s *Store) OnTrialResult(key string, cfg BreakerCfg, ok, banned bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if a := s.accts[key]; a != nil {
-		a.Breaker.OnTrialResult(cfg, s.now(), ok)
+		a.Breaker.OnTrialResult(cfg, s.now(), ok, banned)
 	}
 }
 
@@ -132,6 +139,41 @@ func (s *Store) Complete(key string, cooldownMin, cooldownMax int64) {
 		cd = s.rnd(cooldownMin, cooldownMax)
 	}
 	a.Slots.Release(s.now(), cd)
+}
+
+// CompleteDelay releases one slot with a delay computed from the given distribution.
+// dist == "lognormal": samples a log-normal distribution with the given p50 and p95 (ms).
+// Any other dist (including "uniform"): uses a uniform random in [minMs, maxMs].
+// minMs/maxMs are used only for the uniform branch; p50Ms/p95Ms only for lognormal.
+func (s *Store) CompleteDelay(key, dist string, p50Ms, p95Ms, minMs, maxMs int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.accts[key]
+	if a == nil {
+		return
+	}
+	var cd int64
+	if dist == "lognormal" {
+		cd = int64(policy.SampleLogNormal(float64(p50Ms), float64(p95Ms)))
+		if cd < 0 {
+			cd = 0
+		}
+	} else {
+		if maxMs > 0 {
+			cd = s.rnd(minMs, maxMs)
+		}
+	}
+	a.Slots.Release(s.now(), cd)
+}
+
+// OnTrialCooldown resolves a half-open trial that hit a transient cooldown signal
+// (e.g. 429) without reopening/escalating the breaker — the error-cooldown owns it.
+func (s *Store) OnTrialCooldown(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if a := s.accts[key]; a != nil {
+		a.Breaker.OnTrialCooldown()
+	}
 }
 
 // OnSuccess records a successful response (closes the breaker / resolves trial).
@@ -153,6 +195,57 @@ func (s *Store) IsPermanent(key string) bool {
 	return false
 }
 
+// NowMs returns the current time in milliseconds using the store's clock.
+func (s *Store) NowMs() int64 {
+	return s.now()
+}
+
+// SlotAvailable reports whether the account has at least one slot available at now.
+// Returns false when the account is unknown.
+func (s *Store) SlotAvailable(key string, now int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.accts[key]
+	if a == nil {
+		return false
+	}
+	return a.Slots.Available(now) > 0
+}
+
+// WaitForSlot polls SlotAvailable every 20ms until a slot is free (returns true) or
+// deadlineMs passes (returns false). The store mutex is NOT held during sleeps —
+// only briefly acquired on each poll — so this is race-safe with no lock contention.
+// When the account is unknown the function returns false immediately.
+// ctx cancellation causes an early return of false so goroutines don't linger after
+// client disconnect.
+func (s *Store) WaitForSlot(ctx context.Context, key string, deadlineMs int64, now func() int64) bool {
+	for {
+		n := now()
+		if n >= deadlineMs {
+			return false
+		}
+		if s.SlotAvailable(key, n) {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+}
+
+// SetCooldown puts an account into a temporary error-cooldown until untilMs
+// (e.g. after a 429). Only extends an existing cooldown, never shortens it.
+func (s *Store) SetCooldown(key string, capacity int, untilMs int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.ensureLocked(key, capacity)
+	if untilMs > a.CoolUntil {
+		a.CoolUntil = untilMs
+	}
+}
+
 // BanStreak returns the account's current consecutive ban-signal streak.
 func (s *Store) BanStreak(key string) int {
 	s.mu.Lock()
@@ -164,15 +257,42 @@ func (s *Store) BanStreak(key string) int {
 	return 0
 }
 
+// BanInfo returns both the permanent-ban flag and the current ban-signal streak
+// under a single lock acquisition, preventing a race between two separate reads
+// (ban-classify-6). Use this in recordBan to get a consistent snapshot.
+func (s *Store) BanInfo(key string) (permanent bool, streak int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if a := s.accts[key]; a != nil {
+		_, sk, _ := a.Breaker.Snapshot()
+		return a.Breaker.Permanent(), sk
+	}
+	return false, 0
+}
+
 // Recover clears all ban/failure state (including a permanent ban) and re-enables
 // the account. Used by the manual "recover" admin action.
 func (s *Store) Recover(key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if a := s.accts[key]; a != nil {
-		a.Breaker.OnSuccess()
+		a.Breaker.ForceClear() // manual recovery lifts even a permanent ban
 		a.Disabled = false
 		a.Offline = false
+	}
+}
+
+// RemoveNode drops every in-memory account belonging to nodeID (keys prefixed
+// "nodeID:"). Called when a node is deleted so its accounts no longer surface as
+// ghost rows in the live pool or skew elastic/utilisation math.
+func (s *Store) RemoveNode(nodeID string) {
+	prefix := nodeID + ":"
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for k := range s.accts {
+		if strings.HasPrefix(k, prefix) {
+			delete(s.accts, k)
+		}
 	}
 }
 
@@ -202,7 +322,7 @@ func (s *Store) NodeStatus(nodeID string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
-	rank := map[string]int{"disabled": 4, "permanent": 3, "banned": 2, "half_open": 1, "active": 0}
+	rank := map[string]int{"disabled": 5, "permanent": 4, "banned": 3, "half_open": 2, "cooldown": 1, "active": 0}
 	best := ""
 	for k, a := range s.accts {
 		if !strings.HasPrefix(k, prefix) {
@@ -216,12 +336,73 @@ func (s *Store) NodeStatus(nodeID string) string {
 	return best
 }
 
+// AddSpend records a spend entry for the account, creating it if absent.
+// pruneWindowMs should be the longest cap window (e.g. 7d = 604800000) to retain
+// enough history for all downstream SpendInWindow queries.
+func (s *Store) AddSpend(key string, usd float64, now int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.ensureLocked(key, 1) // capacity doesn't affect spendLog; 1 is a safe default
+	a.AddSpend(now, usd, 604800000)
+}
+
+// SpendInWindow returns the cumulative spend for key within the last windowMs milliseconds.
+// Returns 0 if the account has no recorded spend.
+func (s *Store) SpendInWindow(key string, now, windowMs int64) float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.accts[key]
+	if a == nil {
+		return 0
+	}
+	return a.SpendInWindow(now, windowMs)
+}
+
+// SpendToday returns the cumulative spend for key for the current calendar day
+// (bucket = now/86400000). Returns 0 if no spend has been recorded today or the
+// account is unknown. Resets to 0 automatically when the day bucket changes.
+func (s *Store) SpendToday(key string, now int64) float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.accts[key]
+	if a == nil {
+		return 0
+	}
+	return a.SpendToday(now)
+}
+
+// SeedSpendToday warm-restores key's cumulative spend for the current calendar day
+// from persisted history (dispatch_logs), creating the account if absent. This makes
+// the daily spend cap survive restarts: without it the in-memory today-total resets
+// to 0 on every restart, re-granting each account a full cap window (a frequent-deploy
+// day would never enforce the daily cap). Subsequent AddSpend calls accumulate on top.
+func (s *Store) SeedSpendToday(key string, total float64, now int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.ensureLocked(key, 1) // capacity irrelevant to spend; 1 is the safe default
+	a.SeedSpendToday(now, total)
+}
+
 // SetLimited replaces an account's model-class rate-limit map (creating it if absent).
+// It clears LimitReason so a stale typed reason ("5h"/"7d") does not linger after a
+// reactive/spend limit replaces it. SetLimitedReason still sets it explicitly.
 func (s *Store) SetLimited(key string, capacity int, limits map[string]int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	a := s.ensureLocked(key, capacity)
 	a.LimitedUntil = limits
+	a.LimitReason = ""
+}
+
+// SetLimitedReason sets a typed quota limit (reason "5h"/"7d") with the real recovery
+// time. It sets LimitedUntil={"all":untilMs} and LimitReason=reason. When the limit
+// clears (now >= untilMs), LimitReason reads as "" in the Snapshot (cleared lazily).
+func (s *Store) SetLimitedReason(key string, capacity int, untilMs int64, reason string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.ensureLocked(key, capacity)
+	a.LimitedUntil = map[string]int64{"all": untilMs}
+	a.LimitReason = reason
 }
 
 // IsLimited reports whether the account has any active rate-limit entry at now.
@@ -240,6 +421,15 @@ func (s *Store) IsLimited(key string, now int64) bool {
 	return false
 }
 
+// SetPaused sets a session-sim burst pause on the account. Unlike SetLimited,
+// pauses do NOT trigger elastic baseline demote — the account stays in its
+// baseline slot and simply cannot accept requests until the pause expires.
+func (s *Store) SetPaused(key string, capacity int, untilMs int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureLocked(key, capacity).PausedUntil = untilMs
+}
+
 // SetOffline marks an account online/offline.
 func (s *Store) SetOffline(key string, capacity int, offline bool) {
 	s.mu.Lock()
@@ -252,6 +442,85 @@ func (s *Store) SetDisabled(key string, capacity int, disabled bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ensureLocked(key, capacity).Disabled = disabled
+}
+
+// RecordReq records a dispatched request timestamp for the account (rate governor).
+// Creates the account entry if absent (capacity=1 safe default, same as AddSpend).
+func (s *Store) RecordReq(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.ensureLocked(key, 1)
+	a.RecordReq(s.now())
+}
+
+// ReqsInWindow returns the count of dispatched requests for key within the last
+// windowMs milliseconds. Returns 0 if the account has no recorded requests.
+func (s *Store) ReqsInWindow(key string, windowMs int64) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.accts[key]
+	if a == nil {
+		return 0
+	}
+	return a.ReqsInWindow(s.now(), windowMs)
+}
+
+// BurstTick increments the burst counter for the account (session-sim).
+// Creates the account with capacity=1 if absent (safe default, same as AddSpend/RecordReq).
+func (s *Store) BurstTick(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.ensureLocked(key, 1)
+	a.BurstTick()
+}
+
+// BurstShouldPause reports whether the account's burst counter has reached target.
+// Returns false when the account does not exist.
+func (s *Store) BurstShouldPause(key string, target int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.accts[key]
+	if a == nil {
+		return false
+	}
+	return a.BurstShouldPause(target)
+}
+
+// BurstReset resets the account's burst counter to zero (called after triggering a pause).
+// No-op when the account does not exist.
+func (s *Store) BurstReset(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if a := s.accts[key]; a != nil {
+		a.BurstReset()
+	}
+}
+
+// RecordModel pins the account to model for ttl milliseconds (sticky model-pin).
+// Creates the account with capacity=1 if absent (same safe default as AddSpend).
+// No-op when the account is already pinned to an unexpired model. Returns wasNew=true
+// when this call established a fresh pin (the account had no active pin before), so the
+// caller can emit a "号X 首次钉定模型M" event (model-aware-elastic visibility).
+func (s *Store) RecordModel(key string, model string, ttl int64) (wasNew bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.ensureLocked(key, 1)
+	_, had := a.PinnedModel(s.now(), ttl)
+	a.RecordModel(model, s.now(), ttl)
+	return !had
+}
+
+// PinnedModel returns the model the account is currently pinned to and whether
+// the pin is still active. Returns ("", false) when the account does not exist,
+// is unpinned, or its pin has expired.
+func (s *Store) PinnedModel(key string, ttl int64) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.accts[key]
+	if a == nil {
+		return "", false
+	}
+	return a.PinnedModel(s.now(), ttl)
 }
 
 // SetCapacity updates the slot capacity for an existing account (no-op if absent).
@@ -281,6 +550,16 @@ type AccountSnapshot struct {
 	Status    string
 	Inflight  int
 	Available int
+	RecoverAt int64 // ms; when a cooling breaker half-opens (0 if not cooling)
+	// Limited reports whether the account is currently rotated out of dispatch by
+	// quota saturation (LimitedUntil active). The breaker Status above can still be
+	// "active" while Limited is true — the two are independent, so the UI must read
+	// Limited to show a quota-rotated account as "限额" instead of "活跃".
+	Limited      bool
+	LimitedUntil int64  // ms; latest active quota-limit reset deadline (0 if not limited)
+	LimitReason  string // "5h" / "7d" / "" — typed quota window; empty when limit cleared
+	Paused       bool
+	PausedUntil  int64  // ms; session-sim burst pause deadline (0 if not paused)
 }
 
 // Snapshot returns a sorted, point-in-time view of every account's live state.
@@ -299,8 +578,21 @@ func (s *Store) Snapshot(now int64) []AccountSnapshot {
 				avail = warmupAvail
 			}
 		}
+		st := a.Status(now)
+		recoverAt := a.Breaker.RecoverAt()
+		if st == "cooldown" && a.CoolUntil > recoverAt {
+			recoverAt = a.CoolUntil // temporary error-cooldown (429): show its remaining time
+		}
+		limited, limitUntil := a.LimitState(now)
+		limitReason := ""
+		if limited {
+			limitReason = a.LimitReason
+		}
+		paused, pausedUntil := a.IsPaused(now)
 		out = append(out, AccountSnapshot{
-			Key: key, Status: a.Status(now), Inflight: a.Slots.InUse(), Available: avail,
+			Key: key, Status: st, Inflight: a.Slots.InUse(), Available: avail,
+			RecoverAt: recoverAt, Limited: limited, LimitedUntil: limitUntil,
+			LimitReason: limitReason, Paused: paused, PausedUntil: pausedUntil,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
@@ -335,11 +627,16 @@ func (s *Store) PersistAll(ctx context.Context, q *sqlc.Queries, now int64) erro
 			nodeID:    key[:i],
 			profileID: key[i+1:],
 			// Copy the Account value; Breaker and scalar fields are value types.
+			// CoolUntil must be included so that Status(now) returns the correct
+			// "cooldown" verdict when persisting (state-store-2: without it the
+			// status falls through to "active"). LimitedUntil is CanDispatch-only
+			// and is not read by Status(now), so it is not needed here.
 			account: Account{
 				Breaker:   a.Breaker,
-				Slots:     a.Slots,   // pointer — only durable Breaker fields are read by SaveState
+				Slots:     a.Slots, // pointer — only durable Breaker fields are read by SaveState
 				Disabled:  a.Disabled,
 				Offline:   a.Offline,
+				CoolUntil: a.CoolUntil,
 			},
 			now: now,
 		})

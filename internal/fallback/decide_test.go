@@ -93,3 +93,101 @@ func TestIsProbe_CJK(t *testing.T) {
 		t.Fatal("long CJK content must not be treated as probe")
 	}
 }
+
+func TestEffectivePriceThreshold_ChannelOverridesGlobal(t *testing.T) {
+	// When channel threshold is non-zero, it takes precedence over global.
+	got := EffectivePriceThreshold(0.02, 0.005)
+	if got != 0.02 {
+		t.Fatalf("channel threshold 0.02 should override global 0.005; got %v", got)
+	}
+}
+
+func TestEffectivePriceThreshold_FallsBackToGlobal(t *testing.T) {
+	// When channel threshold is zero, fall back to global.
+	got := EffectivePriceThreshold(0, 0.005)
+	if got != 0.005 {
+		t.Fatalf("channel threshold 0 should fall back to global 0.005; got %v", got)
+	}
+}
+
+func TestMatchesKeyword(t *testing.T) {
+	if !MatchesKeyword("please refactor this code", []string{"refactor"}) {
+		t.Fatal("should match keyword 'refactor'")
+	}
+	if MatchesKeyword("hello world", []string{"refactor"}) {
+		t.Fatal("should not match when keyword absent")
+	}
+	if MatchesKeyword("any text", []string{}) {
+		t.Fatal("empty keywords should not match")
+	}
+}
+
+func TestMatchesModel(t *testing.T) {
+	if !MatchesModel("claude-opus-4-8", []string{"opus-4-8"}) {
+		t.Fatal("should match model substring")
+	}
+	if MatchesModel("claude-sonnet-4-6", []string{"opus-4-8"}) {
+		t.Fatal("should not match when model absent")
+	}
+}
+
+func TestDecideSoft_Probe(t *testing.T) {
+	in := base()
+	in.ProbeText = "hi"
+	in.ProbeEnabled = true
+	if g := DecideSoft(in); g != Probe {
+		t.Fatalf("DecideSoft: got %v, want Probe", g)
+	}
+}
+
+func TestDecideSoft_Price(t *testing.T) {
+	in := base()
+	in.EstCostUsd = 0.001 // below 0.005
+	if g := DecideSoft(in); g != Price {
+		t.Fatalf("DecideSoft: got %v, want Price", g)
+	}
+}
+
+func TestDecideSoft_Exhausted(t *testing.T) {
+	in := base()
+	in.PoolEmpty = true
+	if g := DecideSoft(in); g != Exhausted {
+		t.Fatalf("DecideSoft: got %v, want Exhausted", g)
+	}
+}
+
+func TestDecideSoft_None(t *testing.T) {
+	in := base()
+	if g := DecideSoft(in); g != None {
+		t.Fatalf("DecideSoft: got %v, want None", g)
+	}
+}
+
+func TestDecideSoft_NeverKeywordOrModel(t *testing.T) {
+	in := base()
+	in.Keywords = []string{"refactor"}
+	in.FallbackModels = []string{"opus-4-8"}
+	in.EstCostUsd = 0.001 // would trigger Price; keyword/model must not appear
+	g := DecideSoft(in)
+	if g == Keyword || g == Model {
+		t.Fatalf("DecideSoft must never return Keyword or Model; got %v", g)
+	}
+}
+
+func TestDecide_ChannelThresholdOverridesGlobal(t *testing.T) {
+	// A request costing 0.003 with a channel threshold of 0.01 should trigger Price,
+	// even though the global threshold (0.001) would not.
+	in := base()
+	in.EstCostUsd = 0.003
+	in.PriceThresholdUsd = EffectivePriceThreshold(0.01, 0.001) // channel wins
+	if g := Decide(in); g != Price {
+		t.Fatalf("channel threshold override: got %v, want Price", g)
+	}
+	// Conversely, channel threshold of 0 falls back to global, which is below cost.
+	in2 := base()
+	in2.EstCostUsd = 0.003
+	in2.PriceThresholdUsd = EffectivePriceThreshold(0, 0.001) // global=0.001 < 0.003 → no price trigger
+	if g := Decide(in2); g != None {
+		t.Fatalf("global threshold fallback: got %v, want None", g)
+	}
+}

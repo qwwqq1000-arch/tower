@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"time"
 
@@ -53,6 +54,7 @@ func createUserHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "user.create", "tenant:"+id, nil, map[string]any{"username": b.Username, "role": b.Role})
 		writeJSON(w, 200, map[string]string{"id": id})
 	}
 }
@@ -68,6 +70,7 @@ func deleteUserHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "user.delete", "tenant:"+id, nil, nil)
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }
@@ -83,6 +86,12 @@ func setUserRoleHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		// Revoke any outstanding sessions: the new role must not be carried by a
+		// token issued under the old role.
+		if err := q.BumpSessionEpoch(r.Context(), r.PathValue("id")); err != nil {
+			log.Printf("BumpSessionEpoch user %s: %v", r.PathValue("id"), err)
+		}
+		recordAudit(r, q, "user.role", "tenant:"+r.PathValue("id"), nil, map[string]any{"role": b.Role})
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }
@@ -98,6 +107,7 @@ func setUserHostingRateHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "user.hostingRate", "tenant:"+r.PathValue("id"), nil, map[string]any{"rate": b.Rate})
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }
@@ -113,6 +123,7 @@ func setUserChannelRateHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "user.channelRate", "tenant:"+r.PathValue("id"), nil, map[string]any{"rate": b.Rate})
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }
@@ -128,11 +139,12 @@ func setUserFallbackLimitHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		recordAudit(r, q, "user.fallbackLimit", "tenant:"+r.PathValue("id"), nil, map[string]any{"limit": b.Limit})
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }
 
-func changePasswordHandler(q *sqlc.Queries) http.HandlerFunc {
+func changePasswordHandler(secret string, q *sqlc.Queries, secureCookies bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p, ok := sessionFrom(r)
 		if !ok {
@@ -163,6 +175,24 @@ func changePasswordHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		// Bump the session epoch so every previously issued token (e.g. on other
+		// devices, or one stolen with the old password) is revoked. Re-issue this
+		// caller's cookie at the new epoch so the device that just changed the
+		// password stays logged in.
+		if err := q.BumpSessionEpoch(r.Context(), p.Sub); err != nil {
+			log.Printf("BumpSessionEpoch user %s: %v", p.Sub, err)
+		}
+		newEpoch, err := q.GetSessionEpoch(r.Context(), p.Sub)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": "session epoch fetch failed"})
+			return
+		}
+		tok := auth.IssueSession(secret, p.Sub, p.Role, newEpoch, nowUnix(), sessionTTLSec)
+		http.SetCookie(w, &http.Cookie{
+			Name: "tower_session", Value: tok, Path: "/",
+			HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: sessionTTLSec,
+			Secure: secureCookies,
+		})
 		writeJSON(w, 200, map[string]string{"ok": "true"})
 	}
 }

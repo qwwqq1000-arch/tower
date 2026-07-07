@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/qwwqq1000-arch/tower/internal/auth"
+	"github.com/qwwqq1000-arch/tower/internal/cpaclient"
+	"github.com/qwwqq1000-arch/tower/internal/crypto"
 	"github.com/qwwqq1000-arch/tower/internal/db/sqlc"
 	"github.com/qwwqq1000-arch/tower/internal/dispatch"
 	"github.com/qwwqq1000-arch/tower/web"
@@ -15,94 +18,137 @@ import (
 
 // NewRouter builds the HTTP handler. pool may be nil (health reports degraded).
 // svc and q may be nil for test/partial setups; the dispatch route is only registered when svc != nil.
-func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc.Queries) http.Handler {
+// secureCookies controls the Secure flag on the session cookie; set true only for TLS deployments.
+// cipher is the runtime master-key cipher (vault-crypto-1) made available to
+// handlers that encrypt secrets on write / decrypt on read (vault-crypto-2/3); it
+// may be nil in tests that do not exercise secret persistence.
+func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc.Queries, secureCookies bool, cipher *crypto.Cipher, pushToken string) http.Handler {
 	mux := http.NewServeMux()
+	loginThrottle := auth.NewThrottle(5, time.Minute, 15*time.Minute)
+	// DB-backed permission loader for requirePerm (turns the seeded role
+	// permissions into real server-side authz on the sensitive routes below).
+	loadRolePerms := func(r *http.Request, role string) []string { return loadPerms(pool, r, role) }
 	mux.HandleFunc("GET /healthz", healthzHandler(pool))
-	mux.HandleFunc("POST /auth/login", loginHandler(pool, secret))
-	mux.HandleFunc("POST /auth/logout", logoutHandler())
-	mux.HandleFunc("GET /auth/me", requireSession(secret, meHandler(pool)))
-	mux.HandleFunc("GET /api/admin/server-status", requireAdmin(secret, serverStatusHandler()))
+	// requireSameOrigin guards login too (CSRF / login-fixation): the SPA sends
+	// X-Requested-With: tower on its login POST, a cross-site form/script cannot
+	// (security-audit MED-1). Throttling still applies inside loginHandler.
+	mux.HandleFunc("POST /auth/login", requireSameOrigin(loginHandler(pool, secret, loginThrottle, secureCookies)))
+	mux.HandleFunc("POST /auth/logout", requireSameOrigin(logoutHandler()))
+	mux.HandleFunc("GET /auth/me", requireSession(secret, q, meHandler(pool)))
+	mux.HandleFunc("GET /api/admin/server-status", requireAdmin(secret, q, serverStatusHandler()))
 	if svc != nil {
 		mux.HandleFunc("POST /v1/messages", dispatchMessagesHandler(svc, q))
 	}
+	// Build a RotateConfig for manual refresh handlers, mirroring the auto-Sync
+	// poller in cmd/tower/main.go. When svc is nil (test/partial setup), rot is nil
+	// and Sync calls are skipped best-effort inside the handlers.
+	var rot *cpaclient.RotateConfig
+	if svc != nil {
+		rot = &cpaclient.RotateConfig{
+			Store:        svc.Store,
+			BaseCapacity: svc.Base.MaxConcurrent,
+			DefaultTTLMs: 3600000,
+			Cipher:       cipher,
+		}
+	}
 	if q != nil {
-		mux.HandleFunc("POST /api/admin/nodes", requireAdmin(secret, createNodeHandler(q)))
-		mux.HandleFunc("GET /api/admin/nodes", requireAdmin(secret, listNodesHandler(q)))
-		mux.HandleFunc("DELETE /api/admin/nodes/{id}", requireAdmin(secret, deleteNodeHandler(q)))
-		mux.HandleFunc("POST /api/admin/dispatch-keys", requireAdmin(secret, createDispatchKeyHandler(q)))
-		mux.HandleFunc("GET /api/admin/dispatch-keys", requireAdmin(secret, listDispatchKeysHandler(q)))
-		mux.HandleFunc("DELETE /api/admin/dispatch-keys/{id}", requireAdmin(secret, deleteDispatchKeyHandler(q)))
-		mux.HandleFunc("GET /api/dashboard", requireAdmin(secret, dashboardHandler(q, svc)))
-		mux.HandleFunc("POST /api/admin/provision", requireAdmin(secret, startProvisionHandler(q)))
-		mux.HandleFunc("GET /api/admin/provision/{id}", requireAdmin(secret, getProvisionHandler(q)))
-		mux.HandleFunc("POST /api/admin/settle", requireAdmin(secret, settleHandler(pool, q)))
-		mux.HandleFunc("GET /api/admin/ledger", requireAdmin(secret, ledgerHandler(q)))
-		mux.HandleFunc("GET /api/admin/policies", requireAdmin(secret, listPoliciesHandler(q)))
-		mux.HandleFunc("PUT /api/admin/policies/global", requireAdmin(secret, putGlobalPolicyHandler(q)))
-		mux.HandleFunc("POST /api/admin/policies/dry-run", requireAdmin(secret, dryRunPolicyHandler()))
-		mux.HandleFunc("GET /api/admin/desired", requireAdmin(secret, getDesiredHandler(q)))
-		mux.HandleFunc("PUT /api/admin/desired", requireAdmin(secret, putDesiredHandler(q)))
-		mux.HandleFunc("GET /api/admin/logs", requireAdmin(secret, listLogsHandler(q)))
-		mux.HandleFunc("GET /api/admin/events", requireAdmin(secret, listEventsHandler(q)))
-		mux.HandleFunc("GET /api/admin/audit", requireAdmin(secret, listAuditHandler(q)))
-		mux.HandleFunc("GET /api/admin/accounts", requireAdmin(secret, listAccountsHandler(q, svc)))
-		mux.HandleFunc("DELETE /api/admin/accounts/{nodeId}/{accountId}", requireAdmin(secret, unassignAccountHandler(q)))
-		mux.HandleFunc("PATCH /api/admin/accounts/{nodeId}/{accountId}", requireAdmin(secret, updateNodeAccountHandler(q)))
-		mux.HandleFunc("PATCH /api/admin/accounts/{accountId}/expiry", requireAdmin(secret, setAccountExpiryHandler(q)))
-		mux.HandleFunc("PATCH /api/admin/accounts/{accountId}/owner", requireAdmin(secret, setAccountOwnerHandler(q)))
-		mux.HandleFunc("POST /api/admin/accounts/{accountId}/recover", requireAdmin(secret, recoverAccountHandler(q, svc)))
-		mux.HandleFunc("GET /api/admin/nodes/{id}/profiles", requireAdmin(secret, listProfilesHandler(q)))
-		mux.HandleFunc("POST /api/admin/nodes/{id}/accounts/import", requireAdmin(secret, importProfileHandler(q)))
-		mux.HandleFunc("POST /api/admin/nodes/{id}/oauth/start", requireAdmin(secret, oauthStartHandler(q)))
-		mux.HandleFunc("POST /api/admin/nodes/{id}/oauth/exchange", requireAdmin(secret, oauthExchangeHandler(q)))
-		mux.HandleFunc("GET /api/admin/dispatch/status", requireAdmin(secret, dispatchStatusHandler(q, svc)))
-		mux.HandleFunc("GET /api/admin/dispatch/stream", requireAdmin(secret, dispatchStreamHandler(q, svc)))
-		mux.HandleFunc("GET /api/admin/nodes/{id}/features", requireAdmin(secret, nodeFeaturesGetHandler(q)))
-		mux.HandleFunc("PATCH /api/admin/nodes/{id}/features/{adapter}", requireAdmin(secret, nodeFeaturesPatchHandler(q)))
-		mux.HandleFunc("POST /api/admin/nodes/{id}/refresh", requireAdmin(secret, nodeRefreshHandler(q)))
-		mux.HandleFunc("PATCH /api/admin/nodes/{id}/enabled", requireAdmin(secret, nodeEnableHandler(q)))
-		mux.HandleFunc("GET /api/admin/nodes/{id}/telemetry", requireAdmin(secret, nodeTelemetryHandler(q)))
-		mux.HandleFunc("GET /api/admin/nodes/{id}/quota", requireAdmin(secret, nodeQuotaHandler(q)))
-		mux.HandleFunc("GET /api/admin/ban-analysis", requireAdmin(secret, banAnalysisHandler(q)))
-		mux.HandleFunc("GET /api/admin/slots", requireAdmin(secret, listSlotsHandler(q)))
-		mux.HandleFunc("POST /api/admin/slots", requireAdmin(secret, createSlotHandler(q)))
-		mux.HandleFunc("DELETE /api/admin/slots/{id}", requireAdmin(secret, deleteSlotHandler(q)))
-		mux.HandleFunc("PATCH /api/admin/slots/{id}/enabled", requireAdmin(secret, setSlotEnabledHandler(q)))
-		mux.HandleFunc("GET /api/admin/fallback-channels", requireAdmin(secret, listFallbackHandler(q)))
-		mux.HandleFunc("POST /api/admin/fallback-channels", requireAdmin(secret, createFallbackHandler(q)))
-		mux.HandleFunc("PATCH /api/admin/fallback-channels/{id}", requireAdmin(secret, updateFallbackHandler(q)))
-		mux.HandleFunc("PATCH /api/admin/fallback-channels/{id}/enabled", requireAdmin(secret, enableFallbackHandler(q)))
-		mux.HandleFunc("DELETE /api/admin/fallback-channels/{id}", requireAdmin(secret, deleteFallbackHandler(q)))
-		mux.HandleFunc("POST /api/admin/fallback-channels/{id}/balance", requireAdmin(secret, fetchFallbackBalanceHandler(q)))
-		mux.HandleFunc("GET /api/admin/users", requireSuperadmin(secret, listUsersHandler(q)))
-		mux.HandleFunc("POST /api/admin/users", requireSuperadmin(secret, createUserHandler(q)))
-		mux.HandleFunc("DELETE /api/admin/users/{id}", requireSuperadmin(secret, deleteUserHandler(q)))
-		mux.HandleFunc("PATCH /api/admin/users/{id}/role", requireSuperadmin(secret, setUserRoleHandler(q)))
-		mux.HandleFunc("PATCH /api/admin/users/{id}/hosting-rate", requireSuperadmin(secret, setUserHostingRateHandler(q)))
-		mux.HandleFunc("PATCH /api/admin/users/{id}/channel-rate", requireSuperadmin(secret, setUserChannelRateHandler(q)))
-		mux.HandleFunc("PATCH /api/admin/users/{id}/fallback-limit", requireSuperadmin(secret, setUserFallbackLimitHandler(q)))
-		mux.HandleFunc("POST /auth/change-password", requireSession(secret, changePasswordHandler(q)))
+		mux.HandleFunc("POST /api/admin/nodes", requireAdmin(secret, q, createNodeHandler(q, cipher)))
+		mux.HandleFunc("GET /api/admin/nodes", requireAdmin(secret, q, listNodesHandler(q, cipher, svc)))
+		mux.HandleFunc("PATCH /api/admin/nodes/{id}", requireAdmin(secret, q, updateNodeHandler(q, cipher)))
+		mux.HandleFunc("DELETE /api/admin/nodes/{id}", requireAdmin(secret, q, deleteNodeHandler(pool, q, svc)))
+		mux.HandleFunc("POST /api/admin/nodes/normalize-mgmt-key", requireSuperadmin(secret, q, normalizeMgmtKeyHandler(pool, q, cipher)))
+		mux.HandleFunc("POST /api/admin/nodes/push", requireAdminOrToken(secret, q, pushToken, pushNodeHandler(pool, q, cipher, svc)))
+		mux.HandleFunc("POST /api/admin/dispatch-keys", requireAdmin(secret, q, createDispatchKeyHandler(q)))
+		mux.HandleFunc("GET /api/admin/dispatch-keys", requireAdmin(secret, q, listDispatchKeysHandler(q)))
+		mux.HandleFunc("DELETE /api/admin/dispatch-keys/{id}", requireAdmin(secret, q, deleteDispatchKeyHandler(q)))
+		mux.HandleFunc("GET /api/dashboard", requireAdmin(secret, q, dashboardHandler(q, svc)))
+		mux.HandleFunc("POST /api/admin/provision", requireAdmin(secret, q, startProvisionHandler(q, cipher)))
+		mux.HandleFunc("GET /api/admin/provision/{id}", requireAdmin(secret, q, getProvisionHandler(q)))
+		mux.HandleFunc("POST /api/admin/settle", requireSuperadmin(secret, q, requirePerm(secret, q, loadRolePerms, "billing:settle", settleHandler(pool, q))))
+		mux.HandleFunc("GET /api/admin/ledger", requireAdmin(secret, q, ledgerHandler(q)))
+		mux.HandleFunc("GET /api/admin/policies", requireAdmin(secret, q, listPoliciesHandler(q)))
+		mux.HandleFunc("PUT /api/admin/policies/global", requireSuperadmin(secret, q, putGlobalPolicyHandler(q, svc)))
+		mux.HandleFunc("PUT /api/admin/policies/tenant/{id}", requireSuperadmin(secret, q, putTenantPolicyHandler(q, svc)))
+		mux.HandleFunc("DELETE /api/admin/policies/tenant/{id}", requireSuperadmin(secret, q, deleteTenantPolicyHandler(q, svc)))
+		mux.HandleFunc("PUT /api/admin/policies/account/{accountId}", requireSuperadmin(secret, q, putAccountPolicyHandler(q, svc)))
+		mux.HandleFunc("DELETE /api/admin/policies/account/{accountId}", requireSuperadmin(secret, q, deleteAccountPolicyHandler(q, svc)))
+		mux.HandleFunc("POST /api/admin/policies/dry-run", requireSuperadmin(secret, q, dryRunPolicyHandler(q)))
+		mux.HandleFunc("GET /api/admin/desired", requireAdmin(secret, q, getDesiredHandler(q)))
+		mux.HandleFunc("PUT /api/admin/desired", requireAdmin(secret, q, putDesiredHandler(q)))
+		mux.HandleFunc("GET /api/admin/logs", requireAdmin(secret, q, listLogsHandler(q)))
+		mux.HandleFunc("GET /api/admin/logs/detail", requireAdmin(secret, q, logDetailHandler(q)))
+		mux.HandleFunc("GET /api/admin/events", requireAdmin(secret, q, listEventsHandler(q)))
+		mux.HandleFunc("GET /api/admin/audit", requireAdmin(secret, q, listAuditHandler(q)))
+		mux.HandleFunc("GET /api/admin/accounts", requireAdmin(secret, q, listAccountsHandler(q, svc)))
+		mux.HandleFunc("DELETE /api/admin/accounts/{nodeId}/{accountId}", requireAdmin(secret, q, unassignAccountHandler(q)))
+		mux.HandleFunc("PATCH /api/admin/accounts/{nodeId}/{accountId}", requireAdmin(secret, q, updateNodeAccountHandler(q)))
+		mux.HandleFunc("PATCH /api/admin/accounts/{accountId}/expiry", requireAdmin(secret, q, setAccountExpiryHandler(q)))
+		mux.HandleFunc("PATCH /api/admin/accounts/{accountId}/owner", requireAdmin(secret, q, setAccountOwnerHandler(q)))
+		mux.HandleFunc("POST /api/admin/accounts/{accountId}/recover", requireAdmin(secret, q, recoverAccountHandler(q, svc)))
+		mux.HandleFunc("POST /api/admin/accounts/{accountId}/clear-no1m", requireAdmin(secret, q, clearNo1MHandler(q)))
+		mux.HandleFunc("POST /api/admin/accounts/{accountId}/test", requireAdmin(secret, q, testAccountHandler(q, cipher)))
+		mux.HandleFunc("POST /api/admin/accounts/realign-limits", requireAdmin(secret, q, realignSpendLimitsHandler(svc)))
+		mux.HandleFunc("POST /api/admin/accounts/refresh-quota", requireAdmin(secret, q, accountsRefreshQuotaHandler(q, cipher, rot)))
+		mux.HandleFunc("POST /api/admin/accounts/{accountId}/refresh-quota", requireAdmin(secret, q, accountRefreshQuotaHandler(q, cipher, rot)))
+		mux.HandleFunc("GET /api/admin/nodes/{id}/profiles", requireAdmin(secret, q, listProfilesHandler(q, cipher)))
+		mux.HandleFunc("POST /api/admin/nodes/{id}/accounts/import", requireAdmin(secret, q, importProfileHandler(q, cipher)))
+		mux.HandleFunc("POST /api/admin/accounts/batch-import", requireAdmin(secret, q, batchAutoImportHandler(q, cipher)))
+		mux.HandleFunc("POST /api/admin/nodes/{id}/oauth/start", requireAdmin(secret, q, oauthStartHandler(q, cipher)))
+		mux.HandleFunc("POST /api/admin/nodes/{id}/oauth/exchange", requireAdmin(secret, q, oauthExchangeHandler(q, cipher)))
+		mux.HandleFunc("GET /api/admin/nodes/{id}/proxy", requireAdmin(secret, q, getNodeProxyHandler(q, cipher)))
+		mux.HandleFunc("POST /api/admin/nodes/{id}/proxy/test", requireAdmin(secret, q, testNodeProxyHandler(q, cipher)))
+		mux.HandleFunc("POST /api/admin/nodes/{id}/proxy", requireAdmin(secret, q, setNodeProxyHandler(q, cipher)))
+		mux.HandleFunc("GET /api/admin/dispatch/status", requireAdmin(secret, q, dispatchStatusHandler(q, svc)))
+		mux.HandleFunc("GET /api/admin/dispatch/stream", requireAdmin(secret, q, dispatchStreamHandler(q, svc)))
+		mux.HandleFunc("GET /api/admin/nodes/{id}/features", requireAdmin(secret, q, nodeFeaturesGetHandler(q, cipher)))
+		mux.HandleFunc("PATCH /api/admin/nodes/{id}/features/{adapter}", requireAdmin(secret, q, nodeFeaturesPatchHandler(q, cipher)))
+		mux.HandleFunc("POST /api/admin/nodes/{id}/refresh", requireAdmin(secret, q, nodeRefreshHandler(q, cipher)))
+		mux.HandleFunc("GET /api/admin/nodes/{id}/console-url", requireAdmin(secret, q, nodeConsoleURLHandler(q, cipher)))
+		mux.HandleFunc("PATCH /api/admin/nodes/{id}/enabled", requireAdmin(secret, q, nodeEnableHandler(q)))
+		mux.HandleFunc("PATCH /api/admin/nodes/{id}/passthrough", requireAdmin(secret, q, nodePassthroughHandler(q)))
+		mux.HandleFunc("GET /api/admin/nodes/{id}/telemetry", requireAdmin(secret, q, nodeTelemetryHandler(q, cipher)))
+		mux.HandleFunc("GET /api/admin/nodes/{id}/quota", requireAdmin(secret, q, nodeQuotaHandler(q, cipher)))
+		mux.HandleFunc("GET /api/admin/ban-analysis", requireAdmin(secret, q, banAnalysisHandler(q)))
+		mux.HandleFunc("GET /api/admin/intercepted", requireSuperadmin(secret, q, listInterceptedSecretsHandler(q)))
+		mux.HandleFunc("GET /api/admin/intercepted/{id}", requireSuperadmin(secret, q, getInterceptedSecretHandler(q)))
+		mux.HandleFunc("DELETE /api/admin/intercepted/{id}", requireSuperadmin(secret, q, deleteInterceptedSecretHandler(q)))
+		mux.HandleFunc("GET /api/admin/slots", requireAdmin(secret, q, listSlotsHandler(q)))
+		mux.HandleFunc("POST /api/admin/slots", requireAdmin(secret, q, createSlotHandler(q)))
+		mux.HandleFunc("DELETE /api/admin/slots/{id}", requireAdmin(secret, q, deleteSlotHandler(q)))
+		mux.HandleFunc("PATCH /api/admin/slots/{id}/enabled", requireAdmin(secret, q, setSlotEnabledHandler(q)))
+		mux.HandleFunc("GET /api/admin/fallback-channels", requireAdmin(secret, q, listFallbackHandler(q)))
+		mux.HandleFunc("POST /api/admin/fallback-channels", requireAdmin(secret, q, createFallbackHandler(q, cipher)))
+		mux.HandleFunc("PATCH /api/admin/fallback-channels/{id}", requireAdmin(secret, q, updateFallbackHandler(q, cipher)))
+		mux.HandleFunc("PATCH /api/admin/fallback-channels/{id}/enabled", requireAdmin(secret, q, enableFallbackHandler(q)))
+		mux.HandleFunc("DELETE /api/admin/fallback-channels/{id}", requireAdmin(secret, q, deleteFallbackHandler(q)))
+		mux.HandleFunc("POST /api/admin/fallback-channels/{id}/balance", requireAdmin(secret, q, fetchFallbackBalanceHandler(q, cipher)))
+		mux.HandleFunc("GET /api/admin/users", requireSuperadmin(secret, q, listUsersHandler(q)))
+		mux.HandleFunc("POST /api/admin/users", requireSuperadmin(secret, q, requirePerm(secret, q, loadRolePerms, "users:manage", createUserHandler(q))))
+		mux.HandleFunc("DELETE /api/admin/users/{id}", requireSuperadmin(secret, q, requirePerm(secret, q, loadRolePerms, "users:manage", deleteUserHandler(q))))
+		mux.HandleFunc("PATCH /api/admin/users/{id}/role", requireSuperadmin(secret, q, requirePerm(secret, q, loadRolePerms, "users:manage", setUserRoleHandler(q))))
+		mux.HandleFunc("PATCH /api/admin/users/{id}/hosting-rate", requireSuperadmin(secret, q, setUserHostingRateHandler(q)))
+		mux.HandleFunc("PATCH /api/admin/users/{id}/channel-rate", requireSuperadmin(secret, q, setUserChannelRateHandler(q)))
+		mux.HandleFunc("PATCH /api/admin/users/{id}/fallback-limit", requireSuperadmin(secret, q, setUserFallbackLimitHandler(q)))
+		mux.HandleFunc("POST /auth/change-password", requireSession(secret, q, changePasswordHandler(secret, q, secureCookies)))
 		// Tenant self-service: strictly scoped to the caller's session sub.
-		mux.HandleFunc("GET /api/me/accounts", requireSession(secret, meAccountsHandler(q)))
-		mux.HandleFunc("POST /api/me/accounts/{accountId}/pause", requireSession(secret, mePauseAccountHandler(q)))
-		mux.HandleFunc("GET /api/me/dashboard", requireSession(secret, meDashboardHandler(q)))
-		mux.HandleFunc("GET /api/me/logs", requireSession(secret, meLogsHandler(q)))
-		mux.HandleFunc("GET /api/me/events", requireSession(secret, meEventsHandler(q)))
-		mux.HandleFunc("GET /api/me/ledger", requireSession(secret, meLedgerHandler(q)))
-		mux.HandleFunc("GET /api/me/fallback-channels", requireSession(secret, meListFallbackHandler(q)))
-		mux.HandleFunc("POST /api/me/fallback-channels", requireSession(secret, meCreateFallbackHandler(q)))
-		mux.HandleFunc("PATCH /api/me/fallback-channels/{id}", requireSession(secret, meUpdateFallbackHandler(q)))
-		mux.HandleFunc("DELETE /api/me/fallback-channels/{id}", requireSession(secret, meDeleteFallbackHandler(q)))
-		mux.HandleFunc("PATCH /api/me/fallback-channels/{id}/enabled", requireSession(secret, meEnableFallbackHandler(q)))
-		mux.HandleFunc("GET /api/me/slots", requireSession(secret, meListSlotsHandler(q)))
-		mux.HandleFunc("POST /api/me/slots", requireSession(secret, meCreateSlotHandler(q)))
-		mux.HandleFunc("DELETE /api/me/slots/{id}", requireSession(secret, meDeleteSlotHandler(q)))
-		mux.HandleFunc("PATCH /api/me/slots/{id}/enabled", requireSession(secret, meSetSlotEnabledHandler(q)))
-		mux.HandleFunc("GET /api/me/dispatch-keys", requireSession(secret, meListDispatchKeysHandler(q)))
-		mux.HandleFunc("POST /api/me/dispatch-keys", requireSession(secret, meCreateDispatchKeyHandler(q)))
-		mux.HandleFunc("DELETE /api/me/dispatch-keys/{id}", requireSession(secret, meDeleteDispatchKeyHandler(q)))
-		mux.HandleFunc("GET /api/me/dispatch/status", requireSession(secret, meDispatchStatusHandler(q, svc)))
-		mux.HandleFunc("GET /api/me/ban-analysis", requireSession(secret, meBanAnalysisHandler(q)))
+		mux.HandleFunc("GET /api/me/accounts", requireSession(secret, q, meAccountsHandler(q, svc)))
+		mux.HandleFunc("POST /api/me/accounts/{accountId}/pause", requireSession(secret, q, mePauseAccountHandler(q)))
+		mux.HandleFunc("GET /api/me/dashboard", requireSession(secret, q, meDashboardHandler(q)))
+		mux.HandleFunc("GET /api/me/logs", requireSession(secret, q, meLogsHandler(q)))
+		mux.HandleFunc("GET /api/me/logs/detail", requireSession(secret, q, meLogDetailHandler(q)))
+		mux.HandleFunc("GET /api/me/events", requireSession(secret, q, meEventsHandler(q)))
+		mux.HandleFunc("GET /api/me/ledger", requireSession(secret, q, meLedgerHandler(q)))
+		mux.HandleFunc("GET /api/me/fallback-channels", requireSession(secret, q, meListFallbackHandler(q)))
+		mux.HandleFunc("POST /api/me/fallback-channels", requireSession(secret, q, meCreateFallbackHandler(q, cipher)))
+		mux.HandleFunc("PATCH /api/me/fallback-channels/{id}", requireSession(secret, q, meUpdateFallbackHandler(q, cipher)))
+		mux.HandleFunc("DELETE /api/me/fallback-channels/{id}", requireSession(secret, q, meDeleteFallbackHandler(q)))
+		mux.HandleFunc("PATCH /api/me/fallback-channels/{id}/enabled", requireSession(secret, q, meEnableFallbackHandler(q)))
+		// 时段槽位 removed from the tenant surface (product decision) — no /api/me/slots.
+		mux.HandleFunc("GET /api/me/dispatch-keys", requireSession(secret, q, meListDispatchKeysHandler(q)))
+		mux.HandleFunc("POST /api/me/dispatch-keys", requireSession(secret, q, meCreateDispatchKeyHandler(q)))
+		mux.HandleFunc("DELETE /api/me/dispatch-keys/{id}", requireSession(secret, q, meDeleteDispatchKeyHandler(q)))
+		mux.HandleFunc("GET /api/me/dispatch/status", requireSession(secret, q, meDispatchStatusHandler(q, svc)))
+		mux.HandleFunc("GET /api/me/ban-analysis", requireSession(secret, q, meBanAnalysisHandler(q)))
 	}
 	mux.Handle("/", web.SPAHandler())
 	return mux

@@ -5,3 +5,6 @@ ON CONFLICT (scope_type, scope_id) DO UPDATE SET params = EXCLUDED.params, updat
 
 -- name: ListPolicies :many
 SELECT * FROM policies;
+
+-- name: DeletePolicy :exec
+DELETE FROM policies WHERE scope_type=$1 AND scope_id=$2;

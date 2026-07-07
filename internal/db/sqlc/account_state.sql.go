@@ -9,6 +9,15 @@ import (
 	"context"
 )
 
+const deleteAccountStateByNode = `-- name: DeleteAccountStateByNode :exec
+DELETE FROM account_state WHERE node_id = $1
+`
+
+func (q *Queries) DeleteAccountStateByNode(ctx context.Context, nodeID string) error {
+	_, err := q.db.Exec(ctx, deleteAccountStateByNode, nodeID)
+	return err
+}
+
 const listAccountState = `-- name: ListAccountState :many
 SELECT node_id, profile_id, status, cooldown_until, ban_streak, fail_count, updated_at, permanent FROM account_state
 `

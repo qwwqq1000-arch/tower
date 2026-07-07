@@ -10,15 +10,23 @@ import {
   createNode,
   deleteNode,
   setNodeEnabled,
+  setNodePassthrough,
   refreshNode,
+  getNodeConsoleUrl,
   startProvision,
   getProvision,
   oauthStart,
   oauthExchange,
   listNodeProfiles,
   importNodeProfile,
+  listUsers,
+  updateNode,
+  batchAutoImport,
+  getNodeProxy,
+  testNodeProxy,
+  setNodeProxy,
 } from '../api';
-import type { NodeRecord, NodeProfile } from '../types';
+import type { NodeRecord, NodeProfile, UserRow } from '../types';
 
 // ------------------------------------------------------------------
 // Helpers
@@ -41,6 +49,23 @@ function fmtDays(ms?: number): string {
 // ------------------------------------------------------------------
 // Status badge
 // ------------------------------------------------------------------
+// openConsole opens a node's management console. The URL (with the node's key for
+// meridian, so the dashboard opens authenticated) is built server-side. The blank tab is
+// opened synchronously within the click so it isn't popup-blocked, then redirected once
+// the URL resolves (node-console-1).
+function openConsole(node: NodeRecord) {
+  // cpa nodes: the CLIProxyAPI management UI lives at <baseUrl>/management.html#/
+  // (log in there with the secret-key). Open it directly — no server round-trip.
+  if ((node.kind ?? 'meridian').toLowerCase() === 'cpa') {
+    const base = node.baseUrl.replace(/\/+$/, '');
+    window.open(`${base}/management.html#/`, '_blank', 'noopener,noreferrer');
+    return;
+  }
+  getNodeConsoleUrl(node.id)
+    .then(({ url }) => { window.open(url, '_blank', 'noopener,noreferrer'); })
+    .catch(() => {});
+}
+
 function NodeKindBadge({ kind }: { kind?: string }) {
   const isCpa = (kind ?? 'meridian').toLowerCase() === 'cpa';
   const cls = isCpa
@@ -53,28 +78,99 @@ function NodeKindBadge({ kind }: { kind?: string }) {
   );
 }
 
+// Node status is derived from enabled/banned/loggedIn in ONE place so the badge, the
+// status sort, and the status filter never drift apart (tenant-shared-codepath rule).
+type NodeStatus = 'ok' | 'banned' | 'noauth' | 'disabled';
+
+function nodeStatusValue(node: NodeRecord): NodeStatus {
+  if (!node.enabled) return 'disabled';
+  if (node.banned) return 'banned';
+  if (node.loggedIn === false) return 'noauth';
+  return 'ok';
+}
+
+// order drives the 状态 sort: asc = 正常 first, desc surfaces 封号 first.
+const NODE_STATUS_META: Record<NodeStatus, { label: string; dot: string; text: string; order: number }> = {
+  ok: { label: '正常', dot: 'bg-ok', text: 'text-ok', order: 0 },
+  disabled: { label: '停用', dot: 'bg-muted', text: 'text-muted', order: 1 },
+  noauth: { label: '未上传凭证', dot: 'bg-orange-400', text: 'text-orange-400', order: 2 },
+  banned: { label: '封号', dot: 'bg-err', text: 'text-err', order: 3 },
+};
+
 function NodeStatusBadge({ node }: { node: NodeRecord }) {
-  if (!node.enabled) {
-    return (
-      <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted">
-        <span className="w-1.5 h-1.5 rounded-full bg-muted" />
-        停用
-      </span>
-    );
-  }
-  if (node.loggedIn === false) {
-    return (
-      <span className="inline-flex items-center gap-1.5 text-xs font-medium text-orange-400">
-        <span className="w-1.5 h-1.5 rounded-full bg-orange-400" />
-        未上传凭证
-      </span>
-    );
-  }
+  const m = NODE_STATUS_META[nodeStatusValue(node)];
   return (
-    <span className="inline-flex items-center gap-1.5 text-xs font-medium text-ok">
-      <span className="w-1.5 h-1.5 rounded-full bg-ok" />
-      正常
+    <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${m.text}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${m.dot}`} />
+      {m.label}
     </span>
+  );
+}
+
+// ------------------------------------------------------------------
+// Node edit modal (接入地址 + API密钥)
+// ------------------------------------------------------------------
+function NodeEditModal({ node, onClose, onSuccess }: { node: NodeRecord; onClose: () => void; onSuccess: () => void }) {
+  const [baseUrl, setBaseUrl] = useState(node.baseUrl);
+  const [apiKey, setApiKey] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function handleSave() {
+    setSaving(true);
+    setErr(null);
+    try {
+      await updateNode(node.id, {
+        ...(baseUrl !== node.baseUrl ? { baseUrl } : {}),
+        ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+      });
+      onSuccess();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : '保存失败');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div className="bg-surface border border-line rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-line">
+          <h2 className="text-base font-semibold text-ink">编辑节点 — {node.name}</h2>
+          <button onClick={onClose} className="text-muted hover:text-ink text-lg leading-none transition">x</button>
+        </div>
+        <div className="p-5 space-y-4">
+          <div>
+            <label className="text-xs text-muted font-medium">接入地址</label>
+            <input
+              type="text"
+              value={baseUrl}
+              onChange={(e) => setBaseUrl(e.target.value)}
+              placeholder="http://ip:3456"
+              className="mt-1 w-full bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-muted font-medium">API 密钥（留空不修改）</label>
+            <input
+              type="text"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="留空保持不变"
+              className="mt-1 w-full bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition"
+            />
+          </div>
+          {err && <p className="text-xs text-err">{err}</p>}
+          <button
+            onClick={() => { void handleSave(); }}
+            disabled={saving}
+            className="w-full py-2 text-sm font-medium bg-accent text-white rounded-lg hover:bg-accent/80 disabled:opacity-50 transition"
+          >
+            {saving ? '保存中…' : '保存'}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -87,10 +183,48 @@ interface OAuthWizardModalProps {
   onSuccess: () => void;
 }
 
+// maskProxy 脱敏展示代理串(隐藏账密与主机中段),仅用于非编辑态显示。
+function maskProxy(raw: string): string {
+  if (!raw) return '';
+  const scheme = raw.match(/^([a-z0-9]+):\/\//i)?.[1] ?? 'socks5';
+  const parts = raw.replace(/^[a-z0-9]+:\/\//i, '').split(':');
+  const host = parts[0] ?? '';
+  const port = parts[1] ?? '';
+  const maskedHost =
+    host.length > 6 ? host.slice(0, 3) + '***' + host.slice(-2) : host.replace(/.(?=.)/g, '*');
+  const cred = parts.length > 2 ? ':***:***' : '';
+  return `${scheme}://${maskedHost}:${port}${cred}`;
+}
+
+// copyToClipboard works over plain HTTP too: navigator.clipboard is undefined in
+// non-secure contexts (the tower is served at http://ip:port), so fall back to a
+// hidden <textarea> + execCommand('copy').
+function copyToClipboard(text: string) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      void navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+      return;
+    }
+  } catch { /* fall through */ }
+  fallbackCopy(text);
+}
+function fallbackCopy(text: string) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  try { document.execCommand('copy'); } catch { /* ignore */ }
+  document.body.removeChild(ta);
+}
+
 function OAuthWizardModal({ node, onClose, onSuccess }: OAuthWizardModalProps) {
   // OAuth flow state
   const [step, setStep] = useState<'idle' | 'authorizing' | 'exchange' | 'done'>('idle');
   const [authorizeUrl, setAuthorizeUrl] = useState('');
+  const [copied, setCopied] = useState(false);
   const [codeVerifier, setCodeVerifier] = useState('');
   const [state, setState] = useState('');
   const [code, setCode] = useState('');
@@ -104,7 +238,17 @@ function OAuthWizardModal({ node, onClose, onSuccess }: OAuthWizardModalProps) {
   const [importing, setImporting] = useState<Record<string, boolean>>({});
   const [importResults, setImportResults] = useState<Record<string, string>>({});
 
-  // Load existing profiles
+  // Egress proxy state (节点级出口代理,透传节点 /settings/api/proxy)
+  const [proxyRaw, setProxyRaw] = useState('');
+  const [proxyLoaded, setProxyLoaded] = useState(''); // 服务端当前值(脱敏显示 + 清除按钮显隐)
+  const [proxyErr, setProxyErr] = useState<string | null>(null);
+  const [proxyMsg, setProxyMsg] = useState<string | null>(null);
+  const [proxyBusy, setProxyBusy] = useState(false);
+  const [proxyTested, setProxyTested] = useState(false);
+  const [proxyRestarting, setProxyRestarting] = useState(false);
+  const [cpaBlocked, setCpaBlocked] = useState(false);
+
+  // Load existing profiles (backend auto-imports logged-in ones)
   const loadProfiles = useCallback(async () => {
     setProfilesLoading(true);
     setProfilesErr(null);
@@ -116,11 +260,30 @@ function OAuthWizardModal({ node, onClose, onSuccess }: OAuthWizardModalProps) {
     } finally {
       setProfilesLoading(false);
     }
-  }, [node.id]);
+  }, [node.id, onSuccess]);
 
   useEffect(() => {
     void loadProfiles();
   }, [loadProfiles]);
+
+  // Load current egress proxy (409 = CPA node → block the section).
+  const loadProxy = useCallback(async () => {
+    setProxyErr(null);
+    try {
+      const data = await getNodeProxy(node.id);
+      setProxyRaw(data.proxy ?? '');
+      setProxyLoaded(data.proxy ?? '');
+      setCpaBlocked(false);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : '加载失败';
+      if (/not applicable/i.test(msg)) setCpaBlocked(true);
+      else setProxyErr(msg);
+    }
+  }, [node.id]);
+
+  useEffect(() => {
+    void loadProxy();
+  }, [loadProxy]);
 
   async function handleStartOAuth() {
     setOauthLoading(true);
@@ -154,6 +317,48 @@ function OAuthWizardModal({ node, onClose, onSuccess }: OAuthWizardModalProps) {
     }
   }
 
+  async function handleTestProxy() {
+    setProxyBusy(true);
+    setProxyErr(null);
+    setProxyMsg(null);
+    try {
+      const r = await testNodeProxy(node.id, proxyRaw.trim());
+      if (r.ok) {
+        setProxyTested(true);
+        setProxyMsg(`代理可用，出口 IP: ${r.egressIp ?? '未知'}`);
+      } else {
+        setProxyTested(false);
+        setProxyErr(r.error ?? '代理测试失败');
+      }
+    } catch (e) {
+      setProxyTested(false);
+      setProxyErr(e instanceof Error ? e.message : '测试失败');
+    } finally {
+      setProxyBusy(false);
+    }
+  }
+
+  async function handleSaveProxy(raw: string) {
+    setProxyBusy(true);
+    setProxyErr(null);
+    setProxyMsg(null);
+    try {
+      const r = await setNodeProxy(node.id, raw);
+      setProxyLoaded(raw);
+      if (r.restarting) {
+        setProxyRestarting(true);
+        setProxyMsg('已保存，节点正在重启激活代理(约 10–20s),起来后再开始 OAuth 授权。');
+      } else {
+        setProxyMsg(raw ? '已保存。' : '已清除。');
+      }
+      onSuccess();
+    } catch (e) {
+      setProxyErr(e instanceof Error ? e.message : '保存失败');
+    } finally {
+      setProxyBusy(false);
+    }
+  }
+
   async function handleImport(profileId: string) {
     setImporting((prev) => ({ ...prev, [profileId]: true }));
     try {
@@ -168,7 +373,7 @@ function OAuthWizardModal({ node, onClose, onSuccess }: OAuthWizardModalProps) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <div
         className="bg-surface border border-line rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-2xl"
         onClick={(e) => e.stopPropagation()}
@@ -188,6 +393,87 @@ function OAuthWizardModal({ node, onClose, onSuccess }: OAuthWizardModalProps) {
         </div>
 
         <div className="p-5 space-y-6">
+          {/* --- Egress proxy section (节点级出口代理) --- */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-ink">🌐 出口代理</h3>
+              {proxyLoaded && !cpaBlocked && (
+                <span className="text-xs text-muted">当前: {maskProxy(proxyLoaded)}</span>
+              )}
+            </div>
+            {cpaBlocked ? (
+              <p className="text-xs text-muted">CPA 节点不适用（账号经 CPA 管理 API 管理）。</p>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-xs text-muted">
+                  粘贴 <code className="text-ink">socks5://host:port:user:pass</code>
+                  。保存后该节点所有出站（含 OAuth 换 token、后续 API）都走此代理，出口 IP 固定。先测试通过再保存。
+                </p>
+                <textarea
+                  value={proxyRaw}
+                  onChange={(e) => {
+                    setProxyRaw(e.target.value);
+                    setProxyTested(false);
+                  }}
+                  placeholder="socks5://host:port:user:pass"
+                  rows={2}
+                  className="w-full bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink font-mono
+                             placeholder:text-muted focus:outline-none focus:border-accent transition"
+                />
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      void handleTestProxy();
+                    }}
+                    disabled={proxyBusy || !proxyRaw.trim()}
+                    className="px-3 py-1.5 text-xs font-medium border border-accent text-accent rounded-lg
+                               hover:bg-accent/10 disabled:opacity-50 transition"
+                  >
+                    {proxyBusy ? '…' : '测试'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      void handleSaveProxy(proxyRaw.trim());
+                    }}
+                    disabled={proxyBusy || !proxyTested || !proxyRaw.trim()}
+                    title={!proxyTested ? '先测试通过才能保存' : ''}
+                    className="px-3 py-1.5 text-xs font-medium bg-accent text-white rounded-lg
+                               hover:bg-accent/80 disabled:opacity-50 transition"
+                  >
+                    保存
+                  </button>
+                  {proxyLoaded && (
+                    <button
+                      onClick={() => {
+                        setProxyRaw('');
+                        void handleSaveProxy('');
+                      }}
+                      disabled={proxyBusy}
+                      className="px-3 py-1.5 text-xs font-medium border border-line text-muted rounded-lg
+                                 hover:text-ink disabled:opacity-50 transition"
+                    >
+                      清除
+                    </button>
+                  )}
+                </div>
+                {proxyErr && <p className="text-xs text-err">{proxyErr}</p>}
+                {proxyMsg && <p className="text-xs text-ok">{proxyMsg}</p>}
+                {proxyRestarting && (
+                  <button
+                    onClick={() => {
+                      setProxyRestarting(false);
+                      void loadProxy();
+                      onSuccess();
+                    }}
+                    className="text-xs text-accent hover:underline"
+                  >
+                    刷新状态
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* --- OAuth section --- */}
           <div className="space-y-3">
             <h3 className="text-sm font-semibold text-ink">OAuth 授权</h3>
@@ -209,16 +495,20 @@ function OAuthWizardModal({ node, onClose, onSuccess }: OAuthWizardModalProps) {
             {step === 'authorizing' && (
               <div className="space-y-3">
                 <p className="text-xs text-muted">
-                  1. 点击下方链接在浏览器中完成授权，然后复制回调 code 粘贴到下方。
+                  1. 复制下方链接到浏览器打开完成授权，然后把回调 code 粘贴到下方。
                 </p>
-                <a
-                  href={authorizeUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-block text-xs text-accent hover:underline break-all"
-                >
-                  {authorizeUrl}
-                </a>
+                <div className="flex items-start gap-2">
+                  <code className="flex-1 text-xs text-accent break-all select-all bg-bg border border-line rounded-lg px-3 py-2 leading-relaxed">
+                    {authorizeUrl}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => { copyToClipboard(authorizeUrl); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+                    className="shrink-0 text-xs px-3 py-2 rounded-lg bg-accent/15 text-accent hover:bg-accent/25 transition"
+                  >
+                    {copied ? '已复制' : '复制'}
+                  </button>
+                </div>
                 <div className="flex gap-2">
                   <input
                     type="text"
@@ -301,8 +591,10 @@ function OAuthWizardModal({ node, onClose, onSuccess }: OAuthWizardModalProps) {
                           {p.loggedIn ? '已登录' : '未登录'}
                         </span>
                       )}
-                      {importResults[p.id] ? (
-                        <span className="text-xs text-ok">{importResults[p.id]}</span>
+                      {p.imported || importResults[p.id] === '导入成功' || importResults[p.id] === '已存在' ? (
+                        <span className="text-xs text-ok">已导入</span>
+                      ) : importResults[p.id] ? (
+                        <span className="text-xs text-err">{importResults[p.id]}</span>
                       ) : (
                         <button
                           onClick={() => { void handleImport(p.id); }}
@@ -567,10 +859,20 @@ function AddNodeForm({ onAdded }: AddNodeFormProps) {
   const [baseUrl, setBaseUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [ownerId, setOwnerId] = useState('');
+  const [users, setUsers] = useState<UserRow[]>([]);
   const [kind, setKind] = useState<'meridian' | 'cpa'>('meridian');
   const [mgmtKey, setMgmtKey] = useState('');
+  const [passthrough, setPassthrough] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    listUsers().then((us) => {
+      setUsers(us);
+      const t = us.find((u) => u.username === 'yanghao');
+      if (t) setOwnerId(t.id);
+    }).catch(() => setUsers([]));
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -582,13 +884,15 @@ function AddNodeForm({ onAdded }: AddNodeFormProps) {
         baseUrl: baseUrl.trim(),
         kind,
         ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
-        ...(ownerId.trim() ? { ownerId: ownerId.trim() } : {}),
+        ...(ownerId.trim() ? { accountOwnerId: ownerId.trim() } : {}),
         ...(kind === 'cpa' && mgmtKey.trim() ? { mgmtKey: mgmtKey.trim() } : {}),
+        ...(kind === 'cpa' && passthrough ? { passthrough: true } : {}),
       });
       setBaseUrl('');
       setApiKey('');
       setOwnerId('');
       setMgmtKey('');
+      setPassthrough(true);
       onAdded();
     } catch (error) {
       setErr(error instanceof Error ? error.message : '添加失败');
@@ -631,13 +935,17 @@ function AddNodeForm({ onAdded }: AddNodeFormProps) {
           placeholder={kind === 'cpa' ? 'CPA api-key（推理）' : 'API密钥（选填）'}
           className={inputCls}
         />
-        <input
-          type="text"
+        <select
           value={ownerId}
           onChange={(e) => setOwnerId(e.target.value)}
-          placeholder="归属用户 ID（选填）"
           className={inputCls}
-        />
+          title="号库归属用户"
+        >
+          <option value="">超级管理员（全局）</option>
+          {users.map((u) => (
+            <option key={u.id} value={u.id}>{u.username}</option>
+          ))}
+        </select>
         <button
           type="submit"
           disabled={submitting || !baseUrl.trim()}
@@ -657,6 +965,16 @@ function AddNodeForm({ onAdded }: AddNodeFormProps) {
             className="w-full bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent transition"
           />
           <p className="text-[11px] text-muted mt-1">CPA 节点会自动读取其下所有账户并显示在号库;调度时按账户单独路由(X-CLIProxy-Account)。</p>
+          <label className="flex items-center gap-2 mt-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={passthrough}
+              onChange={(e) => setPassthrough(e.target.checked)}
+              className="w-3.5 h-3.5 accent-accent"
+            />
+            <span className="text-[11px] text-ink">透传(不钉账户·仅 cpa)</span>
+          </label>
+          <p className="text-[11px] text-muted mt-0.5">cpa 节点开启后不发送 X-CLIProxy-Account，由 CLIProxyAPI 自行轮换号池</p>
         </div>
       )}
       {err && <p className="text-xs text-err mt-2">{err}</p>}
@@ -672,6 +990,7 @@ interface BatchBarProps {
   onEnableAll: () => void;
   onDisableAll: () => void;
   onRefreshAll: () => void;
+  onDeleteAll: () => void;
   batchRunning: boolean;
   batchResult: string | null;
   batchHasError: boolean;
@@ -682,6 +1001,7 @@ function BatchBar({
   onEnableAll,
   onDisableAll,
   onRefreshAll,
+  onDeleteAll,
   batchRunning,
   batchResult,
   batchHasError,
@@ -714,6 +1034,14 @@ function BatchBar({
         >
           批量刷新 token
         </button>
+        <button
+          onClick={() => { if (confirm(`确认删除选中的 ${selectedCount} 个节点？此操作不可撤回。`)) onDeleteAll(); }}
+          disabled={batchRunning}
+          className="px-3 py-1.5 text-xs font-medium bg-red-700 text-white rounded-lg
+                     hover:bg-red-800 disabled:opacity-50 disabled:cursor-not-allowed transition"
+        >
+          批量删除
+        </button>
       </div>
       {batchRunning && (
         <span className="text-xs text-muted animate-pulse">处理中…</span>
@@ -732,9 +1060,7 @@ type SortKey = 'name' | 'createdAt' | 'status';
 type SortDir = 'asc' | 'desc';
 
 function statusOrder(node: NodeRecord): number {
-  if (!node.enabled) return 2;
-  if (node.loggedIn === false) return 1;
-  return 0;
+  return NODE_STATUS_META[nodeStatusValue(node)].order;
 }
 
 function sortNodes(nodes: NodeRecord[], key: SortKey, dir: SortDir): NodeRecord[] {
@@ -794,17 +1120,22 @@ function NodeRow({
   onSelect,
   onDelete,
   onToggleEnabled,
+  onTogglePassthrough,
   onOpenOAuth,
+  onRefresh,
 }: {
   node: NodeRecord;
   selected: boolean;
   onSelect: (id: string, checked: boolean) => void;
   onDelete: (id: string) => void;
   onToggleEnabled: (node: NodeRecord) => void;
+  onTogglePassthrough: (node: NodeRecord) => void;
   onOpenOAuth: (node: NodeRecord) => void;
+  onRefresh: () => void;
 }) {
   const [deleting, setDeleting] = useState(false);
   const [toggling, setToggling] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
 
   async function handleDelete() {
     if (!confirm(`确认删除节点 ${node.name}？`)) return;
@@ -857,6 +1188,12 @@ function NodeRow({
       <td className="px-4 py-3">
         <div className="flex items-center gap-3 flex-wrap">
           <button
+            onClick={() => setShowEdit(true)}
+            className="text-xs font-medium text-cyan-400 hover:text-cyan-300 transition"
+          >
+            编辑
+          </button>
+          <button
             onClick={() => onOpenOAuth(node)}
             className="text-xs font-medium text-accent hover:text-accent/70 transition"
             title="授权向导"
@@ -869,14 +1206,20 @@ function NodeRow({
           >
             详情
           </Link>
-          <a
-            href={node.baseUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs text-muted hover:text-ink transition"
-          >
-            控制台
-          </a>
+          <button type="button" onClick={() => openConsole(node)} className="text-xs text-muted hover:text-ink transition">控制台</button>
+          {node.kind?.toLowerCase() === 'cpa' && (
+            <button
+              onClick={() => onTogglePassthrough(node)}
+              className={`text-xs transition ${
+                node.passthrough
+                  ? 'text-ok hover:text-ok/70'
+                  : 'text-muted hover:text-ink'
+              }`}
+              title={node.passthrough ? '透传已开' : '透传已关'}
+            >
+              透传
+            </button>
+          )}
           <button
             onClick={() => { void handleToggle(); }}
             disabled={toggling}
@@ -896,6 +1239,9 @@ function NodeRow({
             {deleting ? '…' : '删除'}
           </button>
         </div>
+        {showEdit && (
+          <NodeEditModal node={node} onClose={() => setShowEdit(false)} onSuccess={() => { setShowEdit(false); onRefresh(); }} />
+        )}
       </td>
     </tr>
   );
@@ -910,6 +1256,7 @@ function NodeMobileCard({
   onSelect,
   onDelete,
   onToggleEnabled,
+  onTogglePassthrough,
   onOpenOAuth,
 }: {
   node: NodeRecord;
@@ -917,6 +1264,7 @@ function NodeMobileCard({
   onSelect: (id: string, checked: boolean) => void;
   onDelete: (id: string) => void;
   onToggleEnabled: (node: NodeRecord) => void;
+  onTogglePassthrough: (node: NodeRecord) => void;
   onOpenOAuth: (node: NodeRecord) => void;
 }) {
   const [deleting, setDeleting] = useState(false);
@@ -981,20 +1329,26 @@ function NodeMobileCard({
         >
           加号
         </button>
+        {node.kind?.toLowerCase() === 'cpa' && (
+          <button
+            onClick={() => onTogglePassthrough(node)}
+            className={`text-xs transition ${
+              node.passthrough
+                ? 'text-ok hover:text-ok/70'
+                : 'text-muted hover:text-ink'
+            }`}
+            title={node.passthrough ? '透传已开' : '透传已关'}
+          >
+            透传
+          </button>
+        )}
         <button
           onClick={() => onToggleEnabled(node)}
           className={`text-xs transition ${node.enabled ? 'text-err hover:text-err/70' : 'text-ok hover:text-ok/70'}`}
         >
           {node.enabled ? '停用' : '启用'}
         </button>
-        <a
-          href={node.baseUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-xs text-muted hover:text-ink transition"
-        >
-          控制台
-        </a>
+        <button type="button" onClick={() => openConsole(node)} className="text-xs text-muted hover:text-ink transition">控制台</button>
       </div>
     </div>
   );
@@ -1012,6 +1366,9 @@ export default function Nodes() {
 
   // Search
   const [search, setSearch] = useState('');
+
+  // Status filter ('' = all)
+  const [statusFilter, setStatusFilter] = useState<NodeStatus | ''>('');
 
   // Sort
   const [sortKey, setSortKey] = useState<SortKey>('name');
@@ -1047,6 +1404,7 @@ export default function Nodes() {
 
   // Derived: filtered + sorted + paginated
   const filtered = nodes.filter((n) => {
+    if (statusFilter && nodeStatusValue(n) !== statusFilter) return false;
     if (!search.trim()) return true;
     const q = search.trim().toLowerCase();
     return (
@@ -1064,7 +1422,7 @@ export default function Nodes() {
   // Reset to page 1 when filter changes
   useEffect(() => {
     setPage(1);
-  }, [search, sortKey, sortDir]);
+  }, [search, statusFilter, sortKey, sortDir]);
 
   function handleSort(col: SortKey) {
     if (sortKey === col) {
@@ -1139,6 +1497,14 @@ export default function Nodes() {
     void runBatch((id) => refreshNode(id), '批量刷新');
   }
 
+  function handleBatchDelete() {
+    void runBatch(async (id) => {
+      await deleteNode(id);
+      handleDelete(id);
+    }, '批量删除');
+    setSelected(new Set());
+  }
+
   function handleToggleEnabled(node: NodeRecord) {
     void setNodeEnabled(node.id, !node.enabled).then(() => {
       setNodes((prev) =>
@@ -1147,17 +1513,50 @@ export default function Nodes() {
     });
   }
 
+  function handleTogglePassthrough(node: NodeRecord) {
+    void setNodePassthrough(node.id, !node.passthrough).then(() => {
+      setNodes(prev => prev.map(n => n.id === node.id ? { ...n, passthrough: !node.passthrough } : n));
+    });
+  }
+
+  const [importing, setImporting] = useState(false);
+  const [importMsg, setImportMsg] = useState<string | null>(null);
+
+  async function handleBatchImport() {
+    setImporting(true);
+    setImportMsg(null);
+    try {
+      const res = await batchAutoImport();
+      setImportMsg(`导入 ${res.imported} 个, 失败 ${res.failed} 个`);
+      void fetchNodes();
+    } catch (e) {
+      setImportMsg(e instanceof Error ? e.message : '导入失败');
+    } finally {
+      setImporting(false);
+    }
+  }
+
   return (
     <div className="p-4 md:p-6 space-y-6">
       {/* Page header */}
       <div className="flex items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold text-ink">节点</h1>
-        <button
-          onClick={() => { void fetchNodes(); }}
-          className="text-xs text-accent hover:underline"
-        >
-          刷新
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => { void handleBatchImport(); }}
+            disabled={importing}
+            className="px-3 py-1.5 text-xs font-medium bg-accent text-white rounded-lg hover:bg-accent/80 disabled:opacity-50 transition"
+          >
+            {importing ? '导入中…' : '一键导入'}
+          </button>
+          {importMsg && <span className="text-xs text-muted">{importMsg}</span>}
+          <button
+            onClick={() => { void fetchNodes(); }}
+            className="text-xs text-accent hover:underline"
+          >
+            刷新
+          </button>
+        </div>
       </div>
 
       {/* Add node form */}
@@ -1176,6 +1575,17 @@ export default function Nodes() {
           className="w-full max-w-sm bg-surface border border-line rounded-lg px-3 py-2 text-sm text-ink
                      placeholder:text-muted focus:outline-none focus:border-accent transition"
         />
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value as NodeStatus | '')}
+          className="bg-surface border border-line rounded-lg px-3 py-2 text-sm text-ink focus:outline-none focus:border-accent transition"
+        >
+          <option value="">全部状态</option>
+          <option value="ok">正常</option>
+          <option value="banned">封号</option>
+          <option value="noauth">未上传凭证</option>
+          <option value="disabled">停用</option>
+        </select>
         {search && (
           <button
             onClick={() => setSearch('')}
@@ -1193,6 +1603,7 @@ export default function Nodes() {
           onEnableAll={handleBatchEnable}
           onDisableAll={handleBatchDisable}
           onRefreshAll={handleBatchRefresh}
+          onDeleteAll={handleBatchDelete}
           batchRunning={batchRunning}
           batchResult={batchResult}
           batchHasError={batchHasError}
@@ -1258,7 +1669,9 @@ export default function Nodes() {
                     onSelect={handleSelect}
                     onDelete={handleDelete}
                     onToggleEnabled={handleToggleEnabled}
+                    onTogglePassthrough={handleTogglePassthrough}
                     onOpenOAuth={(n) => setOauthNode(n)}
+                    onRefresh={() => { void fetchNodes(); }}
                   />
                 ))}
               </tbody>
@@ -1287,6 +1700,7 @@ export default function Nodes() {
                 onSelect={handleSelect}
                 onDelete={handleDelete}
                 onToggleEnabled={handleToggleEnabled}
+                onTogglePassthrough={handleTogglePassthrough}
                 onOpenOAuth={(n) => setOauthNode(n)}
               />
             ))}
@@ -1323,8 +1737,8 @@ export default function Nodes() {
       {oauthNode && (
         <OAuthWizardModal
           node={oauthNode}
-          onClose={() => setOauthNode(null)}
-          onSuccess={() => { void fetchNodes(); }}
+          onClose={() => { const cid = oauthNode.id; setOauthNode(null); void (async () => { try { await refreshNode(cid); } catch { /* best-effort */ } await fetchNodes(); })(); }}
+          onSuccess={() => { const id = oauthNode.id; void (async () => { try { await refreshNode(id); } catch { /* probe best-effort */ } await fetchNodes(); })(); }}
         />
       )}
     </div>
