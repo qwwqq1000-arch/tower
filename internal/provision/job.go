@@ -57,7 +57,7 @@ func provisionCore(ctx context.Context, nc nodeCreator, sink Sink, statusFn func
 	steps := Steps(Input{
 		APIKey:          apiKey,
 		FingerprintSeed: seed,
-		SourceRepo:      "https://github.com/qwwqq1000-arch/new-meridian",
+		SourceRepo:      "https://github.com/qwwqq1000-arch/meridian-mirror",
 		InstallDir:      "/opt/meridian",
 	})
 	if err := Run(ctx, ex, steps, sink); err != nil {
@@ -75,10 +75,11 @@ func provisionCore(ctx context.Context, nc nodeCreator, sink Sink, statusFn func
 	_, err := nc.CreateNode(ctx, sqlc.CreateNodeParams{
 		ID:              "n_" + jobID,
 		Name:            name,
-		BaseUrl:         "http://" + host + ":3456",
+		BaseUrl:         "http://" + host + ":3456/",
 		ApiKey:          storedKey,
 		MgmtKey:         "",
-		OwnerID:         ownerID,
+		OwnerID:         "",
+		AccountOwnerID:  ownerID,
 		GroupID:         "",
 		Region:          "",
 		ShortID:         "",

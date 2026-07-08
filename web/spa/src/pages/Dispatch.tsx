@@ -94,6 +94,7 @@ export function ConcurrencyPanel({ accounts }: { accounts: DispatchAccountSnapsh
           <thead>
             <tr className="border-b border-line text-left text-xs text-muted whitespace-nowrap">
               <th className="px-4 py-2 font-medium">邮箱 / 账户</th>
+              <th className="px-4 py-2 font-medium">租户</th>
               <th className="px-4 py-2 font-medium">状态</th>
               <th className="px-4 py-2 font-medium">模型</th>
               <th className="px-4 py-2 font-medium text-right">并发中</th>
@@ -105,13 +106,16 @@ export function ConcurrencyPanel({ accounts }: { accounts: DispatchAccountSnapsh
           <tbody>
             {accounts.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-6 text-center text-muted text-xs">无数据</td>
+                <td colSpan={8} className="px-4 py-6 text-center text-muted text-xs">无数据</td>
               </tr>
             )}
             {pageRows.map((a) => (
               <tr key={a.key} className="border-b border-line/50 hover:bg-line/30 transition">
                 <td className="px-4 py-2">
                   <p className="text-sm text-ink font-medium">{(a.label || '—').split('@')[0]}</p>
+                </td>
+                <td className="px-4 py-2">
+                  <span className="text-xs text-muted">{a.tenant || '超管'}</span>
                 </td>
                 <td className="px-4 py-2">
                   <StatusBadge status={a.status} limitedUntil={a.limitedUntil} limitReason={a.limitReason} pausedUntil={a.pausedUntil} />
@@ -468,8 +472,8 @@ export function EventTimeline({
         <p className="px-4 py-6 text-center text-muted text-xs">暂无事件</p>
       )}
       <ul
-        className={`divide-y divide-line/50 ${maxHeightPx ? 'overflow-y-auto' : ''}`}
-        style={maxHeightPx ? { maxHeight: Math.max(160, maxHeightPx - 49) } : undefined}
+        className="divide-y divide-line/50 overflow-y-auto"
+        style={{ maxHeight: maxHeightPx && maxHeightPx > 0 ? Math.max(120, maxHeightPx - 49) : 580 }}
       >
         {events.map((e, idx) => {
           const { label, cls } = getEventLabel(e.type);
@@ -668,13 +672,13 @@ function AdminDispatch() {
         <>
           <ServerStatusCard status={serverStatus} />
           <StatsBar data={data} />
+          <ConcurrencyPanel accounts={data.accounts} />
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
+            <EventTimeline events={data.events} fallbackNames={fallbackNames} accountNames={accountNames} maxHeightPx={leftColH > 0 ? leftColH : undefined} />
             <div ref={leftColRef}>
-              <ConcurrencyPanel accounts={data.accounts} />
               <FallbackChannelsPanel channels={data.fallbackChannels ?? []} />
               <TrafficPanel data={data} />
             </div>
-            <EventTimeline events={data.events} fallbackNames={fallbackNames} accountNames={accountNames} maxHeightPx={leftColH > 0 ? leftColH : undefined} />
           </div>
         </>
       )}

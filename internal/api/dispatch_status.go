@@ -215,13 +215,33 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 	if svc != nil {
 		pinTTL = int64(svc.ResolveConfigForOwner(ctx, owner).AffinityTTLSec) * 1000
 	}
+	// owner_id -> tenant username so the concurrency panel shows which tenant
+	// owns each account (few unique owners, so per-owner lookup is cheap).
+	tenantNames := map[string]string{}
+	seenOwner := map[string]bool{}
+	for _, o := range keyOwner {
+		if o == "" || seenOwner[o] {
+			continue
+		}
+		seenOwner[o] = true
+		if t, err := q.GetTenantByID(ctx, o); err == nil {
+			tenantNames[o] = t.Username
+		}
+	}
 	accounts := []map[string]any{}
 	if svc != nil && svc.Store != nil {
 		for _, s := range svc.Store.Snapshot(now) {
 			if strings.HasPrefix(s.Key, "fb:") {
 				continue
 			}
-			if _, known := keyOwner[s.Key]; !known { // node/account deleted → drop stale ghost row
+			owner, known := keyOwner[s.Key]
+			if !known { // node/account deleted → drop stale ghost row
+				continue
+			}
+			// yanghao is the warm-up/holding tenant: its fresh accounts are parked
+			// there deliberately kept OUT of rotation so they are not hammered while
+			// aging, so they must not appear in the live concurrency panel.
+			if tenantNames[owner] == "yanghao" {
 				continue
 			}
 			if !visible(s.Key) { // owner scoping
@@ -264,6 +284,7 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 				"totalCostUsd": totalCostMap[s.Key],
 				"rpm":          rpmMap[s.Key],
 				"pinnedModel":  pinnedModelOf(svc, s.Key, pinTTL),
+				"tenant":       tenantNames[keyOwner[s.Key]],
 			}
 			if ci := strings.IndexByte(s.Key, ':'); ci > 0 {
 				if h, ok := getHealthCache(s.Key[:ci]); ok {

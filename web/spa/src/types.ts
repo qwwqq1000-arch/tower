@@ -529,6 +529,7 @@ export interface DispatchAccountSnapshot {
   rpm?: number; // requests in the last 60 seconds for this account
   reserve?: boolean;     // in the elastic reserve set (vs baseline)
   pinnedModel?: string;  // model this account is currently sticky-pinned to ("" if none)
+  tenant?: string;       // owner tenant username ("" = superadmin)
 }
 
 export interface DispatchTraffic {

@@ -208,6 +208,16 @@ function copyToClipboard(text: string) {
   } catch { /* fall through */ }
   fallbackCopy(text);
 }
+// nodeIP pulls the host (IP or hostname) out of a node baseUrl like
+// "http://23.134.76.52:3456/". Falls back to a regex if the URL fails to parse.
+function nodeIP(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).hostname;
+  } catch {
+    const m = baseUrl.replace(/^\w+:\/\//, '').match(/^([^:/]+)/);
+    return m ? m[1] : '';
+  }
+}
 function fallbackCopy(text: string) {
   const ta = document.createElement('textarea');
   ta.value = text;
@@ -624,20 +634,32 @@ interface ProvisionWizardProps {
   onSuccess: () => void;
 }
 
+// One row per target host in a batch provision run.
+interface ProvisionRow {
+  host: string;
+  user: string;
+  password: string;
+  jobId: string | null;
+  status: 'pending' | 'running' | 'success' | 'failed' | 'error';
+  step: string;
+  log: string;
+  error: string | null;
+}
+
 function ProvisionWizard({ onSuccess }: ProvisionWizardProps) {
   const [open, setOpen] = useState(false);
-  const [host, setHost] = useState('');
-  const [user, setUser] = useState('root');
-  const [password, setPassword] = useState('');
+  const [hostsText, setHostsText] = useState('');
+  const [defaultUser, setDefaultUser] = useState('root');
+  const [defaultPassword, setDefaultPassword] = useState('');
   const [ownerId, setOwnerId] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [jobStatus, setJobStatus] = useState<string | null>(null);
-  const [jobStep, setJobStep] = useState<string | null>(null);
-  const [jobLog, setJobLog] = useState<string | null>(null);
-  const [jobDone, setJobDone] = useState(false);
+  const [rows, setRows] = useState<ProvisionRow[]>([]);
+  const [started, setStarted] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [parseErr, setParseErr] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const logBoxRef = useRef<HTMLPreElement | null>(null);
+  const rowsRef = useRef<ProvisionRow[]>([]);
+  const succeededRef = useRef(false);
 
   function clearTimer() {
     if (timerRef.current !== null) {
@@ -646,82 +668,174 @@ function ProvisionWizard({ onSuccess }: ProvisionWizardProps) {
     }
   }
 
-  useEffect(() => {
-    if (logBoxRef.current) {
-      logBoxRef.current.scrollTop = logBoxRef.current.scrollHeight;
-    }
-  }, [jobLog]);
+  // Keep rowsRef in sync so the poll interval always reads the latest rows.
+  useEffect(() => { rowsRef.current = rows; }, [rows]);
 
   useEffect(() => {
     return () => clearTimer();
   }, []);
 
-  function handleClose() {
-    clearTimer();
-    setOpen(false);
-    setHost('');
-    setUser('root');
-    setPassword('');
-    setOwnerId('');
-    setSubmitting(false);
-    setErr(null);
-    setJobStatus(null);
-    setJobStep(null);
-    setJobLog(null);
-    setJobDone(false);
+  // When every row reaches a terminal state, stop polling and (once) refresh the
+  // node list if at least one host was provisioned successfully.
+  useEffect(() => {
+    if (!started || rows.length === 0) return;
+    const active = rows.some((r) => r.status === 'running' || r.status === 'pending');
+    if (!active) {
+      clearTimer();
+      setRunning(false);
+      if (!succeededRef.current && rows.some((r) => r.status === 'success')) {
+        succeededRef.current = true;
+        onSuccess();
+      }
+    }
+  }, [rows, started, onSuccess]);
+
+  // Parse the textarea into rows. Each non-empty line is one host; fields are
+  // separated by whitespace or comma:
+  //   ip                 → uses the default user + default password
+  //   ip 密码            → host + password (user = default)
+  //   ip 用户名 密码     → all three
+  function parseHosts(): ProvisionRow[] | null {
+    const lines = hostsText.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (lines.length === 0) { setParseErr('请至少输入一台主机'); return null; }
+    const du = defaultUser.trim() || 'root';
+    const out: ProvisionRow[] = [];
+    const seen = new Set<string>();
+    for (const line of lines) {
+      const parts = line.split(/[\s,]+/).filter(Boolean);
+      let host = '';
+      let user = du;
+      let password = defaultPassword;
+      if (parts.length === 1) {
+        host = parts[0];
+      } else if (parts.length === 2) {
+        host = parts[0];
+        password = parts[1];
+      } else {
+        host = parts[0];
+        user = parts[1];
+        password = parts.slice(2).join(' ');
+      }
+      if (!host) continue;
+      if (seen.has(host)) continue; // dedupe repeated IPs
+      seen.add(host);
+      if (!password) {
+        setParseErr(`主机 ${host} 缺少密码（该行未写密码，且未设置默认密码）`);
+        return null;
+      }
+      out.push({ host, user: user || 'root', password, jobId: null, status: 'pending', step: '', log: '', error: null });
+    }
+    if (out.length === 0) { setParseErr('未解析到有效主机'); return null; }
+    return out;
   }
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleStart(e: React.FormEvent) {
     e.preventDefault();
-    if (!host.trim() || !password.trim()) return;
-    setSubmitting(true);
-    setErr(null);
-    setJobStatus('pending');
-    setJobStep(null);
-    setJobLog('');
-    setJobDone(false);
-    try {
-      const res = await startProvision({
-        host: host.trim(),
-        user: user.trim() || 'root',
-        password: password,
-        ...(ownerId.trim() ? { ownerId: ownerId.trim() } : {}),
-      });
-      const jobId = res.jobId;
-      timerRef.current = setInterval(() => {
-        void (async () => {
-          try {
-            const job = await getProvision(jobId);
-            setJobStatus(job.status);
-            setJobStep(job.step ?? null);
-            setJobLog(job.log ?? null);
-            if (job.status === 'success' || job.status === 'failed') {
-              clearTimer();
-              setJobDone(true);
-              setSubmitting(false);
-              if (job.status === 'success') {
-                onSuccess();
-              }
-            }
-          } catch (pollErr) {
-            setErr(pollErr instanceof Error ? pollErr.message : '轮询失败');
-            clearTimer();
-            setSubmitting(false);
-            setJobDone(true);
-          }
-        })();
-      }, 2000);
-    } catch (startErr) {
-      setErr(startErr instanceof Error ? startErr.message : '开通失败');
-      setSubmitting(false);
-      setJobStatus(null);
+    setParseErr(null);
+    const parsed = parseHosts();
+    if (!parsed) return;
+    setRows(parsed);
+    setStarted(true);
+    setRunning(true);
+    succeededRef.current = false;
+
+    const owner = ownerId.trim();
+    const withJobs = await Promise.all(
+      parsed.map(async (r): Promise<ProvisionRow> => {
+        try {
+          const res = await startProvision({
+            host: r.host,
+            user: r.user,
+            password: r.password,
+            ...(owner ? { ownerId: owner } : {}),
+          });
+          return { ...r, jobId: res.jobId, status: 'running' };
+        } catch (startErr) {
+          return { ...r, status: 'error', error: startErr instanceof Error ? startErr.message : '提交失败' };
+        }
+      }),
+    );
+    setRows(withJobs);
+    rowsRef.current = withJobs;
+
+    if (!withJobs.some((r) => r.jobId && r.status === 'running')) {
+      setRunning(false);
+      return;
+    }
+
+    timerRef.current = setInterval(() => {
+      void pollAll();
+    }, 2000);
+  }
+
+  async function pollAll() {
+    const cur = rowsRef.current;
+    const pending = cur
+      .map((r, i) => ({ r, i }))
+      .filter(({ r }) => r.jobId && (r.status === 'running' || r.status === 'pending'));
+    if (pending.length === 0) { clearTimer(); return; }
+    const updates = await Promise.all(
+      pending.map(async ({ r, i }) => {
+        try {
+          const job = await getProvision(r.jobId as string);
+          return { i, patch: { status: job.status, step: job.step ?? '', log: job.log ?? '' } as Partial<ProvisionRow> };
+        } catch (pollErr) {
+          return { i, patch: { status: 'error', error: pollErr instanceof Error ? pollErr.message : '轮询失败' } as Partial<ProvisionRow> };
+        }
+      }),
+    );
+    setRows((prev) => {
+      const next = [...prev];
+      for (const u of updates) next[u.i] = { ...next[u.i], ...u.patch };
+      return next;
+    });
+  }
+
+  function handleReset() {
+    clearTimer();
+    setRows([]);
+    setStarted(false);
+    setRunning(false);
+    setParseErr(null);
+    setExpanded(new Set());
+    succeededRef.current = false;
+  }
+
+  function handleClose() {
+    handleReset();
+    setOpen(false);
+    setHostsText('');
+    setDefaultUser('root');
+    setDefaultPassword('');
+    setOwnerId('');
+  }
+
+  function toggleExpanded(i: number) {
+    setExpanded((prev) => {
+      const s = new Set(prev);
+      if (s.has(i)) s.delete(i); else s.add(i);
+      return s;
+    });
+  }
+
+  const doneCount = rows.filter((r) => r.status === 'success').length;
+  const failCount = rows.filter((r) => r.status === 'failed' || r.status === 'error').length;
+  const runCount = rows.filter((r) => r.status === 'running' || r.status === 'pending').length;
+
+  function rowStatusText(r: ProvisionRow): string {
+    switch (r.status) {
+      case 'success': return '成功';
+      case 'failed': return '失败';
+      case 'error': return '错误';
+      case 'running': return '进行中';
+      default: return '等待';
     }
   }
-
-  const statusColor =
-    jobStatus === 'success' ? 'text-ok' :
-    jobStatus === 'failed' ? 'text-err' :
-    'text-muted';
+  function rowStatusColor(r: ProvisionRow): string {
+    if (r.status === 'success') return 'text-ok';
+    if (r.status === 'failed' || r.status === 'error') return 'text-err';
+    return 'text-muted';
+  }
 
   return (
     <div className="bg-surface border border-line rounded-xl overflow-hidden">
@@ -730,40 +844,39 @@ function ProvisionWizard({ onSuccess }: ProvisionWizardProps) {
         onClick={() => setOpen((v) => !v)}
         className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold text-ink hover:bg-line/20 transition"
       >
-        <span>一键开通节点</span>
+        <span>一键开通节点（支持批量）</span>
         <span className="text-muted text-xs">{open ? '收起 ▲' : '展开 ▼'}</span>
       </button>
 
       {open && (
         <div className="border-t border-line p-4 space-y-4">
-          {!submitting && !jobDone && (
-            <form onSubmit={(e) => { void handleSubmit(e); }} className="space-y-3">
-              <div className="flex flex-col sm:flex-row gap-2">
-                <input
-                  type="text"
-                  value={host}
-                  onChange={(e) => setHost(e.target.value)}
-                  placeholder="主机 IP / 域名 *"
-                  required
-                  className="flex-1 bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink
-                             placeholder:text-muted focus:outline-none focus:border-accent transition"
-                />
-                <input
-                  type="text"
-                  value={user}
-                  onChange={(e) => setUser(e.target.value)}
-                  placeholder="SSH 用户名（默认 root）"
-                  className="flex-1 bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink
+          {!started && (
+            <form onSubmit={(e) => { void handleStart(e); }} className="space-y-3">
+              <div>
+                <label className="block text-xs text-muted mb-1">主机列表（每行一台，可批量粘贴）</label>
+                <textarea
+                  value={hostsText}
+                  onChange={(e) => setHostsText(e.target.value)}
+                  rows={6}
+                  placeholder={'每行一台，支持以下格式（空格或逗号分隔）：\nIP                    → 用下方默认用户名与密码\nIP 密码               → 该行单独密码\nIP 用户名 密码        → 该行单独用户名+密码\n\n例：\n1.2.3.4\n5.6.7.8 mypassword\n9.9.9.9 ubuntu mypassword'}
+                  className="w-full bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink font-mono
                              placeholder:text-muted focus:outline-none focus:border-accent transition"
                 />
               </div>
               <div className="flex flex-col sm:flex-row gap-2">
                 <input
+                  type="text"
+                  value={defaultUser}
+                  onChange={(e) => setDefaultUser(e.target.value)}
+                  placeholder="默认 SSH 用户名（默认 root）"
+                  className="flex-1 bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink
+                             placeholder:text-muted focus:outline-none focus:border-accent transition"
+                />
+                <input
                   type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="SSH 密码 *"
-                  required
+                  value={defaultPassword}
+                  onChange={(e) => setDefaultPassword(e.target.value)}
+                  placeholder="默认 SSH 密码（未在行内指定时使用）"
                   className="flex-1 bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink
                              placeholder:text-muted focus:outline-none focus:border-accent transition"
                 />
@@ -771,7 +884,7 @@ function ProvisionWizard({ onSuccess }: ProvisionWizardProps) {
                   type="text"
                   value={ownerId}
                   onChange={(e) => setOwnerId(e.target.value)}
-                  placeholder="归属用户 ID（选填）"
+                  placeholder="归属用户 ID（选填，作用于全部）"
                   className="flex-1 bg-bg border border-line rounded-lg px-3 py-2 text-sm text-ink
                              placeholder:text-muted focus:outline-none focus:border-accent transition"
                 />
@@ -779,11 +892,11 @@ function ProvisionWizard({ onSuccess }: ProvisionWizardProps) {
               <div className="flex gap-2">
                 <button
                   type="submit"
-                  disabled={!host.trim() || !password.trim()}
+                  disabled={!hostsText.trim()}
                   className="px-4 py-2 text-sm font-medium bg-accent text-white rounded-lg
                              hover:bg-accent/80 disabled:opacity-50 disabled:cursor-not-allowed transition"
                 >
-                  开始开通
+                  开始批量开通
                 </button>
                 <button
                   type="button"
@@ -793,48 +906,65 @@ function ProvisionWizard({ onSuccess }: ProvisionWizardProps) {
                   取消
                 </button>
               </div>
-              {err && <p className="text-xs text-err">{err}</p>}
+              {parseErr && <p className="text-xs text-err">{parseErr}</p>}
             </form>
           )}
 
-          {(submitting || jobDone) && (
+          {started && (
             <div className="space-y-3">
               <div className="flex items-center gap-3 flex-wrap">
-                <span className="text-sm font-medium text-ink">进度</span>
-                {jobStatus && (
-                  <span className={`text-xs font-medium ${statusColor}`}>
-                    状态: {jobStatus}
-                  </span>
-                )}
-                {jobStep && (
-                  <span className="text-xs text-muted">步骤: {jobStep}</span>
-                )}
-                {submitting && (
-                  <span className="text-xs text-muted animate-pulse">轮询中…</span>
-                )}
+                <span className="text-sm font-medium text-ink">批量进度</span>
+                <span className="text-xs text-muted">共 {rows.length} 台</span>
+                <span className="text-xs text-ok">成功 {doneCount}</span>
+                <span className="text-xs text-err">失败 {failCount}</span>
+                <span className="text-xs text-muted">进行中 {runCount}</span>
+                {running && <span className="text-xs text-muted animate-pulse">轮询中…</span>}
               </div>
-              {jobLog !== null && (
-                <pre
-                  ref={logBoxRef}
-                  className="bg-bg border border-line rounded-lg p-3 text-xs font-mono text-ink
-                             max-h-48 overflow-y-auto whitespace-pre-wrap break-all"
-                >
-                  {jobLog || '(等待日志…)'}
-                </pre>
-              )}
-              {err && <p className="text-xs text-err">{err}</p>}
-              {jobDone && (
-                <div className="flex gap-2">
-                  {jobStatus === 'success' && (
-                    <span className="text-xs text-ok font-medium">开通成功！</span>
-                  )}
-                  {jobStatus === 'failed' && (
-                    <span className="text-xs text-err font-medium">开通失败</span>
-                  )}
+
+              <div className="space-y-2 max-h-96 overflow-y-auto">
+                {rows.map((r, i) => (
+                  <div key={r.host} className="border border-line rounded-lg bg-bg">
+                    <div className="flex items-center gap-2 px-3 py-2 flex-wrap">
+                      <span className="text-xs font-mono text-ink">{r.host}</span>
+                      <span className={`text-xs font-medium ${rowStatusColor(r)}`}>{rowStatusText(r)}</span>
+                      {r.step && <span className="text-xs text-muted">· {r.step}</span>}
+                      {r.error && <span className="text-xs text-err">· {r.error}</span>}
+                      {(r.log || r.error) && (
+                        <button
+                          type="button"
+                          onClick={() => toggleExpanded(i)}
+                          className="ml-auto text-xs text-accent hover:underline"
+                        >
+                          {expanded.has(i) ? '收起日志' : '日志'}
+                        </button>
+                      )}
+                    </div>
+                    {expanded.has(i) && (
+                      <pre className="border-t border-line px-3 py-2 text-[11px] font-mono text-ink
+                                      max-h-48 overflow-y-auto whitespace-pre-wrap break-all">
+                        {r.log || r.error || '(无日志)'}
+                      </pre>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {!running && (
+                <div className="flex gap-3 items-center">
+                  <span className="text-xs font-medium text-ink">
+                    全部完成：{doneCount} 成功，{failCount} 失败
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleReset}
+                    className="text-xs text-accent hover:underline"
+                  >
+                    再装一批
+                  </button>
                   <button
                     type="button"
                     onClick={handleClose}
-                    className="text-xs text-accent hover:underline"
+                    className="text-xs text-muted hover:text-ink transition"
                   >
                     关闭
                   </button>
@@ -990,6 +1120,7 @@ interface BatchBarProps {
   onEnableAll: () => void;
   onDisableAll: () => void;
   onRefreshAll: () => void;
+  onCopyIPs: () => void;
   onDeleteAll: () => void;
   batchRunning: boolean;
   batchResult: string | null;
@@ -1001,6 +1132,7 @@ function BatchBar({
   onEnableAll,
   onDisableAll,
   onRefreshAll,
+  onCopyIPs,
   onDeleteAll,
   batchRunning,
   batchResult,
@@ -1033,6 +1165,14 @@ function BatchBar({
                      hover:bg-line/30 disabled:opacity-50 disabled:cursor-not-allowed transition"
         >
           批量刷新 token
+        </button>
+        <button
+          onClick={onCopyIPs}
+          disabled={batchRunning}
+          className="px-3 py-1.5 text-xs font-medium bg-surface border border-line text-ink rounded-lg
+                     hover:bg-line/30 disabled:opacity-50 disabled:cursor-not-allowed transition"
+        >
+          复制 IP
         </button>
         <button
           onClick={() => { if (confirm(`确认删除选中的 ${selectedCount} 个节点？此操作不可撤回。`)) onDeleteAll(); }}
@@ -1357,7 +1497,7 @@ function NodeMobileCard({
 // ------------------------------------------------------------------
 // Nodes page
 // ------------------------------------------------------------------
-const PAGE_SIZE = 12;
+const PAGE_SIZE_OPTIONS = [100, 200, 500, 1000];
 
 export default function Nodes() {
   const [nodes, setNodes] = useState<NodeRecord[]>([]);
@@ -1376,6 +1516,7 @@ export default function Nodes() {
 
   // Pagination
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(PAGE_SIZE_OPTIONS[0]);
 
   // Multi-select
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -1415,14 +1556,14 @@ export default function Nodes() {
   });
 
   const sorted = sortNodes(filtered, sortKey, sortDir);
-  const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
   const safePage = Math.min(page, totalPages);
-  const pageItems = sorted.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+  const pageItems = sorted.slice((safePage - 1) * pageSize, safePage * pageSize);
 
-  // Reset to page 1 when filter changes
+  // Reset to page 1 when filter or page size changes
   useEffect(() => {
     setPage(1);
-  }, [search, statusFilter, sortKey, sortDir]);
+  }, [search, statusFilter, sortKey, sortDir, pageSize]);
 
   function handleSort(col: SortKey) {
     if (sortKey === col) {
@@ -1448,6 +1589,25 @@ export default function Nodes() {
 
   const allSelected = pageItems.length > 0 && pageItems.every((n) => selected.has(n.id));
   const someSelected = pageItems.some((n) => selected.has(n.id)) && !allSelected;
+
+  // Banned nodes across the whole list (not just current page) — powers the
+  // "选择封号" quick-select so batch ops can target every banned node at once.
+  const bannedNodes = nodes.filter((n) => nodeStatusValue(n) === 'banned');
+  const allBannedSelected =
+    bannedNodes.length > 0 && bannedNodes.every((n) => selected.has(n.id));
+
+  function handleSelectBanned() {
+    setSelected((prev) => {
+      const s = new Set(prev);
+      if (allBannedSelected) {
+        // toggle off: clear the banned selection
+        bannedNodes.forEach((n) => s.delete(n.id));
+      } else {
+        bannedNodes.forEach((n) => s.add(n.id));
+      }
+      return s;
+    });
+  }
 
   function handleSelectAll(checked: boolean) {
     if (checked) {
@@ -1495,6 +1655,21 @@ export default function Nodes() {
 
   function handleBatchRefresh() {
     void runBatch((id) => refreshNode(id), '批量刷新');
+  }
+
+  function handleCopyIPs() {
+    const ips = nodes
+      .filter((n) => selected.has(n.id))
+      .map((n) => nodeIP(n.baseUrl))
+      .filter(Boolean);
+    if (ips.length === 0) {
+      setBatchHasError(true);
+      setBatchResult('未提取到 IP');
+      return;
+    }
+    copyToClipboard(ips.join('\n'));
+    setBatchHasError(false);
+    setBatchResult(`已复制 ${ips.length} 个 IP`);
   }
 
   function handleBatchDelete() {
@@ -1586,6 +1761,18 @@ export default function Nodes() {
           <option value="noauth">未上传凭证</option>
           <option value="disabled">停用</option>
         </select>
+        {bannedNodes.length > 0 && (
+          <button
+            onClick={handleSelectBanned}
+            title="一键选中/取消选中所有封号节点"
+            className={`px-3 py-2 text-xs font-medium rounded-lg border transition whitespace-nowrap
+                        ${allBannedSelected
+                          ? 'bg-err text-white border-err hover:bg-err/80'
+                          : 'bg-surface text-err border-err/40 hover:bg-err/10'}`}
+          >
+            {allBannedSelected ? '取消选中封号' : `选择封号 (${bannedNodes.length})`}
+          </button>
+        )}
         {search && (
           <button
             onClick={() => setSearch('')}
@@ -1603,6 +1790,7 @@ export default function Nodes() {
           onEnableAll={handleBatchEnable}
           onDisableAll={handleBatchDisable}
           onRefreshAll={handleBatchRefresh}
+          onCopyIPs={handleCopyIPs}
           onDeleteAll={handleBatchDelete}
           batchRunning={batchRunning}
           batchResult={batchResult}
@@ -1707,8 +1895,25 @@ export default function Nodes() {
           </div>
 
           {/* Pagination */}
-          {totalPages > 1 && (
-            <div className="flex items-center justify-between gap-3 pt-2">
+          <div className="flex items-center justify-between gap-3 pt-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted">每页</span>
+              <select
+                value={pageSize}
+                onChange={(e) => setPageSize(Number(e.target.value))}
+                className="bg-surface border border-line rounded-lg px-2 py-1.5 text-xs text-ink
+                           focus:outline-none focus:border-accent transition"
+              >
+                {PAGE_SIZE_OPTIONS.map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+              <span className="text-xs text-muted">条</span>
+            </div>
+            <span className="text-xs text-muted">
+              第 {safePage} / {totalPages} 页，共 {filtered.length} 条
+            </span>
+            <div className="flex items-center gap-2">
               <button
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
                 disabled={safePage === 1}
@@ -1717,9 +1922,6 @@ export default function Nodes() {
               >
                 上一页
               </button>
-              <span className="text-xs text-muted">
-                第 {safePage} / {totalPages} 页，共 {filtered.length} 条
-              </span>
               <button
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                 disabled={safePage === totalPages}
@@ -1729,7 +1931,7 @@ export default function Nodes() {
                 下一页
               </button>
             </div>
-          )}
+          </div>
         </>
       )}
 

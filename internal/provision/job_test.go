@@ -48,7 +48,7 @@ func TestProvision_SuccessRegistersNode(t *testing.T) {
 	}
 	// node registered
 	nodes, _ := q.ListNodesByOwner(ctx, "o_"+s)
-	if len(nodes) != 1 || nodes[0].BaseUrl != "http://10.0.0.5:3456" {
+	if len(nodes) != 1 || nodes[0].BaseUrl != "http://10.0.0.5:3456/" {
 		t.Fatalf("node not registered: %+v", nodes)
 	}
 }

@@ -902,8 +902,8 @@ function SortIcon({ active, dir }: { active: boolean; dir: 'asc' | 'desc' }) {
 // ------------------------------------------------------------------
 // Accounts page
 // ------------------------------------------------------------------
-// 10/page — consistent with the tenant 号库 and dashboard lists.
-const PAGE_SIZE = 10;
+// Page-size options for the 号库 list; the first entry is the default (100).
+const PAGE_SIZE_OPTIONS = [100, 200, 500, 1000];
 
 export default function Accounts() {
   const { isTenant } = useAuth();
@@ -926,6 +926,7 @@ function AdminAccounts() {
   const [sortKey, setSortKey] = useState<SortKey>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(PAGE_SIZE_OPTIONS[0]);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -989,8 +990,8 @@ function AdminAccounts() {
     return () => clearTimeout(id);
   }, [accounts, fetchAll]);
 
-  // Reset page when search changes
-  useEffect(() => { setPage(1); }, [search, statusFilter]);
+  // Reset page when search or page size changes
+  useEffect(() => { setPage(1); }, [search, statusFilter, pageSize]);
 
   function handleUnassign(nodeId: string, accountId: string) {
     setAccounts((prev) =>
@@ -1051,8 +1052,9 @@ function AdminAccounts() {
     return list;
   }, [accounts, search, statusFilter, sortKey, sortDir, users]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const paginated = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
 
   function handleSort(key: SortKey) {
     if (sortKey === key) {
@@ -1220,29 +1222,43 @@ function AdminAccounts() {
           </div>
 
           {/* Pagination */}
-          {totalPages > 1 && (
-            <div className="flex items-center justify-center gap-2 pt-2">
+          <div className="flex items-center justify-between gap-2 pt-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted">每页</span>
+              <select
+                value={pageSize}
+                onChange={(e) => setPageSize(Number(e.target.value))}
+                className="bg-surface border border-line rounded-lg px-2 py-1.5 text-xs text-ink
+                           focus:outline-none focus:border-accent transition"
+              >
+                {PAGE_SIZE_OPTIONS.map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+              <span className="text-xs text-muted">条，共 {filtered.length} 条</span>
+            </div>
+            <div className="flex items-center gap-2">
               <button
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page === 1}
+                disabled={safePage === 1}
                 className="text-xs px-3 py-1.5 bg-surface border border-line rounded-lg text-muted
                            hover:text-ink disabled:opacity-40 disabled:cursor-not-allowed transition"
               >
                 上一页
               </button>
               <span className="text-xs text-muted">
-                第 {page} / {totalPages} 页
+                第 {safePage} / {totalPages} 页
               </span>
               <button
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page === totalPages}
+                disabled={safePage === totalPages}
                 className="text-xs px-3 py-1.5 bg-surface border border-line rounded-lg text-muted
                            hover:text-ink disabled:opacity-40 disabled:cursor-not-allowed transition"
               >
                 下一页
               </button>
             </div>
-          )}
+          </div>
         </>
       )}
 
