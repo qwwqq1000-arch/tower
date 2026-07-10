@@ -666,8 +666,8 @@ function AccountTableRow({
   return (
     <>
       <tr className="border-t border-line hover:bg-line/30 transition">
-        <td className="px-4 py-3 text-sm text-ink font-medium">{account.nodeName}</td>
-        <td className="px-4 py-3">
+        <td className="px-3 py-2.5 text-sm text-ink font-medium">{account.nodeName}</td>
+        <td className="px-3 py-2.5">
           <p className="text-xs text-ink">{account.email || '—'}</p>
           <p className="text-[10px] text-muted font-mono mt-0.5">{account.profileId || '—'}</p>
           {account.status === 'limited' ? (
@@ -679,21 +679,21 @@ function AccountTableRow({
           )}
           {no1mActive && <No1MBadge />}
         </td>
-        <td className="px-4 py-3 text-xs text-muted">{shortSubType(account.subscriptionType)}</td>
-        <td className="px-4 py-3">
+        <td className="px-3 py-2.5 text-xs text-muted">{shortSubType(account.subscriptionType)}</td>
+        <td className="px-3 py-2.5">
           {account.cpaQuota ? <CpaQuotaCell q={account.cpaQuota} /> : <QuotaCell nodeId={account.nodeId} profileId={account.profileId} quotaMap={quotaMap} />}
         </td>
-        <td className="px-4 py-3 text-sm text-muted">{account.weight}</td>
-        <td className="px-4 py-3 text-xs text-muted">{fmtDate(account.accountCreatedAt)}</td>
-        <td className="px-4 py-3">
+        <td className="px-3 py-2.5 text-sm text-muted">{account.weight}</td>
+        <td className="px-3 py-2.5 text-xs text-muted">{fmtDate(account.accountCreatedAt)}</td>
+        <td className="px-3 py-2.5">
           <ExpiryCell subscriptionCreatedAt={account.subscriptionCreatedAt} />
         </td>
-        <td className="px-4 py-3 text-xs text-muted">{ownerName}</td>
-        <td className="px-4 py-3 text-xs text-muted">{account.agedBy || '—'}</td>
-        <td className="px-4 py-3 text-xs text-muted text-right tabular-nums">{fmtCost(account.todayCostUsd)}</td>
-        <td className="px-4 py-3 text-xs text-muted text-right tabular-nums">{fmtCost(account.totalCostUsd)}</td>
-        <td className="px-4 py-3">
-          <div className="flex items-center gap-2">
+        <td className="px-3 py-2.5 text-xs text-muted">{ownerName}</td>
+        <td className="px-3 py-2.5 text-xs text-muted">{account.agedBy || '—'}</td>
+        <td className="px-3 py-2.5 text-xs text-muted text-right tabular-nums">{fmtCost(account.todayCostUsd)}</td>
+        <td className="px-3 py-2.5 text-xs text-muted text-right tabular-nums">{fmtCost(account.totalCostUsd)}</td>
+        <td className="px-3 py-2.5">
+          <div className="flex items-center gap-2 whitespace-nowrap">
             <button
               onClick={() => setShowTest(true)}
               className="text-xs text-cyan-400 hover:text-cyan-300 transition"
@@ -1157,40 +1157,40 @@ function AdminAccounts() {
       {/* Desktop table */}
       {!loading && !error && accounts.length > 0 && (
         <>
-          <div className="hidden md:block bg-surface border border-line rounded-xl overflow-hidden">
+          <div className="hidden md:block bg-surface border border-line rounded-xl overflow-x-auto">
             <table className="w-full text-left">
               <thead>
                 <tr className="text-xs text-muted uppercase tracking-wide">
-                  <th className="px-4 py-3 font-medium cursor-pointer hover:text-ink select-none" onClick={() => handleSort('nodeName')}>
+                  <th className="px-3 py-2.5 font-medium cursor-pointer hover:text-ink select-none" onClick={() => handleSort('nodeName')}>
                     节点 <SortIcon active={sortKey === 'nodeName'} dir={sortDir} />
                   </th>
-                  <th className="px-4 py-3 font-medium cursor-pointer hover:text-ink select-none" onClick={() => handleSort('email')}>
+                  <th className="px-3 py-2.5 font-medium cursor-pointer hover:text-ink select-none" onClick={() => handleSort('email')}>
                     邮箱 <SortIcon active={sortKey === 'email'} dir={sortDir} />
                   </th>
-                  <th className="px-4 py-3 font-medium cursor-pointer hover:text-ink select-none" onClick={() => handleSort('subscriptionType')}>
+                  <th className="px-3 py-2.5 font-medium cursor-pointer hover:text-ink select-none" onClick={() => handleSort('subscriptionType')}>
                     订阅类型 <SortIcon active={sortKey === 'subscriptionType'} dir={sortDir} />
                   </th>
-                  <th className="px-4 py-3 font-medium">限额</th>
-                  <th className="px-4 py-3 font-medium cursor-pointer hover:text-ink select-none" onClick={() => handleSort('weight')}>
+                  <th className="px-3 py-2.5 font-medium">限额</th>
+                  <th className="px-3 py-2.5 font-medium cursor-pointer hover:text-ink select-none" onClick={() => handleSort('weight')}>
                     权重 <SortIcon active={sortKey === 'weight'} dir={sortDir} />
                   </th>
-                  <th className="px-4 py-3 font-medium cursor-pointer hover:text-ink select-none" onClick={() => handleSort('accountCreatedAt')}>
+                  <th className="px-3 py-2.5 font-medium cursor-pointer hover:text-ink select-none" onClick={() => handleSort('accountCreatedAt')}>
                     账户创建时间 <SortIcon active={sortKey === 'accountCreatedAt'} dir={sortDir} />
                   </th>
-                  <th className="px-4 py-3 font-medium cursor-pointer hover:text-ink select-none" onClick={() => handleSort('expiresAt')}>
+                  <th className="px-3 py-2.5 font-medium cursor-pointer hover:text-ink select-none" onClick={() => handleSort('expiresAt')}>
                     订阅到期 <SortIcon active={sortKey === 'expiresAt'} dir={sortDir} />
                   </th>
-                  <th className="px-4 py-3 font-medium cursor-pointer hover:text-ink select-none" onClick={() => handleSort('ownerId')}>
+                  <th className="px-3 py-2.5 font-medium cursor-pointer hover:text-ink select-none" onClick={() => handleSort('ownerId')}>
                     租户 <SortIcon active={sortKey === 'ownerId'} dir={sortDir} />
                   </th>
-                  <th className="px-4 py-3 font-medium">养号员工</th>
-                  <th className="px-4 py-3 font-medium text-right cursor-pointer hover:text-ink select-none" onClick={() => handleSort('todayCostUsd')}>
+                  <th className="px-3 py-2.5 font-medium">养号员工</th>
+                  <th className="px-3 py-2.5 font-medium text-right cursor-pointer hover:text-ink select-none" onClick={() => handleSort('todayCostUsd')}>
                     今日消费 <SortIcon active={sortKey === 'todayCostUsd'} dir={sortDir} />
                   </th>
-                  <th className="px-4 py-3 font-medium text-right cursor-pointer hover:text-ink select-none" onClick={() => handleSort('totalCostUsd')}>
+                  <th className="px-3 py-2.5 font-medium text-right cursor-pointer hover:text-ink select-none" onClick={() => handleSort('totalCostUsd')}>
                     总消费 <SortIcon active={sortKey === 'totalCostUsd'} dir={sortDir} />
                   </th>
-                  <th className="px-4 py-3 font-medium">操作</th>
+                  <th className="px-3 py-2.5 font-medium">操作</th>
                 </tr>
               </thead>
               <tbody>
