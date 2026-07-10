@@ -19,6 +19,7 @@ import (
 	"github.com/qwwqq1000-arch/tower/internal/dispatch"
 	"github.com/qwwqq1000-arch/tower/internal/events"
 	"github.com/qwwqq1000-arch/tower/internal/policy"
+	"github.com/qwwqq1000-arch/tower/internal/aging"
 	"github.com/qwwqq1000-arch/tower/internal/reconcile"
 	"github.com/qwwqq1000-arch/tower/internal/state"
 	"github.com/qwwqq1000-arch/tower/internal/telemetry"
@@ -141,6 +142,10 @@ func main() {
 	go poller.Run(context.Background(), 60*time.Second)
 
 	go (&reconcile.Reconciler{Q: q, Cipher: cipher}).Run(context.Background(), 120*time.Second)
+
+	// Internal-employee account aging: every 30min, assign fresh yanghao accounts
+	// to internal employees and graduate accounts aged past the window to test.
+	go (&aging.Ager{Q: q}).Run(context.Background(), 30*time.Minute)
 
 	// Every 5min: discover accounts on CPA (CLIProxyAPI) nodes into the pool.
 	// SyncAll resolves the effective MaxConcurrent from the live global policy each

@@ -19,10 +19,16 @@ func listUsersHandler(q *sqlc.Queries) http.HandlerFunc {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		internalSet := map[string]bool{}
+		if its, ierr := q.ListInternalTenants(r.Context()); ierr == nil {
+			for _, it := range its {
+				internalSet[it.ID] = true
+			}
+		}
 		out := make([]map[string]any, 0, len(ts))
 		for _, t := range ts {
 			rate, _ := q.GetHostingRate(r.Context(), t.ID)
-			out = append(out, map[string]any{"id": t.ID, "username": t.Username, "role": t.Role, "rate": rate, "channelRate": t.ChannelRate, "fallbackLimit": t.FallbackLimit})
+			out = append(out, map[string]any{"id": t.ID, "username": t.Username, "role": t.Role, "rate": rate, "channelRate": t.ChannelRate, "fallbackLimit": t.FallbackLimit, "isInternal": internalSet[t.ID]})
 		}
 		writeJSON(w, 200, out)
 	}

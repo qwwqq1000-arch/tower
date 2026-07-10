@@ -689,6 +689,7 @@ function AccountTableRow({
           <ExpiryCell subscriptionCreatedAt={account.subscriptionCreatedAt} />
         </td>
         <td className="px-4 py-3 text-xs text-muted">{ownerName}</td>
+        <td className="px-4 py-3 text-xs text-muted">{account.agedBy || '—'}</td>
         <td className="px-4 py-3 text-xs text-muted text-right tabular-nums">{fmtCost(account.todayCostUsd)}</td>
         <td className="px-4 py-3 text-xs text-muted text-right tabular-nums">{fmtCost(account.totalCostUsd)}</td>
         <td className="px-4 py-3">
@@ -1182,6 +1183,7 @@ function AdminAccounts() {
                   <th className="px-4 py-3 font-medium cursor-pointer hover:text-ink select-none" onClick={() => handleSort('ownerId')}>
                     租户 <SortIcon active={sortKey === 'ownerId'} dir={sortDir} />
                   </th>
+                  <th className="px-4 py-3 font-medium">养号员工</th>
                   <th className="px-4 py-3 font-medium text-right cursor-pointer hover:text-ink select-none" onClick={() => handleSort('todayCostUsd')}>
                     今日消费 <SortIcon active={sortKey === 'todayCostUsd'} dir={sortDir} />
                   </th>

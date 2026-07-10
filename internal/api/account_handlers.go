@@ -124,7 +124,7 @@ func oauthExchangeHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFu
 		// become available in future, write them via internal/vault.Vault.Store().
 		if _, err := q.CreateAccount(r.Context(), sqlc.CreateAccountParams{
 			ID:               accID,
-			OwnerID:          n.AccountOwnerID,
+			OwnerID:          resolveAccountOwner(r.Context(), q, n),
 			Email:            email,
 			SubscriptionType: "",
 			ExpiresAt:        time.Now().Add(30 * 24 * time.Hour).UnixMilli(),
@@ -191,7 +191,7 @@ func importProfileHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFu
 			}
 		}
 		accID := randHex("acc_")
-		if _, err := q.CreateAccount(r.Context(), buildImportAccountParams(accID, n.OwnerID, matched.Email, time.Now().Add(30*24*time.Hour).UnixMilli(), time.Now().UnixMilli())); err != nil {
+		if _, err := q.CreateAccount(r.Context(), buildImportAccountParams(accID, resolveAccountOwner(r.Context(), q, n), matched.Email, time.Now().Add(30*24*time.Hour).UnixMilli(), time.Now().UnixMilli())); err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
@@ -210,6 +210,20 @@ func importProfileHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFu
 		}
 		writeJSON(w, 200, map[string]any{"ok": true, "profileId": matched.ID, "email": matched.Email})
 	}
+}
+
+// resolveAccountOwner returns the tenant a newly imported account should belong
+// to: the node's configured account_owner_id, or — when the node has no tenant
+// set — the default holding tenant "yanghao". Imported accounts must NEVER fall
+// silently into the superadmin pool. Returns "" only if yanghao itself is missing.
+func resolveAccountOwner(ctx context.Context, q *sqlc.Queries, n sqlc.Node) string {
+	if n.AccountOwnerID != "" {
+		return n.AccountOwnerID
+	}
+	if t, err := q.GetTenantByUsername(ctx, "yanghao"); err == nil {
+		return t.ID
+	}
+	return ""
 }
 
 // buildImportAccountParams constructs the CreateAccountParams for the import path.
@@ -249,7 +263,7 @@ func listProfilesHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.HandlerFun
 		for _, p := range ps {
 			if p.LoggedIn && !importedSet[p.ID] {
 				accID := randHex("acc_")
-				if _, err := q.CreateAccount(r.Context(), buildImportAccountParams(accID, n.AccountOwnerID, p.Email, time.Now().Add(30*24*time.Hour).UnixMilli(), time.Now().UnixMilli())); err == nil {
+				if _, err := q.CreateAccount(r.Context(), buildImportAccountParams(accID, resolveAccountOwner(r.Context(), q, n), p.Email, time.Now().Add(30*24*time.Hour).UnixMilli(), time.Now().UnixMilli())); err == nil {
 					q.AssignAccount(r.Context(), sqlc.AssignAccountParams{NodeID: n.ID, AccountID: accID, ProfileID: p.ID, Egress: "", Weight: 100, Role: "baseline", SlotID: "", BoundAt: time.Now().UnixMilli()})
 					importedSet[p.ID] = true
 				}
@@ -298,10 +312,7 @@ func batchAutoImportHandler(q *sqlc.Queries, cipher *crypto.Cipher) http.Handler
 			for _, p := range ps {
 				if p.LoggedIn && !importedSet[p.ID] {
 					accID := randHex("acc_")
-					ownerID := n.AccountOwnerID
-					if ownerID == "" {
-						ownerID = n.OwnerID
-					}
+					ownerID := resolveAccountOwner(ctx, q, n)
 					if _, cerr := q.CreateAccount(ctx, buildImportAccountParams(accID, ownerID, p.Email, time.Now().Add(30*24*time.Hour).UnixMilli(), time.Now().UnixMilli())); cerr == nil {
 						q.AssignAccount(ctx, sqlc.AssignAccountParams{NodeID: n.ID, AccountID: accID, ProfileID: p.ID, Egress: "", Weight: 100, Role: "baseline", SlotID: "", BoundAt: time.Now().UnixMilli()})
 						imported++
@@ -320,6 +331,7 @@ func listAccountsHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFun
 		ctx := r.Context()
 		owner, all := scope(r)
 		rows, err := q.ListNodeAccountsAll(ctx)
+		agedByMap, _ := q.ListAgedBy(ctx)
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
@@ -429,6 +441,7 @@ func listAccountsHandler(q *sqlc.Queries, svc *dispatch.Service) http.HandlerFun
 				"nodeName":         a.NodeName,
 				"baseUrl":          a.BaseUrl,
 				"accountId":        a.AccountID,
+				"agedBy":           agedByMap[a.AccountID],
 				"profileId":        a.ProfileID,
 				"enabled":          a.Enabled,
 				"weight":           a.Weight,

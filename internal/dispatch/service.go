@@ -59,6 +59,12 @@ type Service struct {
 	scaledUpMu  sync.Mutex
 	scaledCount map[string]int
 
+	// internalSet caches which owner ids are internal employees. Their accounts are
+	// UNMANAGED (aged by staff) so all governance is stripped. Short-TTL cache.
+	internalMu  sync.RWMutex
+	internalSet map[string]bool
+	internalAt  int64
+
 	// policyVer is a monotonic version counter bumped on every policy write.
 	// policyCache holds per-(ownerID,accountID) cached resolved configs keyed
 	// by ownerID+"|"+accountID; entries are invalidated when policyVer changes.
@@ -965,7 +971,7 @@ func (s *Service) BumpPolicyVersion() { s.policyVer.Add(1) }
 // is called, eliminating the per-request ListPolicies full-table scan on the hot path.
 // Reads are lock-free (sync.Map + atomic.Int64); concurrent rebuilds after a bump are
 // idempotent and safe.
-func (s *Service) resolveConfig(ctx context.Context, ownerID, accountID string) policy.Config {
+func (s *Service) resolveConfigBase(ctx context.Context, ownerID, accountID string) policy.Config {
 	ver := s.policyVer.Load()
 	key := ownerID + "|" + accountID
 	if v, ok := s.policyCache.Load(key); ok {
@@ -1010,6 +1016,77 @@ func (s *Service) resolveConfig(ctx context.Context, ownerID, accountID string) 
 	}
 	cfg := policy.Resolve(s.Base, patches...)
 	s.policyCache.Store(key, cachedPolicyCfg{ver: ver, cfg: cfg})
+	return cfg
+}
+
+// resolveConfig resolves the effective policy for (ownerID, accountID). Accounts
+// owned by internal employees are UNMANAGED — staff age them by hand — so every
+// control (ban detection, concurrency cap, rate governance, cooldown, spend cap,
+// warmup) is stripped via openConfig. All governance reads flow through this, and
+// buildCandidates sets slot capacity from the returned MaxConcurrent, so a single
+// override here opens the account up completely.
+func (s *Service) resolveConfig(ctx context.Context, ownerID, accountID string) policy.Config {
+	cfg := s.resolveConfigBase(ctx, ownerID, accountID)
+	if s.isInternalOwner(ctx, ownerID) {
+		return openConfig(cfg)
+	}
+	return cfg
+}
+
+// isInternalOwner reports whether ownerID is an internal employee tenant, using a
+// 30s in-memory cache so the hot dispatch path never hits the DB per request.
+func (s *Service) isInternalOwner(ctx context.Context, ownerID string) bool {
+	if ownerID == "" {
+		return false
+	}
+	now := s.Now()
+	s.internalMu.RLock()
+	if s.internalSet != nil && now-s.internalAt < 30000 {
+		v := s.internalSet[ownerID]
+		s.internalMu.RUnlock()
+		return v
+	}
+	s.internalMu.RUnlock()
+	its, err := s.Q.ListInternalTenants(ctx)
+	if err != nil {
+		s.internalMu.RLock()
+		defer s.internalMu.RUnlock()
+		if s.internalSet != nil {
+			return s.internalSet[ownerID]
+		}
+		return false
+	}
+	nm := make(map[string]bool, len(its))
+	for _, t := range its {
+		nm[t.ID] = true
+	}
+	s.internalMu.Lock()
+	s.internalSet = nm
+	s.internalAt = now
+	s.internalMu.Unlock()
+	return nm[ownerID]
+}
+
+// openConfig strips ALL account governance for internal-employee accounts.
+func openConfig(cfg policy.Config) policy.Config {
+	const huge = 1 << 30
+	cfg.MaxConcurrent = huge
+	cfg.WarmupHours = 0
+	cfg.WarmupMaxConcurrent = huge
+	cfg.WarmupBlockOpus = false
+	cfg.BanSignals = nil
+	cfg.BanPersistStreak = huge
+	cfg.PermanentBanStreak = 0 // 0 = never permanent
+	cfg.CooldownSignals = nil
+	cfg.RateGovEnabled = false
+	cfg.RateExceedAction = ""
+	cfg.SpendCap5hEnabled = false
+	cfg.SessionSimEnabled = false
+	cfg.SerialQueueEnabled = false
+	cfg.HumanDelayEnabled = false
+	cfg.ElasticEnabled = false
+	cfg.QuotaLimitStatusCodes = nil
+	cfg.QuotaLimitKeywords = nil
 	return cfg
 }
 

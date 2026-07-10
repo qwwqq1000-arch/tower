@@ -372,6 +372,7 @@ export interface AccountRow {
   totalCostUsd?: number;
   expiresAt?: number;        // unix ms
   ownerId?: string;          // tenant owner id ("" = shared)
+  agedBy?: string;           // internal employee username that aged this account
   subscriptionType?: string;
   subscriptionCreatedAt?: string;
   accountCreatedAt?: string;
@@ -468,6 +469,7 @@ export interface UserRow {
   rate: number;
   channelRate?: number;
   fallbackLimit?: number;
+  isInternal?: boolean;
 }
 
 // --- Node Telemetry (遥测 / 健康) ---

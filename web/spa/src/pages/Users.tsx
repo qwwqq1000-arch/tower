@@ -12,6 +12,9 @@ import {
   createUser,
   deleteUser,
   setUserRole,
+  setUserInternal,
+  getAgingConfig,
+  setAgingConfig,
   setUserHostingRate,
   setUserChannelRate,
   setUserFallbackLimit,
@@ -150,6 +153,51 @@ function NumberEditor({ userId, current, onChanged, save, format, step = '0.01',
 // ------------------------------------------------------------------
 // Main page
 // ------------------------------------------------------------------
+function InternalToggle({ userId, current }: { userId: string; current: boolean }) {
+  const [on, setOn] = useState(current);
+  const [busy, setBusy] = useState(false);
+  return (
+    <button type="button" disabled={busy}
+      onClick={async () => { setBusy(true); const next = !on; try { await setUserInternal(userId, next); setOn(next); } catch { /* ignore */ } setBusy(false); }}
+      className={`px-2 py-0.5 rounded text-xs font-medium transition ${on ? 'bg-accent/20 text-accent' : 'bg-line/30 text-muted'} disabled:opacity-50`}>
+      {on ? '内部员工' : '否'}
+    </button>
+  );
+}
+
+function InternalAgingPanel() {
+  const [cfg, setCfg] = useState<{ accountsPerEmployee: number; agingDays: number; enabled: boolean } | null>(null);
+  const [saved, setSaved] = useState(false);
+  useEffect(() => { getAgingConfig().then(setCfg).catch(() => {}); }, []);
+  if (!cfg) return null;
+  const save = async (next: { accountsPerEmployee: number; agingDays: number; enabled: boolean }) => {
+    setCfg(next);
+    try { await setAgingConfig(next); setSaved(true); setTimeout(() => setSaved(false), 1500); } catch { /* ignore */ }
+  };
+  return (
+    <div className="bg-surface border border-line rounded-xl p-4 mb-4">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold text-ink">内部员工养号设置</h3>
+        {saved && <span className="text-xs text-accent">已保存</span>}
+      </div>
+      <div className="flex flex-wrap items-center gap-4 text-sm">
+        <label className="flex items-center gap-2"><span className="text-muted text-xs">每员工号数</span>
+          <input type="number" min={0} value={cfg.accountsPerEmployee}
+            onChange={(e) => save({ ...cfg, accountsPerEmployee: Math.max(0, parseInt(e.target.value) || 0) })}
+            className="w-16 bg-bg border border-line rounded px-2 py-1 text-ink" /></label>
+        <label className="flex items-center gap-2"><span className="text-muted text-xs">养号天数</span>
+          <input type="number" min={1} value={cfg.agingDays}
+            onChange={(e) => save({ ...cfg, agingDays: Math.max(1, parseInt(e.target.value) || 1) })}
+            className="w-16 bg-bg border border-line rounded px-2 py-1 text-ink" /></label>
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" checked={cfg.enabled} onChange={(e) => save({ ...cfg, enabled: e.target.checked })} />
+          <span className="text-muted text-xs">启用自动养号</span></label>
+        <span className="text-xs text-muted">从 yanghao 池自动分配给内部员工，养满天数后转 test</span>
+      </div>
+    </div>
+  );
+}
+
 export default function Users() {
   const [users, setUsers] = useState<UserRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -282,6 +330,9 @@ export default function Users() {
         <div className="bg-err/10 border border-err/30 rounded-xl p-4 text-err text-sm">{error}</div>
       )}
 
+      {/* Internal-employee aging config */}
+      <InternalAgingPanel />
+
       {/* User list */}
       {!loading && !error && (
         <>
@@ -300,6 +351,7 @@ export default function Users() {
                     <tr className="text-xs text-muted uppercase tracking-wide border-b border-line bg-bg/50">
                       <th className="px-4 py-3 font-medium">用户名</th>
                       <th className="px-4 py-3 font-medium">角色</th>
+                      <th className="px-4 py-3 font-medium">内部员工</th>
                       <th className="px-4 py-3 font-medium text-right">托管费率</th>
                       <th className="px-4 py-3 font-medium text-right">渠道倍率</th>
                       <th className="px-4 py-3 font-medium text-right">保底上限</th>
@@ -316,6 +368,9 @@ export default function Users() {
                             current={u.role}
                             onChanged={handleRoleChanged}
                           />
+                        </td>
+                        <td className="px-4 py-3">
+                          <InternalToggle userId={u.id} current={!!u.isInternal} />
                         </td>
                         <td className="px-4 py-3 text-right">
                           <NumberEditor

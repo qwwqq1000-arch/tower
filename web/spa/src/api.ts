@@ -358,6 +358,15 @@ export const deleteUser = (id: string) =>
 export const setUserRole = (id: string, role: string) =>
   api<{ ok: string }>('PATCH', `/api/admin/users/${id}/role`, { role });
 
+export const setUserInternal = (id: string, isInternal: boolean) =>
+  api<{ ok: boolean }>('PATCH', `/api/admin/users/${id}/internal`, { isInternal });
+
+export const getAgingConfig = () =>
+  api<{ accountsPerEmployee: number; agingDays: number; enabled: boolean }>('GET', '/api/admin/internal-aging/config');
+
+export const setAgingConfig = (cfg: { accountsPerEmployee: number; agingDays: number; enabled: boolean }) =>
+  api<{ ok: boolean }>('PATCH', '/api/admin/internal-aging/config', cfg);
+
 export const setUserHostingRate = (id: string, rate: number) =>
   api<{ ok: string }>('PATCH', `/api/admin/users/${id}/hosting-rate`, { rate });
 
