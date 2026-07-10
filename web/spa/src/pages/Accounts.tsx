@@ -1161,36 +1161,36 @@ function AdminAccounts() {
             <table className="w-full text-left">
               <thead>
                 <tr className="text-xs text-muted uppercase tracking-wide">
-                  <th className="px-3 py-2.5 font-medium cursor-pointer hover:text-ink select-none" onClick={() => handleSort('nodeName')}>
+                  <th className="px-3 py-2.5 font-medium whitespace-nowrap cursor-pointer hover:text-ink select-none" onClick={() => handleSort('nodeName')}>
                     节点 <SortIcon active={sortKey === 'nodeName'} dir={sortDir} />
                   </th>
-                  <th className="px-3 py-2.5 font-medium cursor-pointer hover:text-ink select-none" onClick={() => handleSort('email')}>
+                  <th className="px-3 py-2.5 font-medium whitespace-nowrap cursor-pointer hover:text-ink select-none" onClick={() => handleSort('email')}>
                     邮箱 <SortIcon active={sortKey === 'email'} dir={sortDir} />
                   </th>
-                  <th className="px-3 py-2.5 font-medium cursor-pointer hover:text-ink select-none" onClick={() => handleSort('subscriptionType')}>
+                  <th className="px-3 py-2.5 font-medium whitespace-nowrap cursor-pointer hover:text-ink select-none" onClick={() => handleSort('subscriptionType')}>
                     订阅类型 <SortIcon active={sortKey === 'subscriptionType'} dir={sortDir} />
                   </th>
-                  <th className="px-3 py-2.5 font-medium">限额</th>
-                  <th className="px-3 py-2.5 font-medium cursor-pointer hover:text-ink select-none" onClick={() => handleSort('weight')}>
+                  <th className="px-3 py-2.5 font-medium whitespace-nowrap">限额</th>
+                  <th className="px-3 py-2.5 font-medium whitespace-nowrap cursor-pointer hover:text-ink select-none" onClick={() => handleSort('weight')}>
                     权重 <SortIcon active={sortKey === 'weight'} dir={sortDir} />
                   </th>
-                  <th className="px-3 py-2.5 font-medium cursor-pointer hover:text-ink select-none" onClick={() => handleSort('accountCreatedAt')}>
+                  <th className="px-3 py-2.5 font-medium whitespace-nowrap cursor-pointer hover:text-ink select-none" onClick={() => handleSort('accountCreatedAt')}>
                     账户创建时间 <SortIcon active={sortKey === 'accountCreatedAt'} dir={sortDir} />
                   </th>
-                  <th className="px-3 py-2.5 font-medium cursor-pointer hover:text-ink select-none" onClick={() => handleSort('expiresAt')}>
+                  <th className="px-3 py-2.5 font-medium whitespace-nowrap cursor-pointer hover:text-ink select-none" onClick={() => handleSort('expiresAt')}>
                     订阅到期 <SortIcon active={sortKey === 'expiresAt'} dir={sortDir} />
                   </th>
-                  <th className="px-3 py-2.5 font-medium cursor-pointer hover:text-ink select-none" onClick={() => handleSort('ownerId')}>
+                  <th className="px-3 py-2.5 font-medium whitespace-nowrap cursor-pointer hover:text-ink select-none" onClick={() => handleSort('ownerId')}>
                     租户 <SortIcon active={sortKey === 'ownerId'} dir={sortDir} />
                   </th>
-                  <th className="px-3 py-2.5 font-medium">养号员工</th>
-                  <th className="px-3 py-2.5 font-medium text-right cursor-pointer hover:text-ink select-none" onClick={() => handleSort('todayCostUsd')}>
+                  <th className="px-3 py-2.5 font-medium whitespace-nowrap">养号员工</th>
+                  <th className="px-3 py-2.5 font-medium whitespace-nowrap text-right cursor-pointer hover:text-ink select-none" onClick={() => handleSort('todayCostUsd')}>
                     今日消费 <SortIcon active={sortKey === 'todayCostUsd'} dir={sortDir} />
                   </th>
-                  <th className="px-3 py-2.5 font-medium text-right cursor-pointer hover:text-ink select-none" onClick={() => handleSort('totalCostUsd')}>
+                  <th className="px-3 py-2.5 font-medium whitespace-nowrap text-right cursor-pointer hover:text-ink select-none" onClick={() => handleSort('totalCostUsd')}>
                     总消费 <SortIcon active={sortKey === 'totalCostUsd'} dir={sortDir} />
                   </th>
-                  <th className="px-3 py-2.5 font-medium">操作</th>
+                  <th className="px-3 py-2.5 font-medium whitespace-nowrap">操作</th>
                 </tr>
               </thead>
               <tbody>
