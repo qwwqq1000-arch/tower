@@ -125,7 +125,7 @@ export function ConcurrencyPanel({ accounts }: { accounts: DispatchAccountSnapsh
                 </td>
                 <td className="px-4 py-2 text-xs text-muted font-mono">{a.pinnedModel ? a.pinnedModel.replace('claude-', '') : '—'}</td>
                 <td className="px-4 py-2 text-right tabular-nums">{a.inflight}</td>
-                <td className="px-4 py-2 text-right tabular-nums">{a.available}</td>
+                <td className="px-4 py-2 text-right tabular-nums">{a.available >= 100000000 ? '不限' : a.available}</td>
                 <td className="px-4 py-2 text-right tabular-nums text-xs text-muted">{fmtCost(a.todayCostUsd)}</td>
                 <td className="px-4 py-2 text-right tabular-nums text-xs text-muted">{a.rpm != null && a.rpm > 0 ? a.rpm : '—'}</td>
               </tr>

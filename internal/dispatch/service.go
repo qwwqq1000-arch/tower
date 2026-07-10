@@ -1087,6 +1087,21 @@ func openConfig(cfg policy.Config) policy.Config {
 	cfg.ElasticEnabled = false
 	cfg.QuotaLimitStatusCodes = nil
 	cfg.QuotaLimitKeywords = nil
+	// keyword pools / content filtering / rerouting — internal accounts serve
+	// everything directly, never blocked, filtered, exiled, or diverted.
+	cfg.BanKeywords = nil
+	cfg.ContentFilterRules = nil
+	cfg.FallbackEnabled = false
+	cfg.FallbackKeywords = nil
+	cfg.FallbackProbeEnabled = false
+	cfg.DirectFallbackKeywords = nil
+	cfg.DirectFallbackStatusCodes = nil
+	cfg.ResponseExileEnabled = false
+	cfg.ResponseExileKeywords = nil
+	cfg.CCEnvelopeEnabled = false
+	cfg.QuietHoursEnabled = false
+	cfg.LongContextGateEnabled = false
+	cfg.SessionErrorThreshold = 1 << 30
 	return cfg
 }
 
