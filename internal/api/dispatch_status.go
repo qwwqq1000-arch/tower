@@ -228,6 +228,14 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 			tenantNames[o] = t.Username
 		}
 	}
+	// Internal employees age accounts by hand — their accounts are out of the
+	// live pool and must not clutter the concurrency panel (same as yanghao).
+	internalOwners := map[string]bool{}
+	if its, ierr := q.ListInternalTenants(ctx); ierr == nil {
+		for _, it := range its {
+			internalOwners[it.ID] = true
+		}
+	}
 	accounts := []map[string]any{}
 	if svc != nil && svc.Store != nil {
 		for _, s := range svc.Store.Snapshot(now) {
@@ -238,10 +246,10 @@ func buildDispatchStatus(ctx context.Context, q *sqlc.Queries, svc *dispatch.Ser
 			if !known { // node/account deleted → drop stale ghost row
 				continue
 			}
-			// yanghao is the warm-up/holding tenant: its fresh accounts are parked
-			// there deliberately kept OUT of rotation so they are not hammered while
-			// aging, so they must not appear in the live concurrency panel.
-			if tenantNames[owner] == "yanghao" {
+			// yanghao (warm-up/holding pool) and internal-employee owners hold
+			// accounts that are OUT of rotation (parked/being aged by hand), so they
+			// must not appear in the live concurrency panel.
+			if tenantNames[owner] == "yanghao" || internalOwners[owner] {
 				continue
 			}
 			if !visible(s.Key) { // owner scoping

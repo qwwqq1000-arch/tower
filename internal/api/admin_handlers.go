@@ -166,6 +166,13 @@ func randHex(prefix string) string {
 
 // nextNodeName returns the next sequential numeric node name (>=1001).
 func nextNodeName(ctx context.Context, q *sqlc.Queries) string {
+	// Atomic allocation via a Postgres sequence — concurrent batch provisioning
+	// (Promise.all on the client) otherwise all read the same max before any node
+	// row committed and collided on the same name.
+	if v, err := q.NextNodeNameSeq(ctx); err == nil {
+		return strconv.Itoa(int(v))
+	}
+	// Fallback (sequence missing): best-effort max+1 over existing node names.
 	max := 1000
 	if rows, err := q.ListNodes(ctx); err == nil {
 		for _, n := range rows {

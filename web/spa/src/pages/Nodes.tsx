@@ -12,6 +12,7 @@ import {
   setNodeEnabled,
   setNodePassthrough,
   refreshNode,
+  updateNodeCode,
   getNodeConsoleUrl,
   startProvision,
   getProvision,
@@ -492,12 +493,16 @@ function OAuthWizardModal({ node, onClose, onSuccess }: OAuthWizardModalProps) {
               <div className="space-y-2">
                 <button
                   onClick={() => { void handleStartOAuth(); }}
-                  disabled={oauthLoading}
+                  disabled={oauthLoading || !proxyLoaded.trim()}
+                  title={!proxyLoaded.trim() ? '请先配置并保存出口代理' : undefined}
                   className="px-4 py-2 text-sm font-medium bg-accent text-white rounded-lg
-                             hover:bg-accent/80 disabled:opacity-50 transition"
+                             hover:bg-accent/80 disabled:opacity-50 disabled:cursor-not-allowed transition"
                 >
                   {oauthLoading ? '生成中…' : '开始 OAuth 授权'}
                 </button>
+                {!proxyLoaded.trim() && (
+                  <p className="text-xs text-amber-400">请先在上方配置并保存出口代理，才能开始 OAuth 授权。</p>
+                )}
                 {oauthErr && <p className="text-xs text-err">{oauthErr}</p>}
               </div>
             )}
@@ -1120,6 +1125,7 @@ interface BatchBarProps {
   onEnableAll: () => void;
   onDisableAll: () => void;
   onRefreshAll: () => void;
+  onUpdateCode: () => void;
   onCopyIPs: () => void;
   onDeleteAll: () => void;
   batchRunning: boolean;
@@ -1132,6 +1138,7 @@ function BatchBar({
   onEnableAll,
   onDisableAll,
   onRefreshAll,
+  onUpdateCode,
   onCopyIPs,
   onDeleteAll,
   batchRunning,
@@ -1165,6 +1172,15 @@ function BatchBar({
                      hover:bg-line/30 disabled:opacity-50 disabled:cursor-not-allowed transition"
         >
           批量刷新 token
+        </button>
+        <button
+          onClick={onUpdateCode}
+          disabled={batchRunning}
+          className="px-3 py-1.5 text-xs font-medium bg-surface border border-line text-accent rounded-lg
+                     hover:bg-line/30 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          title="SSH 进选中节点 git pull + 重建到最新代码"
+        >
+          更新代码
         </button>
         <button
           onClick={onCopyIPs}
@@ -1657,6 +1673,12 @@ export default function Nodes() {
     void runBatch((id) => refreshNode(id), '批量刷新');
   }
 
+  function handleBatchUpdateCode() {
+    const password = window.prompt('输入选中节点的 SSH 密码（用户名默认 root）：\n将 SSH 进每台 git pull + 重建到最新代码（约 1-2 分钟/台）');
+    if (!password) return;
+    void runBatch((id) => updateNodeCode(id, { user: 'root', password }).then(() => undefined), '更新代码');
+  }
+
   function handleCopyIPs() {
     const ips = nodes
       .filter((n) => selected.has(n.id))
@@ -1790,6 +1812,7 @@ export default function Nodes() {
           onEnableAll={handleBatchEnable}
           onDisableAll={handleBatchDisable}
           onRefreshAll={handleBatchRefresh}
+          onUpdateCode={handleBatchUpdateCode}
           onCopyIPs={handleCopyIPs}
           onDeleteAll={handleBatchDelete}
           batchRunning={batchRunning}

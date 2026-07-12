@@ -279,6 +279,9 @@ export const patchNodeFeatures = (id: string, adapter: string, patch: Record<str
 export const refreshNode = (id: string) =>
   api<void>('POST', `/api/admin/nodes/${id}/refresh`);
 
+export const updateNodeCode = (id: string, body: { user?: string; password: string }) =>
+  api<{ ok: boolean }>('POST', `/api/admin/nodes/${id}/update-code`, body);
+
 export const getNodeConsoleUrl = (id: string) =>
   api<{ url: string }>('GET', `/api/admin/nodes/${id}/console-url`);
 

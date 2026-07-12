@@ -103,6 +103,7 @@ func NewRouter(pool *pgxpool.Pool, secret string, svc *dispatch.Service, q *sqlc
 		mux.HandleFunc("GET /api/admin/nodes/{id}/features", requireAdmin(secret, q, nodeFeaturesGetHandler(q, cipher)))
 		mux.HandleFunc("PATCH /api/admin/nodes/{id}/features/{adapter}", requireAdmin(secret, q, nodeFeaturesPatchHandler(q, cipher)))
 		mux.HandleFunc("POST /api/admin/nodes/{id}/refresh", requireAdmin(secret, q, nodeRefreshHandler(q, cipher)))
+		mux.HandleFunc("POST /api/admin/nodes/{id}/update-code", requireAdmin(secret, q, updateNodeCodeHandler(q)))
 		mux.HandleFunc("GET /api/admin/nodes/{id}/console-url", requireAdmin(secret, q, nodeConsoleURLHandler(q, cipher)))
 		mux.HandleFunc("PATCH /api/admin/nodes/{id}/enabled", requireAdmin(secret, q, nodeEnableHandler(q)))
 		mux.HandleFunc("PATCH /api/admin/nodes/{id}/passthrough", requireAdmin(secret, q, nodePassthroughHandler(q)))
